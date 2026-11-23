@@ -93,6 +93,10 @@ public sealed class MinSpeidingParserTests
 
         var ola = result.Participants.Single(p => p.ParticipantKey == "10");
         Assert.Equal("Aukra speidergruppe", ola.GroupName); // group_registration_info takes priority
+        Assert.True(ola.HasMultipleGroups);
+        Assert.Equal(2, ola.AvailableGroups.Count);
+        Assert.Equal("Aukra speidergruppe", ola.AvailableGroups[0].GroupName);
+        Assert.Equal("Molde speidergruppe", ola.AvailableGroups[1].GroupName);
         Assert.Equal(450m, ola.DetectedPriceNok);
         Assert.Equal("Speider (450 kr)", ola.FeeLabel);
         Assert.Equal("Gluten, Nøtter", ola.Answers["Allergi"]);
@@ -100,6 +104,8 @@ public sealed class MinSpeidingParserTests
 
         var kari = result.Participants.Single(p => p.ParticipantKey == "11");
         Assert.Equal("Uten gruppe", kari.GroupName);
+        Assert.False(kari.HasMultipleGroups);
+        Assert.Empty(kari.AvailableGroups);
         Assert.True(kari.Cancelled);
         Assert.True(kari.Confirmed);
         Assert.Equal(250m, kari.DetectedPriceNok);
@@ -205,5 +211,59 @@ public sealed class MinSpeidingParserTests
         Assert.EndsWith("/project/get/participants", req.RequestUri!.AbsolutePath);
         Assert.Equal("Basic", req.Headers.Authorization?.Scheme);
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("12345:secret-key")), req.Headers.Authorization?.Parameter);
+    }
+
+    [Fact]
+    public void Parse_MultipleMembershipsFromExtensionFields_ExtractsDeduplicatedAvailableGroups()
+    {
+        const string json = """
+            {
+              "participants": {
+                "20": {
+                  "member_no": 20001,
+                  "first_name": "Kari",
+                  "last_name": "Speider",
+                  "fee_id": 101,
+                  "primary_membership_info": {
+                    "group_id": 501,
+                    "group_name": "Molde speidergruppe"
+                  },
+                  "memberships": {
+                    "501": "Molde speidergruppe",
+                    "503": "Aukra speidergruppe"
+                  },
+                  "other_memberships": [
+                    { "group_id": 504, "group_name": "Sunndal speidergruppe" }
+                  ],
+                  "groups": ["505", "Vestnes speidergruppe", "molde speidergruppe"]
+                }
+              },
+              "labels": {
+                "groups": {
+                  "505": "Fræna speidergruppe"
+                },
+                "project_fee": {
+                  "101": "Speider (450 kr)"
+                }
+              }
+            }
+            """;
+
+        var result = MinSpeidingParser.Parse("999", json, null, questionsEndpointAvailable: false);
+
+        var p = Assert.Single(result.Participants);
+        Assert.Equal("Molde speidergruppe", p.GroupName);
+        Assert.True(p.HasMultipleGroups);
+        Assert.Equal(5, p.AvailableGroups.Count);
+        Assert.Equal("Molde speidergruppe", p.AvailableGroups[0].GroupName);
+        Assert.Equal(501, p.AvailableGroups[0].GroupId);
+        Assert.Equal("Aukra speidergruppe", p.AvailableGroups[1].GroupName);
+        Assert.Equal(503, p.AvailableGroups[1].GroupId);
+        Assert.Equal("Sunndal speidergruppe", p.AvailableGroups[2].GroupName);
+        Assert.Equal(504, p.AvailableGroups[2].GroupId);
+        Assert.Equal("Fræna speidergruppe", p.AvailableGroups[3].GroupName);
+        Assert.Equal(505, p.AvailableGroups[3].GroupId);
+        Assert.Equal("Vestnes speidergruppe", p.AvailableGroups[4].GroupName);
+        Assert.Null(p.AvailableGroups[4].GroupId);
     }
 }

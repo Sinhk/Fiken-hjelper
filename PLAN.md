@@ -42,6 +42,7 @@ FikenHjelper.slnx
   - Samlefaktura per speidergruppe (standard) – valgfritt med én linje per deltaker eller sammendrag per priskategori – eller enkeltfaktura per deltaker.
   - Auto-forslag av pris fra `labels.project_fee` (f.eks. *Speider 450 kr*, *Leder 250 kr*) med redigerbare priser per kategori og overstyring/ekskludering per enkeltperson.
   - Filter for avmeldte, gratis (`0 kr`), bekreftede og oppmøtte, samt mulighet til å ekskludere hele priskategorier (f.eks. `Stab`) uten tomme fakturautkast.
+  - Valg av speidergruppe per deltaker dersom en deltaker er medlem i flere grupper (eller ved manuell overstyring).
   - Avkrysning for **«Dekkes av kretsen»** per deltaker: trekkes ut av gruppefakturaene og vises i egen oppsummeringstabell og kopierbar tekstoversikt.
 - **Kundematching, søk og Fiken-utkast:**
   - Søkbare nedtrekkslister (`SearchableSelect`) for Fiken-kunde, prosjekt og inntektskonto.

@@ -1,3 +1,4 @@
+using System.Globalization;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.Invoicing;
@@ -408,6 +409,31 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
         {
             CustomPriceNok = change.CustomPriceNok
+        };
+        RebuildPlan();
+    }
+
+    private IReadOnlyList<string> KnownGroupNames =>
+        mappings.GroupNameToContactId.Keys
+            .OrderBy(k => k, StringComparer.Create(CultureInfo.GetCultureInfo("nb-NO"), ignoreCase: true))
+            .ToList();
+
+    private void HandleParticipantGroupChanged((string ParticipantKey, string? CustomGroupName) change)
+    {
+        var defaultGroup = eventData?.Participants
+            .FirstOrDefault(p => string.Equals(p.ParticipantKey, change.ParticipantKey, StringComparison.OrdinalIgnoreCase))
+            ?.GroupName;
+
+        var normalized = string.IsNullOrWhiteSpace(change.CustomGroupName)
+            || (!string.IsNullOrWhiteSpace(defaultGroup)
+                && string.Equals(change.CustomGroupName.Trim(), defaultGroup, StringComparison.OrdinalIgnoreCase))
+            ? null
+            : change.CustomGroupName.Trim();
+
+        participantOverrides.TryGetValue(change.ParticipantKey, out var existing);
+        participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
+        {
+            CustomGroupName = normalized
         };
         RebuildPlan();
     }

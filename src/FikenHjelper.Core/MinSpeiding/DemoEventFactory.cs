@@ -32,7 +32,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-12",
                 Answers: new Dictionary<string, string> { ["Allergi"] = "Ingen" },
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe")]),
             new(
                 ParticipantKey: "90002",
                 MemberNo: 100452,
@@ -52,7 +53,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-12",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe")]),
             new(
                 ParticipantKey: "90003",
                 MemberNo: 100110,
@@ -72,7 +74,12 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-11",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups:
+                [
+                    new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe"),
+                    new ParticipantGroupOption("Aukra speidergruppe", 503, "Medlemskap")
+                ]),
             new(
                 ParticipantKey: "90004",
                 MemberNo: 100612,
@@ -92,7 +99,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-14",
                 Answers: new Dictionary<string, string> { ["Allergi"] = "Nøtter" },
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("1. Kristiansund speidergruppe", 502, "Primærgruppe")]),
             new(
                 ParticipantKey: "90005",
                 MemberNo: 100613,
@@ -112,7 +120,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-14",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("1. Kristiansund speidergruppe", 502, "Primærgruppe")]),
             new(
                 ParticipantKey: "90006",
                 MemberNo: 100701,
@@ -132,7 +141,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-15",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("Aukra speidergruppe", 503, "Primærgruppe")]),
             new(
                 ParticipantKey: "90007",
                 MemberNo: 100702,
@@ -152,7 +162,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-16",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("Sunndal speidergruppe", 504, "Primærgruppe")]),
             new(
                 ParticipantKey: "90008",
                 MemberNo: 100899,
@@ -172,7 +183,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-18",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: []),
             new(
                 ParticipantKey: "90009",
                 MemberNo: 100222,
@@ -192,7 +204,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-10",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>()),
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe")]),
             new(
                 ParticipantKey: "90010",
                 MemberNo: 100223,
@@ -212,7 +225,8 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-10",
                 Answers: new Dictionary<string, string>(),
-                ExtraFields: new Dictionary<string, string>())
+                ExtraFields: new Dictionary<string, string>(),
+                AvailableGroups: [new ParticipantGroupOption("Fræna speidergruppe", 505, "Primærgruppe")])
         };
 
         var categories = new List<FeeCategorySummary>

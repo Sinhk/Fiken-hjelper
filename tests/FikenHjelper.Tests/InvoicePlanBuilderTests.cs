@@ -244,4 +244,71 @@ public sealed class InvoicePlanBuilderTests
         Assert.Contains("Sunndal speidergruppe", summary);
         Assert.Contains("250,00 kr", summary);
     }
+
+    [Fact]
+    public void Build_CustomGroupOverride_MovesParticipantToSelectedGroupDraftAndDistrictSummary()
+    {
+        var demo = DemoEventFactory.CreateDemoEvent();
+        var options = new InvoiceDraftPlanOptions(
+            BillingMode: BillingMode.PerScoutGroup,
+            GroupLineMode: GroupLineMode.OneLinePerParticipant,
+            Filters: new ParticipantFilterOptions(ExcludeCancelled: true),
+            CategoryPricesNok: new Dictionary<string, decimal>
+            {
+                ["fee:101"] = 450m,
+                ["fee:102"] = 250m,
+                ["fee:103"] = 0m
+            },
+            ParticipantOverrides: new Dictionary<string, ParticipantOverride>
+            {
+                // Move Kari (90003, Molde -> Aukra) and sole member Linn (90007, Sunndal -> 1. Kristiansund)
+                ["90003"] = new ParticipantOverride(CustomGroupName: "Aukra speidergruppe"),
+                ["90007"] = new ParticipantOverride(CustomGroupName: "1. Kristiansund speidergruppe")
+            },
+            ManualRecipientContactIds: new Dictionary<string, long>(),
+            IncomeAccount: "3200",
+            IssueDate: new DateOnly(2026, 11, 23),
+            DaysUntilDueDate: 14,
+            FikenProjectId: null,
+            BankAccountNumber: null,
+            InvoiceText: null,
+            OurReference: null,
+            OrderReferencePrefix: "KBK26",
+            ExcludedCategoryKeys: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "fee:103" });
+
+        var plan = InvoicePlanBuilder.Build(demo, options, Customers, new Dictionary<string, long>());
+
+        Assert.DoesNotContain(plan.Drafts, d => d.RecipientName == "Sunndal speidergruppe");
+
+        var moldeDraft = plan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
+        Assert.Equal(2, moldeDraft.Lines.Count);
+        Assert.Equal(90000, moldeDraft.TotalOre);
+
+        var aukraDraft = plan.Drafts.Single(d => d.RecipientName == "Aukra speidergruppe");
+        Assert.Equal(2, aukraDraft.Lines.Count);
+        Assert.Equal(70000, aukraDraft.TotalOre); // 450 (Sander) + 250 (Kari)
+        Assert.Contains(aukraDraft.ParticipantKeys, k => k == "90003");
+
+        var ksundDraft = plan.Drafts.Single(d => d.RecipientName == "1. Kristiansund speidergruppe");
+        Assert.Equal(2, ksundDraft.Lines.Count);
+        Assert.Equal(70000, ksundDraft.TotalOre); // 450 (Henrik) + 250 (Linn)
+
+        // Combining CustomGroupName + CoveredByDistrict updates DistrictCoveredParticipant.GroupName
+        var districtOptions = options with
+        {
+            ParticipantOverrides = new Dictionary<string, ParticipantOverride>
+            {
+                ["90003"] = new ParticipantOverride(CoveredByDistrict: true, CustomGroupName: "Aukra speidergruppe")
+            }
+        };
+
+        var districtPlan = InvoicePlanBuilder.Build(demo, districtOptions, Customers, new Dictionary<string, long>());
+        var aukraAfterDistrict = districtPlan.Drafts.Single(d => d.RecipientName == "Aukra speidergruppe");
+        Assert.Single(aukraAfterDistrict.Lines);
+        Assert.Equal(45000, aukraAfterDistrict.TotalOre);
+
+        var covered = Assert.Single(districtPlan.DistrictCoveredParticipants);
+        Assert.Equal("90003", covered.ParticipantKey);
+        Assert.Equal("Aukra speidergruppe", covered.GroupName);
+    }
 }

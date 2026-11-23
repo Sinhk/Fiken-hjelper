@@ -179,6 +179,11 @@ public sealed class RawQuestionChoice
     public string? Option { get; set; }
 }
 
+public sealed record ParticipantGroupOption(
+    string GroupName,
+    long? GroupId = null,
+    string? SourceLabel = null);
+
 public sealed record EventParticipant(
     string ParticipantKey,
     long? MemberNo,
@@ -198,9 +203,11 @@ public sealed record EventParticipant(
     bool CheckedIn,
     string? RegistrationDate,
     IReadOnlyDictionary<string, string> Answers,
-    IReadOnlyDictionary<string, string> ExtraFields)
+    IReadOnlyDictionary<string, string> ExtraFields,
+    IReadOnlyList<ParticipantGroupOption> AvailableGroups)
 {
     public string FullName => $"{FirstName} {LastName}".Trim();
+    public bool HasMultipleGroups => AvailableGroups.Count > 1;
 }
 
 public sealed record FeeCategorySummary(

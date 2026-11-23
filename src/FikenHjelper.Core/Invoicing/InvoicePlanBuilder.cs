@@ -68,6 +68,19 @@ public static partial class InvoicePlanBuilder
         IReadOnlyDictionary<string, ParticipantOverride> overrides)
         => overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.CoveredByDistrict;
 
+    public static string ResolveEffectiveGroupName(
+        EventParticipant participant,
+        IReadOnlyDictionary<string, ParticipantOverride> overrides)
+    {
+        if (overrides.TryGetValue(participant.ParticipantKey, out var ov)
+            && !string.IsNullOrWhiteSpace(ov.CustomGroupName))
+        {
+            return ov.CustomGroupName.Trim();
+        }
+
+        return participant.GroupName;
+    }
+
     public static decimal ResolveEffectivePriceNok(
         EventParticipant participant,
         IReadOnlyDictionary<string, decimal> categoryPricesNok,
@@ -130,7 +143,7 @@ public static partial class InvoicePlanBuilder
                     ParticipantKey: participant.ParticipantKey,
                     FullName: displayName,
                     MemberNo: participant.MemberNo,
-                    GroupName: participant.GroupName,
+                    GroupName: ResolveEffectiveGroupName(participant, options.ParticipantOverrides),
                     FeeLabel: participant.FeeLabel,
                     AmountNok: amountNok,
                     AmountOre: amountOre));
@@ -266,7 +279,7 @@ public static partial class InvoicePlanBuilder
         var drafts = new List<PlannedInvoiceDraft>();
 
         var groups = participants
-            .GroupBy(p => p.GroupName, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(p => ResolveEffectiveGroupName(p, options.ParticipantOverrides), StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key, StringComparer.Create(NorwegianCulture, ignoreCase: true));
 
         foreach (var group in groups)
@@ -314,9 +327,10 @@ public static partial class InvoicePlanBuilder
             var priceNok = ResolveEffectivePriceNok(participant, options.CategoryPricesNok, options.ParticipantOverrides);
             var priceOre = CurrencyHelper.ToOre(priceNok);
             var description = Truncate($"{eventData.EventTitle} – {participant.FeeLabel}", MaxFikenLineFieldLength);
-            var comment = string.Equals(participant.GroupName, "Uten gruppe", StringComparison.OrdinalIgnoreCase)
+            var effectiveGroupName = ResolveEffectiveGroupName(participant, options.ParticipantOverrides);
+            var comment = string.Equals(effectiveGroupName, "Uten gruppe", StringComparison.OrdinalIgnoreCase)
                 ? null
-                : TruncateOrNull($"Gruppe: {participant.GroupName}", MaxFikenLineFieldLength);
+                : TruncateOrNull($"Gruppe: {effectiveGroupName}", MaxFikenLineFieldLength);
 
             var lines = new List<PlannedInvoiceLine>
             {

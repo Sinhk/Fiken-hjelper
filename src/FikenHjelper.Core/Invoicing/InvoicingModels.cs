@@ -24,7 +24,8 @@ public sealed record ParticipantFilterOptions(
 public sealed record ParticipantOverride(
     bool? Included = null,
     decimal? CustomPriceNok = null,
-    bool CoveredByDistrict = false);
+    bool CoveredByDistrict = false,
+    string? CustomGroupName = null);
 
 public sealed record InvoiceDraftPlanOptions(
     BillingMode BillingMode,

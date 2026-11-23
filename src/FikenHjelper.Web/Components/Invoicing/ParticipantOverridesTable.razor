@@ -12,6 +12,16 @@
         </div>
     </search>
 
+    @if (MultiGroupParticipantCount > 0)
+    {
+        <div class="fh-actions">
+            <label class="fh-checkbox-option">
+                <input id="filter-multigroup" type="checkbox" @bind="onlyMultipleGroups" />
+                <span>Vis kun deltakere med flere grupper (@MultiGroupParticipantCount)</span>
+            </label>
+        </div>
+    }
+
     <div tabindex="0" role="region" aria-labelledby="participants-table-caption" class="table-wrapper">
         <table class="participants-table">
             <caption id="participants-table-caption">
@@ -39,11 +49,23 @@
                         Overrides,
                         ExcludedCategoryKeys);
                     var coveredByDistrict = InvoicePlanBuilder.IsCoveredByDistrict(participant, Overrides);
+                    var effectiveGroup = InvoicePlanBuilder.ResolveEffectiveGroupName(participant, Overrides);
+                    var hasCustomGroup = !string.Equals(effectiveGroup, participant.GroupName, StringComparison.OrdinalIgnoreCase);
                     var hasCustomPrice = Overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.CustomPriceNok.HasValue;
                     var effectivePrice = InvoicePlanBuilder.ResolveEffectivePriceNok(participant, CategoryPrices, Overrides);
                     var priceInputId = $"part-price-{participant.ParticipantKey}";
                     var includeInputId = $"part-inc-{participant.ParticipantKey}";
                     var districtInputId = $"part-dist-{participant.ParticipantKey}";
+                    var groupSelectId = $"part-grp-{participant.ParticipantKey}";
+                    var availableNames = participant.AvailableGroups
+                        .Select(g => g.GroupName)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var otherGroups = AllKnownGroups
+                        .Where(g => !availableNames.Contains(g))
+                        .ToList();
+                    var hasEffectiveInOptions = availableNames.Contains(effectiveGroup)
+                        || otherGroups.Contains(effectiveGroup, StringComparer.OrdinalIgnoreCase)
+                        || string.Equals(effectiveGroup, "Uten gruppe", StringComparison.OrdinalIgnoreCase);
 
                     <tr @key="participant.ParticipantKey">
                         <th scope="row">
@@ -67,7 +89,55 @@
                                    checked="@coveredByDistrict"
                                    @onchange="(e) => HandleCoveredByDistrictChanged(participant.ParticipantKey, e)" />
                         </td>
-                        <td>@participant.GroupName</td>
+                        <td>
+                            <div class="fh-group-cell">
+                                <label for="@groupSelectId" class="visually-hidden">Speidergruppe for @participant.FullName</label>
+                                <select id="@groupSelectId"
+                                        class="fh-group-select"
+                                        value="@effectiveGroup"
+                                        @onchange="(e) => HandleGroupChanged(participant.ParticipantKey, e)">
+                                    @if (participant.AvailableGroups.Count > 0)
+                                    {
+                                        <optgroup label="Deltakerens grupper (Min speiding)">
+                                            @foreach (var opt in participant.AvailableGroups)
+                                            {
+                                                var label = string.IsNullOrWhiteSpace(opt.SourceLabel)
+                                                    ? opt.GroupName
+                                                    : $"{opt.GroupName} ({opt.SourceLabel})";
+                                                <option @key="opt.GroupName" value="@opt.GroupName">@label</option>
+                                            }
+                                        </optgroup>
+                                    }
+                                    @if (otherGroups.Count > 0)
+                                    {
+                                        <optgroup label="Andre speidergrupper">
+                                            @foreach (var g in otherGroups)
+                                            {
+                                                <option @key="g" value="@g">@g</option>
+                                            }
+                                        </optgroup>
+                                    }
+                                    @if (!hasEffectiveInOptions)
+                                    {
+                                        <option value="@effectiveGroup">@effectiveGroup</option>
+                                    }
+                                    <option value="Uten gruppe">Uten gruppe</option>
+                                </select>
+                                @if (participant.HasMultipleGroups || hasCustomGroup)
+                                {
+                                    <div class="fh-group-badges">
+                                        @if (participant.HasMultipleGroups)
+                                        {
+                                            <span class="fh-badge fh-badge-warn">Flere grupper (@participant.AvailableGroups.Count)</span>
+                                        }
+                                        @if (hasCustomGroup)
+                                        {
+                                            <span class="fh-badge fh-badge-neutral">Endret fra @participant.GroupName</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </td>
                         <td>@participant.FeeLabel</td>
                         <td>
                             @if (participant.Cancelled)
@@ -123,6 +193,7 @@
             <p class="fh-hint mb-1">
                 <strong>Prosjekt-ID:</strong> @EventData.ProjectId
                 · <strong>Spørsmål-endepunkt:</strong> @(EventData.QuestionsEndpointAvailable ? "Tilgjengelig" : "Ikke brukt / ikke tilgjengelig")
+                · <strong>Deltakere med flere grupper i API:</strong> @MultiGroupParticipantCount
                 · <strong>Demodata:</strong> @(EventData.IsDemoData ? "Ja" : "Nei")
             </p>
             <p class="fh-hint mb-1">
@@ -135,33 +206,66 @@
                 <strong>Ekstra felter funnet på deltakere:</strong>
                 @(EventData.ExtraParticipantPropertyNames.Count == 0
                     ? "Ingen"
-                    : string.Join(", ", EventData.ExtraParticipantPropertyNames))
+                    : BuildSafeExtraFieldSummary())
             </p>
         </div>
     </details>
 </div>
 
 @code {
+    private static readonly CultureInfo NorwegianCulture = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] SensitiveDiagnosticFragments =
+    [
+        "ssno",
+        "fnr",
+        "personnr",
+        "phone",
+        "telefon",
+        "email",
+        "epost",
+        "address",
+        "adresse",
+        "birth",
+        "dob"
+    ];
+
     private string searchQuery = string.Empty;
+    private bool onlyMultipleGroups;
 
     [Parameter, EditorRequired] public MinSpeidingEventLoadResult EventData { get; set; } = default!;
     [Parameter, EditorRequired] public ParticipantFilterOptions Filters { get; set; } = new();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, decimal> CategoryPrices { get; set; } = new Dictionary<string, decimal>();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, ParticipantOverride> Overrides { get; set; } = new Dictionary<string, ParticipantOverride>();
     [Parameter, EditorRequired] public IReadOnlySet<string> ExcludedCategoryKeys { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    [Parameter] public IReadOnlyList<string> KnownGroupNames { get; set; } = [];
 
     [Parameter] public EventCallback<(string ParticipantKey, bool? Included)> OnIncludeChanged { get; set; }
     [Parameter] public EventCallback<(string ParticipantKey, decimal? CustomPriceNok)> OnCustomPriceChanged { get; set; }
     [Parameter] public EventCallback<(string ParticipantKey, bool CoveredByDistrict)> OnCoveredByDistrictChanged { get; set; }
+    [Parameter] public EventCallback<(string ParticipantKey, string? CustomGroupName)> OnGroupChanged { get; set; }
+
+    private int MultiGroupParticipantCount => EventData.Participants.Count(p => p.HasMultipleGroups);
+
+    private IReadOnlyList<string> AllKnownGroups =>
+        EventData.Participants
+            .SelectMany(p => p.AvailableGroups.Select(g => g.GroupName).Prepend(p.GroupName))
+            .Concat(KnownGroupNames)
+            .Where(g => !string.IsNullOrWhiteSpace(g) && !string.Equals(g, "Uten gruppe", StringComparison.OrdinalIgnoreCase))
+            .Select(g => g.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g, StringComparer.Create(NorwegianCulture, ignoreCase: true))
+            .ToList();
 
     private IReadOnlyList<EventParticipant> FilteredParticipants =>
-        string.IsNullOrWhiteSpace(searchQuery)
-            ? EventData.Participants
-            : EventData.Participants
-                .Where(p => p.FullName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
-                    || p.GroupName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
-                    || p.FeeLabel.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+        EventData.Participants
+            .Where(p => !onlyMultipleGroups || p.HasMultipleGroups)
+            .Where(p => string.IsNullOrWhiteSpace(searchQuery)
+                || p.FullName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
+                || InvoicePlanBuilder.ResolveEffectiveGroupName(p, Overrides).Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
+                || p.GroupName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
+                || p.AvailableGroups.Any(g => g.GroupName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
+                || p.FeeLabel.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
     private void HandleSearchInput(ChangeEventArgs e)
         => searchQuery = e.Value?.ToString() ?? string.Empty;
@@ -171,6 +275,12 @@
 
     private Task HandleCoveredByDistrictChanged(string key, ChangeEventArgs e)
         => OnCoveredByDistrictChanged.InvokeAsync((key, e.Value is bool b && b));
+
+    private Task HandleGroupChanged(string key, ChangeEventArgs e)
+    {
+        var selected = e.Value?.ToString()?.Trim();
+        return OnGroupChanged.InvokeAsync((key, string.IsNullOrWhiteSpace(selected) ? null : selected));
+    }
 
     private Task HandleCustomPriceChanged(string key, ChangeEventArgs e)
     {
@@ -187,4 +297,41 @@
 
         return Task.CompletedTask;
     }
+
+    private string BuildSafeExtraFieldSummary()
+    {
+        var parts = new List<string>(EventData.ExtraParticipantPropertyNames.Count);
+        foreach (var fieldName in EventData.ExtraParticipantPropertyNames)
+        {
+            if (IsSensitiveDiagnosticKey(fieldName))
+            {
+                parts.Add($"{fieldName} (skjult)");
+                continue;
+            }
+
+            var sample = EventData.Participants
+                .Select(p => p.ExtraFields.TryGetValue(fieldName, out var val) ? val : null)
+                .FirstOrDefault(val => !string.IsNullOrWhiteSpace(val));
+
+            if (string.IsNullOrWhiteSpace(sample))
+            {
+                parts.Add(fieldName);
+            }
+            else
+            {
+                var compact = sample.Trim();
+                if (compact.Length > 120)
+                {
+                    compact = compact[..119] + "…";
+                }
+
+                parts.Add($"{fieldName} (eks: {compact})");
+            }
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    private static bool IsSensitiveDiagnosticKey(string key)
+        => SensitiveDiagnosticFragments.Any(f => key.Contains(f, StringComparison.OrdinalIgnoreCase));
 }
