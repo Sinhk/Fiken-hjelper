@@ -37,7 +37,8 @@ public sealed class MinSpeidingClient : IMinSpeidingClient
 
     public async Task<MinSpeidingEventLoadResult> GetEventParticipantsAsync(
         string projectId,
-        string apiKey,
+        string participantsApiKey,
+        string? questionsApiKey = null,
         string? baseUrlOverride = null,
         CancellationToken ct = default)
     {
@@ -46,9 +47,9 @@ public sealed class MinSpeidingClient : IMinSpeidingClient
             throw new MinSpeidingApiException(HttpStatusCode.BadRequest, "Prosjekt-ID fra Min speiding må fylles ut.");
         }
 
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (string.IsNullOrWhiteSpace(participantsApiKey))
         {
-            throw new MinSpeidingApiException(HttpStatusCode.Unauthorized, "API-nøkkel for arrangementet må fylles ut.");
+            throw new MinSpeidingApiException(HttpStatusCode.Unauthorized, "API-nøkkel for deltakerlisten (/project/get/participants) må fylles ut.");
         }
 
         var settings = await _configStore.LoadSettingsAsync(ct);
@@ -57,32 +58,35 @@ public sealed class MinSpeidingClient : IMinSpeidingClient
             : baseUrlOverride;
         baseUrl = (string.IsNullOrWhiteSpace(baseUrl) ? "https://min.speiding.no/api" : baseUrl).Trim().TrimEnd('/');
 
-        var authParam = CreateBasicAuthParameter(projectId, apiKey);
-
-        var participantsJson = await FetchJsonAsync($"{baseUrl}/project/get/participants", authParam, ct);
+        var participantsAuth = CreateBasicAuthParameter(projectId, participantsApiKey);
+        var participantsJson = await FetchJsonAsync($"{baseUrl}/project/get/participants", participantsAuth, ct);
 
         string? questionsJson = null;
         var questionsAvailable = false;
-        try
+        if (!string.IsNullOrWhiteSpace(questionsApiKey))
         {
-            using var qReq = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/project/get/questions");
-            qReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", authParam);
-            qReq.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-            using var qRes = await _http.SendAsync(qReq, ct);
-            if (qRes.IsSuccessStatusCode)
+            var questionsAuth = CreateBasicAuthParameter(projectId, questionsApiKey);
+            try
             {
-                questionsJson = await qRes.Content.ReadAsStringAsync(ct);
-                questionsAvailable = true;
+                using var qReq = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/project/get/questions");
+                qReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", questionsAuth);
+                qReq.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                using var qRes = await _http.SendAsync(qReq, ct);
+                if (qRes.IsSuccessStatusCode)
+                {
+                    questionsJson = await qRes.Content.ReadAsStringAsync(ct);
+                    questionsAvailable = true;
+                }
             }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            // Best-effort only: continue cleanly if questions endpoint is unavailable.
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Best-effort only: continue cleanly if questions endpoint is unavailable.
+            }
         }
 
         try

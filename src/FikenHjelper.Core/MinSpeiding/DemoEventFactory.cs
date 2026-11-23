@@ -7,7 +7,8 @@ public static class DemoEventFactory
         var feeLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["101"] = "Speider (450 kr)",
-            ["102"] = "Leder (250 kr)"
+            ["102"] = "Leder (250 kr)",
+            ["103"] = "Stab (0 kr)"
         };
 
         var participants = new List<EventParticipant>
@@ -171,13 +172,54 @@ public static class DemoEventFactory
                 CheckedIn: false,
                 RegistrationDate: "2026-10-18",
                 Answers: new Dictionary<string, string>(),
+                ExtraFields: new Dictionary<string, string>()),
+            new(
+                ParticipantKey: "90009",
+                MemberNo: 100222,
+                FirstName: "Anders",
+                LastName: "Stab",
+                Email: "anders.stab@example.no",
+                GroupName: "Molde speidergruppe",
+                GroupId: 501,
+                TroopName: "Stab",
+                FeeId: 103,
+                FeeLabel: "Stab (0 kr)",
+                FeeCategoryKey: "fee:103",
+                DetectedPriceNok: 0m,
+                Cancelled: false,
+                Confirmed: true,
+                Attended: true,
+                CheckedIn: false,
+                RegistrationDate: "2026-10-10",
+                Answers: new Dictionary<string, string>(),
+                ExtraFields: new Dictionary<string, string>()),
+            new(
+                ParticipantKey: "90010",
+                MemberNo: 100223,
+                FirstName: "Silje",
+                LastName: "Stab",
+                Email: "silje.stab@example.no",
+                GroupName: "Fræna speidergruppe",
+                GroupId: 505,
+                TroopName: "Stab",
+                FeeId: 103,
+                FeeLabel: "Stab (0 kr)",
+                FeeCategoryKey: "fee:103",
+                DetectedPriceNok: 0m,
+                Cancelled: false,
+                Confirmed: true,
+                Attended: true,
+                CheckedIn: false,
+                RegistrationDate: "2026-10-10",
+                Answers: new Dictionary<string, string>(),
                 ExtraFields: new Dictionary<string, string>())
         };
 
         var categories = new List<FeeCategorySummary>
         {
             new("fee:101", 101, "Speider (450 kr)", 3, 450m),
-            new("fee:102", 102, "Leder (250 kr)", 3, 250m)
+            new("fee:102", 102, "Leder (250 kr)", 3, 250m),
+            new("fee:103", 103, "Stab (0 kr)", 2, 0m)
         };
 
         return new MinSpeidingEventLoadResult(

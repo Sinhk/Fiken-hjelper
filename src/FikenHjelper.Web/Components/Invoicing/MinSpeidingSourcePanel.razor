@@ -15,7 +15,7 @@
         </div>
     }
 
-    <div class="fh-grid-3">
+    <div class="fh-grid-2">
         <div class="fh-field">
             <label for="ms-project-id">Prosjekt-ID i Min speiding</label>
             <input id="ms-project-id"
@@ -30,7 +30,16 @@
         </div>
 
         <div class="fh-field">
-            <label for="ms-api-key">API-nøkkel for arrangementet</label>
+            <label for="ms-event-name">Navn på arrangement (valgfritt)</label>
+            <input id="ms-event-name"
+                   type="text"
+                   value="@EventNameToSave"
+                   @onchange="HandleEventNameChanged"
+                   placeholder="f.eks. Kretsleir 2026" />
+        </div>
+
+        <div class="fh-field">
+            <label for="ms-api-key">API-nøkkel for deltakerliste (<code>/project/get/participants</code>)</label>
             <div class="fh-input-with-btn">
                 <input id="ms-api-key"
                        type="@(showApiKey ? "text" : "password")"
@@ -50,12 +59,24 @@
         </div>
 
         <div class="fh-field">
-            <label for="ms-event-name">Navn på arrangement (valgfritt)</label>
-            <input id="ms-event-name"
-                   type="text"
-                   value="@EventNameToSave"
-                   @onchange="HandleEventNameChanged"
-                   placeholder="f.eks. Kretsleir 2026" />
+            <label for="ms-questions-api-key">API-nøkkel for spørsmål/skjema (<code>/project/get/questions</code>, valgfri)</label>
+            <div class="fh-input-with-btn">
+                <input id="ms-questions-api-key"
+                       type="@(showQuestionsApiKey ? "text" : "password")"
+                       value="@QuestionsApiKey"
+                       @onchange="HandleQuestionsApiKeyChanged"
+                       placeholder="Valgfri – brukes for spørsmålstekster"
+                       autocomplete="off"
+                       autocorrect="off"
+                       autocapitalize="none"
+                       spellcheck="false" />
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        aria-pressed="@showQuestionsApiKey"
+                        @onclick="ToggleQuestionsApiKeyVisibility">
+                    @(showQuestionsApiKey ? "Skjul" : "Vis")
+                </button>
+            </div>
         </div>
     </div>
 
@@ -69,7 +90,7 @@
         {
             <label class="fh-checkbox-option">
                 <input type="checkbox" checked="@SaveApiKeyLocally" @onchange="HandleSaveKeyChanged" />
-                <span>Lagre også API-nøkkel lokalt</span>
+                <span>Lagre også API-nøkler lokalt</span>
             </label>
         }
     </div>
@@ -140,6 +161,10 @@
             <span>Ekskluder avmeldte</span>
         </label>
         <label class="fh-checkbox-option">
+            <input type="checkbox" checked="@Filters.ExcludeZeroPrice" @onchange="HandleExcludeZeroPriceChanged" />
+            <span>Ekskluder gratis (0 kr)</span>
+        </label>
+        <label class="fh-checkbox-option">
             <input type="checkbox" checked="@Filters.RequireConfirmed" @onchange="HandleRequireConfirmedChanged" />
             <span>Kun bekreftede</span>
         </label>
@@ -152,12 +177,16 @@
 
 @code {
     private bool showApiKey;
+    private bool showQuestionsApiKey;
 
     [Parameter] public string ProjectId { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> OnProjectIdChanged { get; set; }
 
     [Parameter] public string ApiKey { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> OnApiKeyChanged { get; set; }
+
+    [Parameter] public string QuestionsApiKey { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnQuestionsApiKeyChanged { get; set; }
 
     [Parameter] public string EventNameToSave { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> OnEventNameToSaveChanged { get; set; }
@@ -185,6 +214,7 @@
     [Parameter] public EventCallback OnLoadDemo { get; set; }
 
     private void ToggleApiKeyVisibility() => showApiKey = !showApiKey;
+    private void ToggleQuestionsApiKeyVisibility() => showQuestionsApiKey = !showQuestionsApiKey;
 
     private Task HandleSavedEventSelected(ChangeEventArgs e)
         => OnSelectSavedEvent.InvokeAsync(e.Value?.ToString() ?? string.Empty);
@@ -194,6 +224,9 @@
 
     private Task HandleApiKeyChanged(ChangeEventArgs e)
         => OnApiKeyChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleQuestionsApiKeyChanged(ChangeEventArgs e)
+        => OnQuestionsApiKeyChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
 
     private Task HandleEventNameChanged(ChangeEventArgs e)
         => OnEventNameToSaveChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
@@ -206,6 +239,9 @@
 
     private Task HandleExcludeCancelledChanged(ChangeEventArgs e)
         => OnFiltersChanged.InvokeAsync(Filters with { ExcludeCancelled = e.Value is bool b && b });
+
+    private Task HandleExcludeZeroPriceChanged(ChangeEventArgs e)
+        => OnFiltersChanged.InvokeAsync(Filters with { ExcludeZeroPrice = e.Value is bool b && b });
 
     private Task HandleRequireConfirmedChanged(ChangeEventArgs e)
         => OnFiltersChanged.InvokeAsync(Filters with { RequireConfirmed = e.Value is bool b && b });

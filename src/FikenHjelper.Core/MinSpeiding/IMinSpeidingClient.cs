@@ -4,7 +4,8 @@ public interface IMinSpeidingClient
 {
     Task<MinSpeidingEventLoadResult> GetEventParticipantsAsync(
         string projectId,
-        string apiKey,
+        string participantsApiKey,
+        string? questionsApiKey = null,
         string? baseUrlOverride = null,
         CancellationToken ct = default);
 }

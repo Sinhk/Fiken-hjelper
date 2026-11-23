@@ -409,18 +409,26 @@ h1:focus {
 }
 
 .fee-table {
-    --label-2: "Deltakere";
-    --label-3: "Oppdaget pris";
-    --label-4: "Pris (NOK)";
+    --label-2: "Inkluder";
+    --label-3: "Aktive deltakere";
+    --label-4: "Oppdaget sats";
+    --label-5: "Pris (NOK)";
 }
 
 .participants-table {
     --label-2: "Inkluder";
-    --label-3: "Speidergruppe";
-    --label-4: "Kategori";
-    --label-5: "Status";
-    --label-6: "Pris (NOK)";
-    --label-7: "Svar / detaljer";
+    --label-3: "Dekkes av kretsen";
+    --label-4: "Speidergruppe";
+    --label-5: "Kategori";
+    --label-6: "Status";
+    --label-7: "Pris (NOK)";
+    --label-8: "Svar / detaljer";
+}
+
+.district-covered-table {
+    --label-2: "Speidergruppe";
+    --label-3: "Kategori";
+    --label-4: "Beløp (NOK)";
 }
 
 .mappings-table {
@@ -502,6 +510,24 @@ h1:focus {
         font-weight: 600;
         color: var(--fh-muted);
     }
+
+    .table-wrapper td:nth-child(8)::before {
+        content: var(--label-8) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+}
+
+.fh-copy-textarea {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    background: #f8fafc;
+    resize: vertical;
 }
 
 .validation-message {

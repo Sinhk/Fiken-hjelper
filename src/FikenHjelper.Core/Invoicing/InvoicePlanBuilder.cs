@@ -16,10 +16,28 @@ public static partial class InvoicePlanBuilder
         EventParticipant participant,
         ParticipantFilterOptions filters,
         IReadOnlyDictionary<string, ParticipantOverride> overrides)
+        => IsParticipantIncluded(
+            participant,
+            filters,
+            new Dictionary<string, decimal>(),
+            overrides,
+            excludedCategoryKeys: null);
+
+    public static bool IsParticipantIncluded(
+        EventParticipant participant,
+        ParticipantFilterOptions filters,
+        IReadOnlyDictionary<string, decimal> categoryPricesNok,
+        IReadOnlyDictionary<string, ParticipantOverride> overrides,
+        IReadOnlySet<string>? excludedCategoryKeys = null)
     {
         if (overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.Included.HasValue)
         {
             return ov.Included.Value;
+        }
+
+        if (excludedCategoryKeys is not null && excludedCategoryKeys.Contains(participant.FeeCategoryKey))
+        {
+            return false;
         }
 
         if (filters.ExcludeCancelled && participant.Cancelled)
@@ -37,8 +55,18 @@ public static partial class InvoicePlanBuilder
             return false;
         }
 
+        if (filters.ExcludeZeroPrice && ResolveEffectivePriceNok(participant, categoryPricesNok, overrides) <= 0m)
+        {
+            return false;
+        }
+
         return true;
     }
+
+    public static bool IsCoveredByDistrict(
+        EventParticipant participant,
+        IReadOnlyDictionary<string, ParticipantOverride> overrides)
+        => overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.CoveredByDistrict;
 
     public static decimal ResolveEffectivePriceNok(
         EventParticipant participant,
@@ -70,26 +98,54 @@ public static partial class InvoicePlanBuilder
         ArgumentNullException.ThrowIfNull(fikenCustomers);
         ArgumentNullException.ThrowIfNull(savedGroupMappings);
 
-        var includedParticipants = new List<EventParticipant>();
+        var billableParticipants = new List<EventParticipant>();
+        var districtCoveredParticipants = new List<DistrictCoveredParticipant>();
         var excludedCount = 0;
 
         foreach (var participant in eventData.Participants)
         {
-            if (IsParticipantIncluded(participant, options.Filters, options.ParticipantOverrides))
-            {
-                includedParticipants.Add(participant);
-            }
-            else
+            if (!IsParticipantIncluded(
+                    participant,
+                    options.Filters,
+                    options.CategoryPricesNok,
+                    options.ParticipantOverrides,
+                    options.ExcludedCategoryKeys))
             {
                 excludedCount++;
+                continue;
             }
+
+            if (IsCoveredByDistrict(participant, options.ParticipantOverrides))
+            {
+                var amountNok = ResolveEffectivePriceNok(
+                    participant,
+                    options.CategoryPricesNok,
+                    options.ParticipantOverrides);
+                var amountOre = CurrencyHelper.ToOre(amountNok);
+                var displayName = string.IsNullOrWhiteSpace(participant.FullName)
+                    ? $"Deltaker {participant.ParticipantKey}"
+                    : participant.FullName;
+
+                districtCoveredParticipants.Add(new DistrictCoveredParticipant(
+                    ParticipantKey: participant.ParticipantKey,
+                    FullName: displayName,
+                    MemberNo: participant.MemberNo,
+                    GroupName: participant.GroupName,
+                    FeeLabel: participant.FeeLabel,
+                    AmountNok: amountNok,
+                    AmountOre: amountOre));
+                continue;
+            }
+
+            billableParticipants.Add(participant);
         }
 
         var drafts = options.BillingMode == BillingMode.PerScoutGroup
-            ? BuildPerGroupDrafts(eventData, includedParticipants, options, fikenCustomers, savedGroupMappings, existingDraftOrderReferences)
-            : BuildPerParticipantDrafts(eventData, includedParticipants, options, fikenCustomers, savedGroupMappings, existingDraftOrderReferences);
+            ? BuildPerGroupDrafts(eventData, billableParticipants, options, fikenCustomers, savedGroupMappings, existingDraftOrderReferences)
+            : BuildPerParticipantDrafts(eventData, billableParticipants, options, fikenCustomers, savedGroupMappings, existingDraftOrderReferences);
 
         var totalOre = drafts.Sum(d => d.TotalOre);
+        var districtCoveredTotalOre = districtCoveredParticipants.Sum(d => d.AmountOre);
         var unmatchedCount = drafts.Count(d => !d.SelectedContactId.HasValue);
         var duplicateCount = drafts.Count(d => d.DuplicateOrderReferenceExists);
 
@@ -111,12 +167,39 @@ public static partial class InvoicePlanBuilder
 
         return new InvoicePlanResult(
             Drafts: drafts,
-            IncludedParticipantCount: includedParticipants.Count,
+            IncludedParticipantCount: billableParticipants.Count,
             ExcludedParticipantCount: excludedCount,
             TotalOre: totalOre,
             UnmatchedDraftCount: unmatchedCount,
             DuplicateWarningCount: duplicateCount,
-            GlobalWarnings: globalWarnings);
+            GlobalWarnings: globalWarnings,
+            DistrictCoveredParticipants: districtCoveredParticipants,
+            DistrictCoveredTotalOre: districtCoveredTotalOre);
+    }
+
+    public static string FormatDistrictCoveredSummaryText(
+        string eventTitle,
+        IReadOnlyList<DistrictCoveredParticipant> covered)
+    {
+        if (covered.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Dekkes av kretsen – {eventTitle}");
+        sb.AppendLine($"Antall deltakere: {covered.Count}");
+        sb.AppendLine(new string('-', 44));
+        foreach (var item in covered)
+        {
+            var memberPart = item.MemberNo.HasValue ? $" (medl.nr {item.MemberNo.Value})" : string.Empty;
+            sb.AppendLine($"- {item.FullName}{memberPart}, {item.GroupName} – {item.FeeLabel}: {item.AmountNok.ToString("N2", NorwegianCulture)} kr");
+        }
+
+        var totalNok = CurrencyHelper.FromOre(covered.Sum(c => c.AmountOre));
+        sb.AppendLine(new string('-', 44));
+        sb.Append($"Sum som dekkes av kretsen: {totalNok.ToString("N2", NorwegianCulture)} kr");
+        return sb.ToString();
     }
 
     public static FikenInvoiceDraftRequest ToFikenRequest(

@@ -162,12 +162,15 @@
                         <label for="fiken-income-account">Standard inntektskonto</label>
                         @if (accounts.Count > 0)
                         {
-                            <InputSelect id="fiken-income-account" @bind-Value="formModel.DefaultIncomeAccount">
-                                @foreach (var account in accounts)
-                                {
-                                    <option @key="account.Code" value="@account.Code">@account.Code – @account.Name</option>
-                                }
-                            </InputSelect>
+                            <SearchableSelect TItem="FikenAccount"
+                                              InputId="fiken-income-account"
+                                              Items="accounts"
+                                              ValueSelector="@(a => a.Code)"
+                                              TextSelector="@(a => $"{a.Code} – {a.Name}")"
+                                              SelectedValue="@formModel.DefaultIncomeAccount"
+                                              SelectedValueChanged="@(val => formModel.DefaultIncomeAccount = val)"
+                                              Placeholder="Søk etter kontokode eller navn…"
+                                              AllowClear="false" />
                         }
                         else
                         {

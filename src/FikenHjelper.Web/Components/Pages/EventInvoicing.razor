@@ -55,6 +55,8 @@
                                 OnProjectIdChanged="(v) => minSpeidingProjectId = v"
                                 ApiKey="@minSpeidingApiKey"
                                 OnApiKeyChanged="(v) => minSpeidingApiKey = v"
+                                QuestionsApiKey="@minSpeidingQuestionsApiKey"
+                                OnQuestionsApiKeyChanged="(v) => minSpeidingQuestionsApiKey = v"
                                 EventNameToSave="@eventNameToSave"
                                 OnEventNameToSaveChanged="(v) => eventNameToSave = v"
                                 RememberEvent="rememberEvent"
@@ -87,14 +89,18 @@
             <div class="fh-stack">
                 <FeePricingTable Categories="eventData.FeeCategories"
                                  CategoryPrices="categoryPrices"
-                                 OnCategoryPriceChanged="HandleCategoryPriceChanged" />
+                                 ExcludedCategoryKeys="excludedCategoryKeys"
+                                 OnCategoryPriceChanged="HandleCategoryPriceChanged"
+                                 OnCategoryIncludeChanged="HandleCategoryIncludeChanged" />
 
                 <ParticipantOverridesTable EventData="eventData"
                                            Filters="filters"
                                            CategoryPrices="categoryPrices"
                                            Overrides="participantOverrides"
+                                           ExcludedCategoryKeys="excludedCategoryKeys"
                                            OnIncludeChanged="HandleParticipantIncludeChanged"
-                                           OnCustomPriceChanged="HandleParticipantPriceChanged" />
+                                           OnCustomPriceChanged="HandleParticipantPriceChanged"
+                                           OnCoveredByDistrictChanged="HandleParticipantCoveredByDistrictChanged" />
             </div>
         </section>
 
@@ -105,7 +111,8 @@
                     <h2>4. Forhåndsvisning av fakturautkast</h2>
                 </div>
 
-                <InvoicePreviewList Plan="invoicePlan"
+                <InvoicePreviewList EventTitle="@eventData.EventTitle"
+                                    Plan="invoicePlan"
                                     FikenCustomers="customers"
                                     IsSubmitting="isSubmittingDrafts"
                                     CreationResults="creationResults"

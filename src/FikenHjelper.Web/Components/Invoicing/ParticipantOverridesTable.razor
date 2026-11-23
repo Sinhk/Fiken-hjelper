@@ -21,6 +21,7 @@
                 <tr>
                     <th>Deltaker</th>
                     <th>Inkluder</th>
+                    <th>Dekkes av kretsen</th>
                     <th>Speidergruppe</th>
                     <th>Kategori</th>
                     <th>Status</th>
@@ -31,11 +32,18 @@
             <tbody>
                 @foreach (var participant in FilteredParticipants)
                 {
-                    var included = InvoicePlanBuilder.IsParticipantIncluded(participant, Filters, Overrides);
+                    var included = InvoicePlanBuilder.IsParticipantIncluded(
+                        participant,
+                        Filters,
+                        CategoryPrices,
+                        Overrides,
+                        ExcludedCategoryKeys);
+                    var coveredByDistrict = InvoicePlanBuilder.IsCoveredByDistrict(participant, Overrides);
                     var hasCustomPrice = Overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.CustomPriceNok.HasValue;
                     var effectivePrice = InvoicePlanBuilder.ResolveEffectivePriceNok(participant, CategoryPrices, Overrides);
                     var priceInputId = $"part-price-{participant.ParticipantKey}";
                     var includeInputId = $"part-inc-{participant.ParticipantKey}";
+                    var districtInputId = $"part-dist-{participant.ParticipantKey}";
 
                     <tr @key="participant.ParticipantKey">
                         <th scope="row">
@@ -51,6 +59,13 @@
                                    aria-label="Inkluder @participant.FullName"
                                    checked="@included"
                                    @onchange="(e) => HandleIncludeChanged(participant.ParticipantKey, e)" />
+                        </td>
+                        <td>
+                            <input id="@districtInputId"
+                                   type="checkbox"
+                                   aria-label="Dekkes av kretsen for @participant.FullName"
+                                   checked="@coveredByDistrict"
+                                   @onchange="(e) => HandleCoveredByDistrictChanged(participant.ParticipantKey, e)" />
                         </td>
                         <td>@participant.GroupName</td>
                         <td>@participant.FeeLabel</td>
@@ -70,6 +85,10 @@
                             @if (participant.Attended || participant.CheckedIn)
                             {
                                 <span class="fh-badge fh-badge-neutral">Deltok</span>
+                            }
+                            @if (included && coveredByDistrict)
+                            {
+                                <span class="fh-badge fh-badge-warn">Dekkes av kretsen</span>
                             }
                         </td>
                         <td class="fh-num-col">
@@ -103,7 +122,7 @@
         <div class="mt-2">
             <p class="fh-hint mb-1">
                 <strong>Prosjekt-ID:</strong> @EventData.ProjectId
-                · <strong>Spørsmål-endepunkt:</strong> @(EventData.QuestionsEndpointAvailable ? "Tilgjengelig" : "Ikke tilgjengelig (fortsetter uten)")
+                · <strong>Spørsmål-endepunkt:</strong> @(EventData.QuestionsEndpointAvailable ? "Tilgjengelig" : "Ikke brukt / ikke tilgjengelig")
                 · <strong>Demodata:</strong> @(EventData.IsDemoData ? "Ja" : "Nei")
             </p>
             <p class="fh-hint mb-1">
@@ -129,9 +148,11 @@
     [Parameter, EditorRequired] public ParticipantFilterOptions Filters { get; set; } = new();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, decimal> CategoryPrices { get; set; } = new Dictionary<string, decimal>();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, ParticipantOverride> Overrides { get; set; } = new Dictionary<string, ParticipantOverride>();
+    [Parameter, EditorRequired] public IReadOnlySet<string> ExcludedCategoryKeys { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     [Parameter] public EventCallback<(string ParticipantKey, bool? Included)> OnIncludeChanged { get; set; }
     [Parameter] public EventCallback<(string ParticipantKey, decimal? CustomPriceNok)> OnCustomPriceChanged { get; set; }
+    [Parameter] public EventCallback<(string ParticipantKey, bool CoveredByDistrict)> OnCoveredByDistrictChanged { get; set; }
 
     private IReadOnlyList<EventParticipant> FilteredParticipants =>
         string.IsNullOrWhiteSpace(searchQuery)
@@ -147,6 +168,9 @@
 
     private Task HandleIncludeChanged(string key, ChangeEventArgs e)
         => OnIncludeChanged.InvokeAsync((key, e.Value is bool b ? b : null));
+
+    private Task HandleCoveredByDistrictChanged(string key, ChangeEventArgs e)
+        => OnCoveredByDistrictChanged.InvokeAsync((key, e.Value is bool b && b));
 
     private Task HandleCustomPriceChanged(string key, ChangeEventArgs e)
     {

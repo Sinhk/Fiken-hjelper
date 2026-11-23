@@ -32,32 +32,34 @@
 
         <div class="fh-field">
             <label for="ctx-project">Prosjekt i Fiken (valgfritt)</label>
-            <select id="ctx-project"
-                    value="@(SelectedProjectId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
-                    @onchange="HandleProjectChanged">
-                <option value="">-- Uten prosjekt --</option>
-                @foreach (var project in Projects)
-                {
-                    var label = string.IsNullOrWhiteSpace(project.Number)
-                        ? project.Name
-                        : $"{project.Number} – {project.Name}";
-                    <option @key="project.ProjectId" value="@project.ProjectId.ToString(CultureInfo.InvariantCulture)">
-                        @label
-                    </option>
-                }
-            </select>
+            <SearchableSelect TItem="FikenProject"
+                              InputId="ctx-project"
+                              Items="Projects"
+                              ValueSelector="@(p => p.ProjectId.ToString(CultureInfo.InvariantCulture))"
+                              TextSelector="@(p => string.IsNullOrWhiteSpace(p.Number) ? p.Name : $"{p.Number} – {p.Name}")"
+                              SearchTextSelector="@(p => p.Description ?? string.Empty)"
+                              SelectedValue="@(SelectedProjectId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
+                              SelectedValueChanged="HandleProjectSelectedValueChanged"
+                              Placeholder="Søk etter prosjekt…"
+                              EmptyOptionText="-- Uten prosjekt --"
+                              AllowClear="true"
+                              Disabled="@IsLoadingFiken" />
         </div>
 
         <div class="fh-field">
             <label for="ctx-account">Inntektskonto</label>
             @if (IncomeAccounts.Count > 0)
             {
-                <select id="ctx-account" value="@IncomeAccount" @onchange="HandleIncomeAccountChanged">
-                    @foreach (var account in IncomeAccounts)
-                    {
-                        <option @key="account.Code" value="@account.Code">@account.Code – @account.Name</option>
-                    }
-                </select>
+                <SearchableSelect TItem="FikenAccount"
+                                  InputId="ctx-account"
+                                  Items="IncomeAccounts"
+                                  ValueSelector="@(a => a.Code)"
+                                  TextSelector="@(a => $"{a.Code} – {a.Name}")"
+                                  SelectedValue="@IncomeAccount"
+                                  SelectedValueChanged="HandleIncomeAccountSelectedValueChanged"
+                                  Placeholder="Søk etter kontokode eller navn…"
+                                  AllowClear="false"
+                                  Disabled="@IsLoadingFiken" />
             }
             else
             {
@@ -177,11 +179,11 @@
     private Task HandleCompanyChanged(ChangeEventArgs e)
         => OnCompanyChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
 
-    private Task HandleProjectChanged(ChangeEventArgs e)
-    {
-        var raw = e.Value?.ToString();
-        return OnProjectChanged.InvokeAsync(long.TryParse(raw, out var id) ? id : null);
-    }
+    private Task HandleProjectSelectedValueChanged(string raw)
+        => OnProjectChanged.InvokeAsync(long.TryParse(raw, out var id) ? id : null);
+
+    private Task HandleIncomeAccountSelectedValueChanged(string value)
+        => OnIncomeAccountChanged.InvokeAsync(value);
 
     private Task HandleIncomeAccountChanged(ChangeEventArgs e)
         => OnIncomeAccountChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);

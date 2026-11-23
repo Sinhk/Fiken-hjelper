@@ -42,13 +42,15 @@ public sealed class LocalConfigStoreTests : IDisposable
         var store = new LocalConfigStore(dataDirectory: _tempDir);
 
         await store.SaveGroupMappingAsync("Molde speidergruppe", 5001);
-        await store.SaveEventAsync(new SavedMinSpeidingEvent("Kretsleir", "444", "abc"));
+        await store.SaveEventAsync(new SavedMinSpeidingEvent("Kretsleir", "444", "abc", "q-key"));
 
         var mappings = await store.LoadMappingsAsync();
         Assert.True(mappings.GroupNameToContactId.TryGetValue("MOLDE SPEIDERGRUPPE", out var id));
         Assert.Equal(5001, id);
         Assert.Single(mappings.SavedEvents);
         Assert.Equal("444", mappings.SavedEvents[0].ProjectId);
+        Assert.Equal("abc", mappings.SavedEvents[0].ApiKey);
+        Assert.Equal("q-key", mappings.SavedEvents[0].QuestionsApiKey);
 
         await store.RemoveGroupMappingAsync("molde speidergruppe");
         var afterRemove = await store.LoadMappingsAsync();

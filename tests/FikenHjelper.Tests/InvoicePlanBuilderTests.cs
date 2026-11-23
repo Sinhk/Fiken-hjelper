@@ -43,14 +43,14 @@ public sealed class InvoicePlanBuilderTests
             Customers,
             new Dictionary<string, long>());
 
-        // 8 participants in demo, 1 cancelled (Maja in 1. Kristiansund) => 7 included across 5 groups (4 scout groups + Uten gruppe)
-        Assert.Equal(7, plan.IncludedParticipantCount);
+        // 10 participants in demo, 1 cancelled (Maja in 1. Kristiansund) => 9 included across 6 groups (5 scout groups + Uten gruppe)
+        Assert.Equal(9, plan.IncludedParticipantCount);
         Assert.Equal(1, plan.ExcludedParticipantCount);
-        Assert.Equal(5, plan.Drafts.Count);
+        Assert.Equal(6, plan.Drafts.Count);
 
         var moldeDraft = plan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
-        Assert.Equal(3, moldeDraft.Lines.Count);
-        Assert.Equal(115000, moldeDraft.TotalOre); // 450 + 450 + 250 = 1150 kr
+        Assert.Equal(4, moldeDraft.Lines.Count);
+        Assert.Equal(115000, moldeDraft.TotalOre); // 450 + 450 + 250 + 0 = 1150 kr
         Assert.Equal(1001, moldeDraft.SelectedContactId);
 
         var fikenReq = InvoicePlanBuilder.ToFikenRequest(moldeDraft, options);
@@ -94,8 +94,8 @@ public sealed class InvoicePlanBuilderTests
         var plan = InvoicePlanBuilder.Build(demo, options, Customers, new Dictionary<string, long>());
 
         var molde = plan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
-        // Ola has custom 225.25, Ingrid has 450.50, Kari has 250 => 3 summary buckets!
-        Assert.Equal(3, molde.Lines.Count);
+        // Ola has custom 225.25, Ingrid has 450.50, Kari has 250, Anders Stab has 0 => 4 summary buckets
+        Assert.Equal(4, molde.Lines.Count);
         Assert.Equal(22525 + 45050 + 25000, molde.TotalOre);
     }
 
@@ -144,5 +144,104 @@ public sealed class InvoicePlanBuilderTests
         var molde = groupPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
         Assert.True(molde.DuplicateOrderReferenceExists);
         Assert.Equal(1, groupPlan.DuplicateWarningCount);
+    }
+
+    [Fact]
+    public void Build_ExcludesZeroPriceAndExcludedCategories_WithoutCreatingEmptyDrafts()
+    {
+        var demo = DemoEventFactory.CreateDemoEvent();
+        var baseOptions = new InvoiceDraftPlanOptions(
+            BillingMode: BillingMode.PerScoutGroup,
+            GroupLineMode: GroupLineMode.OneLinePerParticipant,
+            Filters: new ParticipantFilterOptions(ExcludeCancelled: true, ExcludeZeroPrice: false),
+            CategoryPricesNok: new Dictionary<string, decimal>
+            {
+                ["fee:101"] = 450m,
+                ["fee:102"] = 250m,
+                ["fee:103"] = 0m
+            },
+            ParticipantOverrides: new Dictionary<string, ParticipantOverride>(),
+            ManualRecipientContactIds: new Dictionary<string, long>(),
+            IncomeAccount: "3200",
+            IssueDate: new DateOnly(2026, 11, 23),
+            DaysUntilDueDate: 14,
+            FikenProjectId: null,
+            BankAccountNumber: null,
+            InvoiceText: null,
+            OurReference: null,
+            OrderReferencePrefix: "KBK26",
+            ExcludedCategoryKeys: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "fee:103" });
+
+        // Case A: exclude fee:103 (Stab) -> no empty draft for Fræna speidergruppe
+        var categoryExcludedPlan = InvoicePlanBuilder.Build(demo, baseOptions, Customers, new Dictionary<string, long>());
+        Assert.Equal(7, categoryExcludedPlan.IncludedParticipantCount);
+        Assert.Equal(3, categoryExcludedPlan.ExcludedParticipantCount);
+        Assert.Equal(5, categoryExcludedPlan.Drafts.Count);
+        Assert.DoesNotContain(categoryExcludedPlan.Drafts, d => d.RecipientName == "Fræna speidergruppe");
+        Assert.Equal(3, categoryExcludedPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe").Lines.Count);
+
+        // Case B: ExcludeZeroPrice = true, with explicit Included = true override for Silje (90010)
+        var zeroPriceOptions = baseOptions with
+        {
+            ExcludedCategoryKeys = null,
+            Filters = new ParticipantFilterOptions(ExcludeCancelled: true, ExcludeZeroPrice: true),
+            ParticipantOverrides = new Dictionary<string, ParticipantOverride>
+            {
+                ["90010"] = new ParticipantOverride(Included: true)
+            }
+        };
+
+        var zeroPricePlan = InvoicePlanBuilder.Build(demo, zeroPriceOptions, Customers, new Dictionary<string, long>());
+        Assert.Equal(8, zeroPricePlan.IncludedParticipantCount);
+        Assert.Equal(2, zeroPricePlan.ExcludedParticipantCount);
+        var fraenaDraft = Assert.Single(zeroPricePlan.Drafts, d => d.RecipientName == "Fræna speidergruppe");
+        Assert.Equal(0, fraenaDraft.TotalOre);
+    }
+
+    [Fact]
+    public void Build_CoveredByDistrict_RemovesFromGroupDraftsAndPopulatesSummary()
+    {
+        var demo = DemoEventFactory.CreateDemoEvent();
+        var options = new InvoiceDraftPlanOptions(
+            BillingMode: BillingMode.PerScoutGroup,
+            GroupLineMode: GroupLineMode.OneLinePerParticipant,
+            Filters: new ParticipantFilterOptions(ExcludeCancelled: true),
+            CategoryPricesNok: new Dictionary<string, decimal>
+            {
+                ["fee:101"] = 450m,
+                ["fee:102"] = 250m,
+                ["fee:103"] = 0m
+            },
+            ParticipantOverrides: new Dictionary<string, ParticipantOverride>
+            {
+                ["90007"] = new ParticipantOverride(CoveredByDistrict: true)
+            },
+            ManualRecipientContactIds: new Dictionary<string, long>(),
+            IncomeAccount: "3200",
+            IssueDate: new DateOnly(2026, 11, 23),
+            DaysUntilDueDate: 14,
+            FikenProjectId: null,
+            BankAccountNumber: null,
+            InvoiceText: null,
+            OurReference: null,
+            OrderReferencePrefix: "KBK26",
+            ExcludedCategoryKeys: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "fee:103" });
+
+        var plan = InvoicePlanBuilder.Build(demo, options, Customers, new Dictionary<string, long>());
+
+        Assert.DoesNotContain(plan.Drafts, d => d.RecipientName == "Sunndal speidergruppe");
+        Assert.Equal(6, plan.IncludedParticipantCount);
+        Assert.Equal(3, plan.ExcludedParticipantCount);
+
+        var covered = Assert.Single(plan.DistrictCoveredParticipants);
+        Assert.Equal("90007", covered.ParticipantKey);
+        Assert.Equal("Linn Berg", covered.FullName);
+        Assert.Equal(25000, covered.AmountOre);
+        Assert.Equal(25000, plan.DistrictCoveredTotalOre);
+
+        var summary = InvoicePlanBuilder.FormatDistrictCoveredSummaryText(demo.EventTitle, plan.DistrictCoveredParticipants);
+        Assert.Contains("Linn Berg", summary);
+        Assert.Contains("Sunndal speidergruppe", summary);
+        Assert.Contains("250,00 kr", summary);
     }
 }

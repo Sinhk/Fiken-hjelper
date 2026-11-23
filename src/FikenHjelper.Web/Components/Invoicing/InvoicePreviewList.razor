@@ -7,12 +7,16 @@
             <span class="fh-kpi-value">@Plan.Drafts.Count</span>
         </div>
         <div class="fh-kpi">
-            <span class="fh-kpi-label">Inkluderte deltakere</span>
+            <span class="fh-kpi-label">Faktureres</span>
             <span class="fh-kpi-value">@Plan.IncludedParticipantCount (@Plan.ExcludedParticipantCount ekskludert)</span>
         </div>
         <div class="fh-kpi">
-            <span class="fh-kpi-label">Totalsum</span>
+            <span class="fh-kpi-label">Totalsum til fakturering</span>
             <span class="fh-kpi-value">@Plan.TotalNok.ToString("N2", NorwegianCulture) kr</span>
+        </div>
+        <div class="fh-kpi">
+            <span class="fh-kpi-label">Dekkes av kretsen</span>
+            <span class="fh-kpi-value">@Plan.DistrictCoveredParticipants.Count (@Plan.DistrictCoveredTotalNok.ToString("N2", NorwegianCulture) kr)</span>
         </div>
         <div class="fh-kpi">
             <span class="fh-kpi-label">Mangler Fiken-kunde</span>
@@ -31,6 +35,65 @@
                 }
             </ul>
         </div>
+    }
+
+    @if (Plan.DistrictCoveredParticipants.Count > 0)
+    {
+        var summaryText = InvoicePlanBuilder.FormatDistrictCoveredSummaryText(EventTitle, Plan.DistrictCoveredParticipants);
+
+        <section class="fh-card">
+            <div class="fh-card-header">
+                <h3>Dekkes av kretsen (faktureres ikke gruppene)</h3>
+                <span class="fh-badge fh-badge-warn">
+                    @Plan.DistrictCoveredParticipants.Count deltaker(e) · @Plan.DistrictCoveredTotalNok.ToString("N2", NorwegianCulture) kr
+                </span>
+            </div>
+            <p class="fh-hint">
+                Disse deltakerne er trukket ut av gruppefakturaene. Oversikten kan brukes som dokumentasjon ved oppgjør mot arrangørgruppe eller intern postering i Fiken.
+            </p>
+
+            <div tabindex="0" role="region" aria-labelledby="district-covered-caption" class="table-wrapper mb-2">
+                <table class="district-covered-table">
+                    <caption id="district-covered-caption">Deltakere som dekkes av kretsen</caption>
+                    <thead>
+                        <tr>
+                            <th>Deltaker</th>
+                            <th>Speidergruppe</th>
+                            <th>Kategori</th>
+                            <th class="fh-num-col">Beløp (NOK)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in Plan.DistrictCoveredParticipants)
+                        {
+                            <tr @key="item.ParticipantKey">
+                                <th scope="row">
+                                    @item.FullName
+                                    @if (item.MemberNo.HasValue)
+                                    {
+                                        <span class="fh-hint"> (#@item.MemberNo.Value)</span>
+                                    }
+                                </th>
+                                <td>@item.GroupName</td>
+                                <td>@item.FeeLabel</td>
+                                <td class="fh-num-col">@item.AmountNok.ToString("N2", NorwegianCulture) kr</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <details class="fh-diagnostics">
+                <summary>Tekstoversikt klar for kopiering</summary>
+                <div class="fh-field mt-2 mb-0">
+                    <label for="district-summary-text">Oppsummering</label>
+                    <textarea id="district-summary-text"
+                              class="fh-copy-textarea"
+                              readonly
+                              rows="6">@summaryText</textarea>
+                </div>
+            </details>
+        </section>
     }
 
     @foreach (var draft in Plan.Drafts)
@@ -66,17 +129,17 @@
             <div class="fh-grid-2 mb-2">
                 <div class="fh-field mb-0">
                     <label for="@customerSelectId">Fiken-kunde</label>
-                    <select id="@customerSelectId"
-                            value="@(draft.SelectedContactId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
-                            @onchange="(e) => HandleCustomerChanged(draft.DraftKey, e)">
-                        <option value="">-- Velg kunde i Fiken --</option>
-                        @foreach (var customer in ActiveCustomers)
-                        {
-                            <option @key="customer.ContactId" value="@customer.ContactId.ToString(CultureInfo.InvariantCulture)">
-                                @customer.Name@(!string.IsNullOrWhiteSpace(customer.Email) ? $" ({customer.Email})" : string.Empty)
-                            </option>
-                        }
-                    </select>
+                    <SearchableSelect TItem="FikenContact"
+                                      InputId="@customerSelectId"
+                                      Items="ActiveCustomers"
+                                      ValueSelector="@(c => c.ContactId.ToString(CultureInfo.InvariantCulture))"
+                                      TextSelector="@(c => !string.IsNullOrWhiteSpace(c.Email) ? $"{c.Name} ({c.Email})" : c.Name)"
+                                      SearchTextSelector="@(c => c.CustomerNumber?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
+                                      SelectedValue="@(draft.SelectedContactId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
+                                      SelectedValueChanged="@(val => HandleCustomerSelectedValueChanged(draft.DraftKey, val))"
+                                      Placeholder="Søk etter kunde i Fiken…"
+                                      EmptyOptionText="-- Velg kunde i Fiken --"
+                                      AllowClear="true" />
                 </div>
 
                 <div class="fh-actions align-self-end">
@@ -236,6 +299,7 @@
     private bool confirmCreation;
     private string? validationError;
 
+    [Parameter] public string EventTitle { get; set; } = string.Empty;
     [Parameter, EditorRequired] public InvoicePlanResult Plan { get; set; } = default!;
     [Parameter, EditorRequired] public IReadOnlyList<FikenContact> FikenCustomers { get; set; } = [];
     [Parameter] public bool IsSubmitting { get; set; }
@@ -252,11 +316,8 @@
     private int ReadyDraftCount => Plan.Drafts.Count(d => d.IsReadyToCreate);
     private decimal ReadyTotalNok => Plan.Drafts.Where(d => d.IsReadyToCreate).Sum(d => d.TotalNok);
 
-    private Task HandleCustomerChanged(string draftKey, ChangeEventArgs e)
-    {
-        var raw = e.Value?.ToString();
-        return OnManualCustomerSelected.InvokeAsync((draftKey, long.TryParse(raw, out var id) ? id : null));
-    }
+    private Task HandleCustomerSelectedValueChanged(string draftKey, string raw)
+        => OnManualCustomerSelected.InvokeAsync((draftKey, long.TryParse(raw, out var id) ? id : null));
 
     private void ToggleCreateCustomerForm(PlannedInvoiceDraft draft)
     {

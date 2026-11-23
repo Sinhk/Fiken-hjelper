@@ -18,11 +18,13 @@ public enum GroupLineMode
 public sealed record ParticipantFilterOptions(
     bool ExcludeCancelled = true,
     bool RequireConfirmed = false,
-    bool RequireAttended = false);
+    bool RequireAttended = false,
+    bool ExcludeZeroPrice = false);
 
 public sealed record ParticipantOverride(
     bool? Included = null,
-    decimal? CustomPriceNok = null);
+    decimal? CustomPriceNok = null,
+    bool CoveredByDistrict = false);
 
 public sealed record InvoiceDraftPlanOptions(
     BillingMode BillingMode,
@@ -38,7 +40,17 @@ public sealed record InvoiceDraftPlanOptions(
     string? BankAccountNumber,
     string? InvoiceText,
     string? OurReference,
-    string? OrderReferencePrefix);
+    string? OrderReferencePrefix,
+    IReadOnlySet<string>? ExcludedCategoryKeys = null);
+
+public sealed record DistrictCoveredParticipant(
+    string ParticipantKey,
+    string FullName,
+    long? MemberNo,
+    string GroupName,
+    string FeeLabel,
+    decimal AmountNok,
+    long AmountOre);
 
 public sealed record PlannedInvoiceLine(
     string Description,
@@ -75,9 +87,12 @@ public sealed record InvoicePlanResult(
     long TotalOre,
     int UnmatchedDraftCount,
     int DuplicateWarningCount,
-    IReadOnlyList<string> GlobalWarnings)
+    IReadOnlyList<string> GlobalWarnings,
+    IReadOnlyList<DistrictCoveredParticipant> DistrictCoveredParticipants,
+    long DistrictCoveredTotalOre)
 {
     public decimal TotalNok => TotalOre / 100m;
+    public decimal DistrictCoveredTotalNok => DistrictCoveredTotalOre / 100m;
 }
 
 public sealed record DraftCreationItemResult(

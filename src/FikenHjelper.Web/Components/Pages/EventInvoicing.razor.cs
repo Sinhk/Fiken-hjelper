@@ -36,6 +36,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private string minSpeidingProjectId = string.Empty;
     private string minSpeidingApiKey = string.Empty;
+    private string minSpeidingQuestionsApiKey = string.Empty;
     private string eventNameToSave = string.Empty;
     private bool rememberEvent;
     private bool saveApiKeyLocally;
@@ -46,6 +47,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private MinSpeidingEventLoadResult? eventData;
     private readonly Dictionary<string, decimal> categoryPrices = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> excludedCategoryKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ParticipantOverride> participantOverrides = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, long> manualRecipientContactIds = new(StringComparer.OrdinalIgnoreCase);
     private InvoicePlanResult? invoicePlan;
@@ -245,6 +247,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             {
                 minSpeidingApiKey = found.ApiKey;
             }
+
+            minSpeidingQuestionsApiKey = found.QuestionsApiKey ?? string.Empty;
         }
     }
 
@@ -259,6 +263,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             var loaded = await MinSpeidingClient.GetEventParticipantsAsync(
                 minSpeidingProjectId,
                 minSpeidingApiKey,
+                minSpeidingQuestionsApiKey,
                 settings.MinSpeidingBaseUrl,
                 token);
 
@@ -272,7 +277,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 await ConfigStore.SaveEventAsync(new SavedMinSpeidingEvent(
                     Name: string.IsNullOrWhiteSpace(eventNameToSave) ? loaded.EventTitle : eventNameToSave,
                     ProjectId: minSpeidingProjectId,
-                    ApiKey: saveApiKeyLocally ? minSpeidingApiKey : null), token);
+                    ApiKey: saveApiKeyLocally ? minSpeidingApiKey : null,
+                    QuestionsApiKey: saveApiKeyLocally ? minSpeidingQuestionsApiKey : null), token);
                 mappings = await ConfigStore.LoadMappingsAsync(token);
             }
 
@@ -319,6 +325,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     {
         eventData = loaded;
         categoryPrices.Clear();
+        excludedCategoryKeys.Clear();
         participantOverrides.Clear();
         manualRecipientContactIds.Clear();
         creationResults.Clear();
@@ -361,12 +368,36 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         RebuildPlan();
     }
 
+    private void HandleCategoryIncludeChanged((string CategoryKey, bool Included) change)
+    {
+        if (change.Included)
+        {
+            excludedCategoryKeys.Remove(change.CategoryKey);
+        }
+        else
+        {
+            excludedCategoryKeys.Add(change.CategoryKey);
+        }
+
+        RebuildPlan();
+    }
+
     private void HandleParticipantIncludeChanged((string ParticipantKey, bool? Included) change)
     {
         participantOverrides.TryGetValue(change.ParticipantKey, out var existing);
         participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
         {
             Included = change.Included
+        };
+        RebuildPlan();
+    }
+
+    private void HandleParticipantCoveredByDistrictChanged((string ParticipantKey, bool CoveredByDistrict) change)
+    {
+        participantOverrides.TryGetValue(change.ParticipantKey, out var existing);
+        participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
+        {
+            CoveredByDistrict = change.CoveredByDistrict
         };
         RebuildPlan();
     }
@@ -537,7 +568,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         BankAccountNumber: bankAccountNumber,
         InvoiceText: invoiceText,
         OurReference: ourReference,
-        OrderReferencePrefix: orderReferencePrefix);
+        OrderReferencePrefix: orderReferencePrefix,
+        ExcludedCategoryKeys: excludedCategoryKeys);
 
     private void RebuildPlan()
     {

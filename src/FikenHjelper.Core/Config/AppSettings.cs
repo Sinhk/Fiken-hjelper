@@ -55,7 +55,8 @@ public sealed record AppSettingsDefaults(
 public sealed record SavedMinSpeidingEvent(
     string Name,
     string ProjectId,
-    string? ApiKey = null);
+    string? ApiKey = null,
+    string? QuestionsApiKey = null);
 
 public sealed class MappingsData
 {
@@ -306,7 +307,8 @@ public sealed class LocalConfigStore : ILocalConfigStore
             {
                 Name = trimmedName,
                 ProjectId = trimmedId,
-                ApiKey = string.IsNullOrWhiteSpace(savedEvent.ApiKey) ? null : savedEvent.ApiKey.Trim()
+                ApiKey = string.IsNullOrWhiteSpace(savedEvent.ApiKey) ? null : savedEvent.ApiKey.Trim(),
+                QuestionsApiKey = string.IsNullOrWhiteSpace(savedEvent.QuestionsApiKey) ? null : savedEvent.QuestionsApiKey.Trim()
             };
 
             var existingIndex = mappings.SavedEvents.FindIndex(e =>
@@ -413,7 +415,8 @@ public sealed class LocalConfigStore : ILocalConfigStore
             {
                 Name = string.IsNullOrWhiteSpace(e.Name) ? $"Arrangement {e.ProjectId.Trim()}" : e.Name.Trim(),
                 ProjectId = e.ProjectId.Trim(),
-                ApiKey = string.IsNullOrWhiteSpace(e.ApiKey) ? null : e.ApiKey.Trim()
+                ApiKey = string.IsNullOrWhiteSpace(e.ApiKey) ? null : e.ApiKey.Trim(),
+                QuestionsApiKey = string.IsNullOrWhiteSpace(e.QuestionsApiKey) ? null : e.QuestionsApiKey.Trim()
             })
             .ToList();
 

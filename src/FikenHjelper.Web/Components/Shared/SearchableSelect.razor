@@ -1,0 +1,297 @@
+@typeparam TItem
+
+@{
+    var options = GetFilteredOptions();
+    var effectiveId = EffectiveInputId;
+    var listboxId = $"{effectiveId}-listbox";
+    var activeOptionId = _isOpen && _activeIndex >= 0 && _activeIndex < options.Count
+        ? $"{effectiveId}-opt-{_activeIndex}"
+        : null;
+    var displayText = SelectedDisplayText;
+}
+
+<div class="fh-combobox" @onfocusout="HandleFocusOut">
+    <div class="fh-combobox-control">
+        <input id="@effectiveId"
+               type="text"
+               class="fh-combobox-input"
+               role="combobox"
+               aria-expanded="@_isOpen"
+               aria-controls="@listboxId"
+               aria-autocomplete="list"
+               aria-activedescendant="@activeOptionId"
+               autocomplete="off"
+               disabled="@Disabled"
+               placeholder="@(string.IsNullOrEmpty(displayText) ? Placeholder : displayText)"
+               value="@(_isOpen ? _searchText : displayText)"
+               @onfocus="HandleFocus"
+               @onclick="HandleClick"
+               @oninput="HandleInput"
+               @onkeydown="HandleKeyDown" />
+
+        @if (AllowClear && !Disabled && !string.IsNullOrEmpty(SelectedValue))
+        {
+            <button type="button"
+                    class="fh-combobox-clear"
+                    aria-label="Fjern valg"
+                    title="Fjern valg"
+                    @onmousedown:preventDefault
+                    @onclick="ClearSelectionAsync">
+                ×
+            </button>
+        }
+
+        <button type="button"
+                class="fh-combobox-toggle"
+                tabindex="-1"
+                aria-label="@(_isOpen ? "Lukk liste" : "Åpne liste")"
+                disabled="@Disabled"
+                @onmousedown:preventDefault
+                @onclick="ToggleDropdown">
+            <span aria-hidden="true">▾</span>
+        </button>
+    </div>
+
+    @if (_isOpen)
+    {
+        <ul id="@listboxId"
+            class="fh-combobox-listbox"
+            role="listbox"
+            @onmousedown:preventDefault>
+            @if (options.Count == 0)
+            {
+                <li class="fh-combobox-empty" role="presentation">Ingen treff for «@_searchText»</li>
+            }
+            else
+            {
+                @for (var i = 0; i < options.Count; i++)
+                {
+                    var index = i;
+                    var opt = options[index];
+                    var isSelected = string.Equals(opt.Value, SelectedValue ?? string.Empty, StringComparison.Ordinal);
+                    var isActive = index == _activeIndex;
+                    var optionId = $"{effectiveId}-opt-{index}";
+
+                    <li @key="opt.Key"
+                        id="@optionId"
+                        role="option"
+                        aria-selected="@isSelected"
+                        class="fh-combobox-option @(isActive ? "is-active" : string.Empty) @(isSelected ? "is-selected" : string.Empty)"
+                        @onmouseenter="() => _activeIndex = index"
+                        @onmousedown:preventDefault
+                        @onclick="() => SelectOptionAsync(opt.Value)">
+                        @opt.Text
+                    </li>
+                }
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    private readonly string _fallbackId = $"ss-{Guid.NewGuid():N}";
+    private bool _isOpen;
+    private string _searchText = string.Empty;
+    private int _activeIndex = -1;
+
+    [Parameter] public string InputId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public IReadOnlyList<TItem> Items { get; set; } = [];
+    [Parameter, EditorRequired] public Func<TItem, string> ValueSelector { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<TItem, string> TextSelector { get; set; } = default!;
+    [Parameter] public Func<TItem, string>? SearchTextSelector { get; set; }
+    [Parameter] public string? SelectedValue { get; set; }
+    [Parameter] public EventCallback<string> SelectedValueChanged { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Søk eller velg…";
+    [Parameter] public string? EmptyOptionText { get; set; }
+    [Parameter] public bool AllowClear { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private string EffectiveInputId => string.IsNullOrWhiteSpace(InputId) ? _fallbackId : InputId;
+
+    private string SelectedDisplayText
+    {
+        get
+        {
+            var current = SelectedValue ?? string.Empty;
+            if (string.IsNullOrEmpty(current))
+            {
+                return string.Empty;
+            }
+
+            foreach (var item in Items)
+            {
+                if (string.Equals(ValueSelector(item), current, StringComparison.Ordinal))
+                {
+                    return TextSelector(item);
+                }
+            }
+
+            return current;
+        }
+    }
+
+    private IReadOnlyList<SelectOption> GetFilteredOptions()
+    {
+        var tokens = _searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var result = new List<SelectOption>();
+
+        if (AllowClear && !string.IsNullOrWhiteSpace(EmptyOptionText))
+        {
+            if (tokens.Length == 0 || MatchesTokens(EmptyOptionText, tokens))
+            {
+                result.Add(new SelectOption("__empty__", string.Empty, EmptyOptionText));
+            }
+        }
+
+        foreach (var item in Items)
+        {
+            var val = ValueSelector(item);
+            var text = TextSelector(item);
+            var searchable = SearchTextSelector is null ? text : $"{text} {SearchTextSelector(item)}";
+            if (tokens.Length == 0 || MatchesTokens(searchable, tokens))
+            {
+                result.Add(new SelectOption($"val:{val}", val, text));
+            }
+        }
+
+        return result;
+    }
+
+    private static bool MatchesTokens(string candidate, string[] tokens)
+    {
+        foreach (var token in tokens)
+        {
+            if (!candidate.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void HandleFocus()
+    {
+        if (Disabled)
+        {
+            return;
+        }
+
+        OpenDropdown();
+    }
+
+    private void HandleClick()
+    {
+        if (Disabled)
+        {
+            return;
+        }
+
+        if (!_isOpen)
+        {
+            OpenDropdown();
+        }
+    }
+
+    private void ToggleDropdown()
+    {
+        if (Disabled)
+        {
+            return;
+        }
+
+        if (_isOpen)
+        {
+            CloseDropdown();
+        }
+        else
+        {
+            OpenDropdown();
+        }
+    }
+
+    private void OpenDropdown()
+    {
+        _isOpen = true;
+        _searchText = string.Empty;
+        _activeIndex = 0;
+    }
+
+    private void CloseDropdown()
+    {
+        _isOpen = false;
+        _searchText = string.Empty;
+        _activeIndex = -1;
+    }
+
+    private void HandleInput(ChangeEventArgs e)
+    {
+        _isOpen = true;
+        _searchText = e.Value?.ToString() ?? string.Empty;
+        _activeIndex = 0;
+    }
+
+    private void HandleFocusOut()
+    {
+        CloseDropdown();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (Disabled)
+        {
+            return;
+        }
+
+        var options = GetFilteredOptions();
+        switch (e.Key)
+        {
+            case "ArrowDown":
+                if (!_isOpen)
+                {
+                    OpenDropdown();
+                }
+                else if (options.Count > 0)
+                {
+                    _activeIndex = (_activeIndex + 1) % options.Count;
+                }
+                break;
+
+            case "ArrowUp":
+                if (!_isOpen)
+                {
+                    OpenDropdown();
+                }
+                else if (options.Count > 0)
+                {
+                    _activeIndex = _activeIndex <= 0 ? options.Count - 1 : _activeIndex - 1;
+                }
+                break;
+
+            case "Enter":
+                if (_isOpen && _activeIndex >= 0 && _activeIndex < options.Count)
+                {
+                    await SelectOptionAsync(options[_activeIndex].Value);
+                }
+                break;
+
+            case "Escape":
+                CloseDropdown();
+                break;
+        }
+    }
+
+    private async Task SelectOptionAsync(string value)
+    {
+        CloseDropdown();
+        await SelectedValueChanged.InvokeAsync(value);
+    }
+
+    private async Task ClearSelectionAsync()
+    {
+        CloseDropdown();
+        await SelectedValueChanged.InvokeAsync(string.Empty);
+    }
+
+    private sealed record SelectOption(string Key, string Value, string Text);
+}

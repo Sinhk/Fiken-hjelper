@@ -159,15 +159,51 @@ public sealed class MinSpeidingParserTests
         var store = new LocalConfigStore(dataDirectory: Path.Combine(Path.GetTempPath(), "fh-test-" + Guid.NewGuid().ToString("N")));
         var client = new MinSpeidingClient(http, store);
 
-        var result = await client.GetEventParticipantsAsync("12345", "secret-key", "https://min.speiding.no/api");
+        var result = await client.GetEventParticipantsAsync(
+            "12345",
+            participantsApiKey: "secret-key",
+            questionsApiKey: "questions-secret",
+            baseUrlOverride: "https://min.speiding.no/api");
 
         Assert.False(result.QuestionsEndpointAvailable);
         Assert.Equal(2, requests.Count);
-        var expectedAuth = Convert.ToBase64String(Encoding.UTF8.GetBytes("12345:secret-key"));
-        Assert.All(requests, r =>
+
+        var participantsReq = Assert.Single(requests, r => r.RequestUri!.AbsolutePath.EndsWith("/project/get/participants"));
+        Assert.Equal("Basic", participantsReq.Headers.Authorization?.Scheme);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("12345:secret-key")), participantsReq.Headers.Authorization?.Parameter);
+
+        var questionsReq = Assert.Single(requests, r => r.RequestUri!.AbsolutePath.EndsWith("/project/get/questions"));
+        Assert.Equal("Basic", questionsReq.Headers.Authorization?.Scheme);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("12345:questions-secret")), questionsReq.Headers.Authorization?.Parameter);
+    }
+
+    [Fact]
+    public async Task MinSpeidingClient_SkipsQuestionsEndpointWhenQuestionsApiKeyIsEmpty()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpHandler((req, _) =>
         {
-            Assert.Equal("Basic", r.Headers.Authorization?.Scheme);
-            Assert.Equal(expectedAuth, r.Headers.Authorization?.Parameter);
+            requests.Add(req);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"participants":[],"labels":[]}""", Encoding.UTF8, "application/json")
+            });
         });
+
+        using var http = new HttpClient(handler);
+        var store = new LocalConfigStore(dataDirectory: Path.Combine(Path.GetTempPath(), "fh-test-" + Guid.NewGuid().ToString("N")));
+        var client = new MinSpeidingClient(http, store);
+
+        var result = await client.GetEventParticipantsAsync(
+            "12345",
+            participantsApiKey: "secret-key",
+            questionsApiKey: null,
+            baseUrlOverride: "https://min.speiding.no/api");
+
+        Assert.False(result.QuestionsEndpointAvailable);
+        var req = Assert.Single(requests);
+        Assert.EndsWith("/project/get/participants", req.RequestUri!.AbsolutePath);
+        Assert.Equal("Basic", req.Headers.Authorization?.Scheme);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("12345:secret-key")), req.Headers.Authorization?.Parameter);
     }
 }

@@ -1,0 +1,110 @@
+.fh-combobox {
+    position: relative;
+    inline-size: 100%;
+    min-inline-size: 0;
+}
+
+.fh-combobox-control {
+    display: flex;
+    align-items: stretch;
+    inline-size: 100%;
+    border: 1px solid #8a9991;
+    border-radius: 0.375rem;
+    background-color: #fff;
+    overflow: clip;
+}
+
+.fh-combobox-control:focus-within {
+    outline: 3px solid var(--fh-focus, #0b57d0);
+    outline-offset: 2px;
+}
+
+.fh-combobox-input {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    border: 0 !important;
+    outline: none !important;
+    min-block-size: 40px !important;
+    padding: 0.45rem 0.65rem;
+    font: inherit;
+    font-size: max(1rem, 1em);
+    background-color: transparent;
+    color: var(--fh-text, #1c2420);
+}
+
+.fh-combobox-input::placeholder {
+    color: var(--fh-text, #1c2420);
+    opacity: 0.78;
+}
+
+.fh-combobox-clear,
+.fh-combobox-toggle {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 36px;
+    border: 0;
+    border-inline-start: 1px solid #e1e8e3;
+    background-color: #f6f9f7;
+    color: var(--fh-text, #1c2420);
+    cursor: pointer;
+    padding: 0 0.5rem;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.fh-combobox-clear:hover,
+.fh-combobox-toggle:hover {
+    background-color: #e8f1ec;
+}
+
+.fh-combobox-clear:disabled,
+.fh-combobox-toggle:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.fh-combobox-listbox {
+    position: absolute;
+    inset-block-start: calc(100% + 4px);
+    inset-inline-start: 0;
+    inset-inline-end: 0;
+    z-index: 50;
+    margin: 0;
+    padding: 0.25rem;
+    list-style: none;
+    max-block-size: 260px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    background-color: #ffffff;
+    border: 1px solid #8a9991;
+    border-radius: 0.45rem;
+    box-shadow: 0 8px 20px rgba(16, 32, 24, 0.14);
+}
+
+.fh-combobox-option {
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.3rem;
+    cursor: pointer;
+    line-height: 1.35;
+}
+
+.fh-combobox-option.is-active {
+    background-color: #e8f1ec;
+    color: #133928;
+}
+
+.fh-combobox-option.is-selected {
+    font-weight: 650;
+}
+
+.fh-combobox-option.is-selected::before {
+    content: "✓ ";
+}
+
+.fh-combobox-empty {
+    padding: 0.55rem 0.65rem;
+    color: var(--fh-muted, #4b5a52);
+    font-size: 0.9rem;
+}
