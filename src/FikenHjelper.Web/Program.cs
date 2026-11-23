@@ -5,11 +5,13 @@ using FikenHjelper.Core.MinSpeiding;
 using FikenHjelper.Web.Auth;
 using FikenHjelper.Web.Components;
 using Microsoft.AspNetCore.DataProtection;
+using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.AddMudServices();
 
 var dataDirOverride = builder.Configuration["FikenHjelper:DataDirectory"];
 if (!string.IsNullOrWhiteSpace(dataDirOverride))

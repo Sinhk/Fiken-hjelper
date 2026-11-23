@@ -1,0 +1,219 @@
+@page "/budsjett/oppsett"
+@rendermode InteractiveServer
+
+<PageTitle>Rediger budsjett – Fiken-hjelper</PageTitle>
+<MudProviders />
+
+<MudStack Spacing="4">
+    <MudPaper Class="pa-4" Outlined>
+        <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <MudText Typo="Typo.h5" HtmlTag="h1">Rediger budsjett</MudText>
+            <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ArrowBack" Href="budsjett">
+                Til rapporten
+            </MudButton>
+        </MudStack>
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+        }
+
+        @if (!hasCompany)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                Ingen Fiken-foretak er valgt, så prosjekter kan ikke kobles ennå. Koble til Fiken under
+                <MudLink Href="innstillinger">Innstillinger</MudLink>.
+            </MudAlert>
+        }
+
+        <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+            <MudSelect T="int" Label="År" Value="selectedYear" ValueChanged="SelectYearAsync"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense Style="min-width: 7rem"
+                       Disabled="@(data.Years.Count == 0)">
+                @foreach (var y in data.Years.Select(y => y.Year))
+                {
+                    <MudSelectItem Value="y">@y</MudSelectItem>
+                }
+            </MudSelect>
+            <MudNumericField T="int" Label="Nytt år" @bind-Value="newYear" Variant="Variant.Outlined" Margin="Margin.Dense"
+                             HideSpinButtons Style="max-width: 7rem" Min="2000" Max="2100" />
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddYearAsync">Opprett år</MudButton>
+            <MudSpacer />
+            @if (isDirty)
+            {
+                <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">Ulagrede endringer</MudChip>
+            }
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                       OnClick="SaveAsync" Disabled="@(!isDirty || isSaving)">
+                Lagre
+            </MudButton>
+        </MudStack>
+
+        @if (current is null)
+        {
+            <MudAlert Severity="Severity.Info">
+                Ingen budsjett er lagt inn ennå. Importer fra regnearket nedenfor, eller opprett et år og legg inn poster.
+            </MudAlert>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
+                Inntekter skrives som positive beløp og kostnader som negative. Regnskapet hentes fra de koblede Fiken-prosjektene.
+                Fyll bare ut «Manuelt regnskap» for år uten prosjekter i Fiken.
+            </MudText>
+
+            <MudSimpleTable Dense Bordered Style="overflow-x: auto">
+                <thead>
+                    <tr>
+                        <th style="min-width: 14rem">Budsjettpost</th>
+                        <th style="min-width: 9rem" class="fh-num-col">Budsjett</th>
+                        <th style="min-width: 9rem" class="fh-num-col">Manuelt regnskap</th>
+                        <th style="min-width: 20rem">Fiken-prosjekter</th>
+                        <th style="width: 7.5rem"><span class="visually-hidden">Handlinger</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (var i = 0; i < current.Lines.Count; i++)
+                    {
+                        var index = i;
+                        var line = current.Lines[index];
+                        <tr @key="line">
+                            <td>
+                                <MudTextField T="string" Value="line.Name" ValueChanged="v => { line.Name = v; MarkDirty(); }"
+                                              Variant="Variant.Text" Margin="Margin.Dense" aria-label="Navn på budsjettpost" />
+                            </td>
+                            <td>
+                                <MudNumericField T="decimal" Value="line.Amount" ValueChanged="v => { line.Amount = v; MarkDirty(); }"
+                                                 Culture="Nb" Format="N0" HideSpinButtons Margin="Margin.Dense"
+                                                 Class="fh-num-input" aria-label="@($"Budsjett for {line.Name}")" />
+                            </td>
+                            <td>
+                                <MudNumericField T="decimal?" Value="line.ManualActual" ValueChanged="v => { line.ManualActual = v; MarkDirty(); }"
+                                                 Culture="Nb" Format="N0" HideSpinButtons Clearable Margin="Margin.Dense"
+                                                 Placeholder="Fra Fiken" Class="fh-num-input" aria-label="@($"Manuelt regnskap for {line.Name}")" />
+                            </td>
+                            <td>
+                                <MudSelect T="long" MultiSelection Dense Margin="Margin.Dense" Variant="Variant.Text"
+                                           SelectedValues="line.ProjectIds" SelectedValuesChanged="v => SetProjects(line, v)"
+                                           ToStringFunc="ProjectName" MultiSelectionTextFunc="ProjectSummary"
+                                           Placeholder="@(projects.Count == 0 ? "Ingen prosjekter lastet" : "Velg prosjekter")"
+                                           Disabled="@(projects.Count == 0)" aria-label="@($"Prosjekter for {line.Name}")">
+                                    @foreach (var p in projects)
+                                    {
+                                        var usedBy = UsedByOther(p.ProjectId, line);
+                                        <MudSelectItem T="long" Value="p.ProjectId">
+                                            @p.Name
+                                            @if (p.Completed)
+                                            {
+                                                <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> (avsluttet)</MudText>
+                                            }
+                                            @if (usedBy is not null)
+                                            {
+                                                <MudText Inline Typo="Typo.caption" Color="Color.Warning"> – brukt i «@usedBy»</MudText>
+                                            }
+                                        </MudSelectItem>
+                                    }
+                                </MudSelect>
+                                @foreach (var missing in line.ProjectIds.Where(id => !projectsById.ContainsKey(id)))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" OnClose="_ => RemoveProject(line, missing)">
+                                        Ukjent prosjekt @missing
+                                    </MudChip>
+                                }
+                            </td>
+                            <td>
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="@(index == 0)"
+                                               OnClick="() => Move(index, -1)" aria-label="Flytt opp" />
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="@(index == current.Lines.Count - 1)"
+                                               OnClick="() => Move(index, 1)" aria-label="Flytt ned" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                               OnClick="() => RemoveLine(index)" aria-label="@($"Slett {line.Name}")" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th scope="row">Budsjettert resultat</th>
+                        <td class="fh-num-col tabular-nums"><strong>@current.Lines.Sum(l => l.Amount).ToString("N0", Nb)</strong></td>
+                        <td colspan="3"></td>
+                    </tr>
+                </tfoot>
+            </MudSimpleTable>
+
+            <MudStack Row Wrap="Wrap.Wrap" Spacing="2" Class="mt-3">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddLine">Legg til post</MudButton>
+                @if (data.FindYear(current.Year - 1) is { } previous)
+                {
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ContentCopy"
+                               OnClick="() => CopyFrom(previous)" Disabled="@(current.Lines.Count > 0)"
+                               title="@(current.Lines.Count > 0 ? "Bare tilgjengelig for tomme år" : null)">
+                        Kopier poster fra @previous.Year
+                    </MudButton>
+                }
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Filled.DeleteForever" OnClick="DeleteYearAsync">
+                    Slett @current.Year
+                </MudButton>
+            </MudStack>
+        }
+    </MudPaper>
+
+    <MudPaper Class="pa-4" Outlined>
+        <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Importer fra regneark</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Last ned «Sammenstilling av budsjett og regnskap» fra Google Sheets som .xlsx og velg filen her.
+            Budsjettpostene leses fra oversiktsarket, og prosjektkoblingene fra arkene «Regnskap ÅÅÅÅ».
+            År uten eget prosjektark får regnskapstallene som manuelle tall.
+        </MudText>
+
+        <MudFileUpload T="IBrowserFile" Accept=".xlsx" FilesChanged="ReadImportFileAsync" MaxFileSize="MaxImportBytes">
+            <CustomContent>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.UploadFile"
+                           OnClick="@context.OpenFilePickerAsync" Disabled="isImporting">
+                    Velg .xlsx-fil
+                </MudButton>
+            </CustomContent>
+        </MudFileUpload>
+
+        @if (importPreview is not null)
+        {
+            <MudText Typo="Typo.subtitle1" Class="mt-4">Fant @importPreview.Years.Count år i «@importFileName»</MudText>
+            <MudList T="int" Dense>
+                @foreach (var y in importPreview.Years)
+                {
+                    var year = y;
+                    <MudListItem T="int">
+                        <MudCheckBox T="bool" Value="importSelection.Contains(year.Year)" ValueChanged="v => ToggleImportYear(year.Year, v)">
+                            @year.Year: @year.Lines.Count poster, budsjettert resultat @year.Lines.Sum(l => l.Amount).ToString("N0", Nb),
+                            @(year.Lines.Any(l => l.ManualActual.HasValue) ? "manuelle regnskapstall" : $"{year.Lines.Sum(l => l.ProjectIds.Count)} prosjektkoblinger")
+                            @if (data.FindYear(year.Year) is not null)
+                            {
+                                <MudText Inline Typo="Typo.caption" Color="Color.Warning"> (erstatter eksisterende)</MudText>
+                            }
+                        </MudCheckBox>
+                    </MudListItem>
+                }
+            </MudList>
+
+            @if (importPreview.Warnings.Count > 0)
+            {
+                <MudAlert Severity="Severity.Warning" Class="my-2">
+                    <ul class="mb-0">
+                        @foreach (var w in importPreview.Warnings)
+                        {
+                            <li>@w</li>
+                        }
+                    </ul>
+                </MudAlert>
+            }
+
+            <MudStack Row Spacing="2" Class="mt-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyImportAsync" Disabled="@(importSelection.Count == 0)">
+                    Importer valgte år
+                </MudButton>
+                <MudButton Variant="Variant.Text" OnClick="() => importPreview = null">Avbryt</MudButton>
+            </MudStack>
+        }
+    </MudPaper>
+</MudStack>

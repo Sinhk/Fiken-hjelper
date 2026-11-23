@@ -564,3 +564,24 @@ h1:focus {
 .invalid {
     outline: 1px solid #dc2626;
 }
+
+/* Budsjett (fase 3) */
+.budget-table td,
+.budget-table th {
+    white-space: nowrap;
+}
+
+.budget-table .budget-detail {
+    background-color: #f8faf9;
+}
+
+.budget-table .budget-total th,
+.budget-table .budget-total td {
+    font-weight: 700;
+    border-top: 2px solid var(--fh-border);
+}
+
+.fh-num-input input {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
