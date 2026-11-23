@@ -101,7 +101,7 @@ FikenHjelper.slnx
 
 ---
 
-## Fase 4 – MCP-server for AI-chat (`FikenHjelper.Mcp`)
+## Fase 4 – MCP-server for AI-chat (`FikenHjelper.Mcp`) *(Implementert i branch `fase4-mcp`, ikke testet mot Fiken ennå)*
 **Mål:** Gjøre daglige skjønnsoppgaver mye raskere via AI-chat (Claude Desktop, VS Code, Antigravity m.fl.) basert på den offisielle C#-SDK-en `ModelContextProtocol`.
 
 - **Hovedflyt: Innkommende fakturaer (velge konto + fordele på prosjekt):**
@@ -111,6 +111,30 @@ FikenHjelper.slnx
 - **Andre nyttige MCP-verktøy:**
   - `get_budget_status` / `explain_project_variance`: Hente tall fra Fase 3 slik at AI-en kan forklare avvik og skrive korte oppsummeringer til styremøtet.
   - `find_accounting_anomalies`: Finne bilag uten prosjektkode, ubetalte fakturaer eller manglende vedlegg.
+
+**Status for første versjon:**
+- **Serveren:**
+  - Konsollapp over stdio med `ModelContextProtocol` 2.4.0.
+  - 15 verktøy og 2 prompter (`behandle_innboks`, `styremote_oppsummering`).
+  - Bruker samme `config.json`, innlogging og user-secrets som Web. Oppsett av klientene står i README.
+- **Fiken-klienten:** `IFikenPurchasingClient`, implementert som partial i `FikenClient`, dekker innboks, EHF, kjøp, salg, kjøpsutkast, vedlegg, kontoer og leverandører. Nedlasting av bilag sender bare bearer-token til https-adresser hos fiken.no.
+- **Sikringer:**
+  - Bare kjøpsutkast (`cash=false`, `paid=false`). Bokføring og betaling finnes ikke i koden.
+  - To steg: `preview_purchase_draft` gir et engangstoken (15 min), og `create_purchase_draft` tar bare tokenet.
+  - Skriving er bare tillatt i testforetak eller i slugs listet i `Mcp__AllowDraftsForCompany`.
+  - Validering: konto i kontoplanen, prosjekt finnes, øre-avrunding, sum mot EHF, duplikat på fakturanummer, kreditnota og valuta.
+- **Web og Mcp samtidig:**
+  - Låsfiler i datamappen: `fiken-oauth.lock` hindrer at to prosesser fornyer token samtidig, og `fiken-api.lock` gir 1 kall om gangen og 260 ms mellomrom.
+  - `config.lock` beskytter lese-endre-skrive av `config.json`.
+  - Endringen ligger også i egen branch `kryssprosess-las` (PR mot `main`).
+- **Analyse:**
+  - `ProjectVarianceExplainer` og `AnomalyFinder` bruker Fase 3-hjelperne `BudgetReportBuilder.TryGetResultAmount` og `PrimaryProjectId`, så fortegnet finnes ett sted.
+  - Tallene merkes «ikke verifisert» til Fase 3 er bekreftet mot ekte data.
+- **Gjenstår:**
+  - Test hele flyten mot testforetak på Kaladin. Kontroller MVA-type (`NONE`, netto = brutto) på kjøpsutkast, og at vedlegg via `?inboxDocumentId=` fungerer uten filinnhold.
+  - EHF-stien er bare testet med falske data, fordi testforetak trolig ikke kan motta EHF.
+  - Kreditnotaer og opprettelse av nye leverandører støttes ikke (bevisst).
+  - HTTP-transport kommer i Fase 5.
 
 ---
 

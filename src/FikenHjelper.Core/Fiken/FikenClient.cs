@@ -7,7 +7,7 @@ using FikenHjelper.Core.Config;
 
 namespace FikenHjelper.Core.Fiken;
 
-public sealed class FikenClient : IFikenClient
+public sealed partial class FikenClient : IFikenClient
 {
     public const string DefaultBaseAddress = "https://api.fiken.no/api/v2/";
     private const int MaxPageSize = 100;

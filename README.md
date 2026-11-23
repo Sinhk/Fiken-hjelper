@@ -43,7 +43,50 @@ dotnet run --project src/FikenHjelper.Web
 
 Åpne lenken som vises i terminalen (f.eks. `http://localhost:5066` eller `https://localhost:7193`), og gå til **Innstillinger** eller **Arrangementsfakturering**.
 
-### 4. Kjør tester
+### 4. MCP-server for AI-chat (Claude Desktop, VS Code, Antigravity)
+
+`FikenHjelper.Mcp` gir AI-klienter verktøy for innkommende fakturaer (innboks/EHF → forslag til konto og prosjekt → **kjøpsutkast**), budsjettstatus, avviksforklaring og kontroll av regnskapet. Serveren bruker samme innlogging og datamappe som web-appen, så logg inn via web-appen først.
+
+**Sikkerhet:**
+- Bare kjøpsutkast kan opprettes. Ingenting bokføres eller betales.
+- Hvert utkast forhåndsvises med `preview_purchase_draft` og opprettes bare med tokenet derfra, etter at du har sagt ja.
+- I et foretak som ikke er testforetak er serveren **kun lesende**, til du selv legger slugen inn i `Mcp__AllowDraftsForCompany`.
+
+Publiser serveren én gang (og etter oppdateringer). `dotnet run` kan skrive byggmeldinger til stdout og forstyrre protokollen.
+
+```powershell
+dotnet publish src/FikenHjelper.Mcp -c Release -o "$env:LOCALAPPDATA\FikenHjelper\mcp"
+```
+
+**Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "fiken-hjelper": {
+      "command": "C:\\Users\\<bruker>\\AppData\\Local\\FikenHjelper\\mcp\\FikenHjelper.Mcp.exe",
+      "env": {
+        "Mcp__CompanySlug": "<slug-til-testforetak>"
+      }
+    }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json` eller brukerinnstillinger) og **Antigravity** (`mcp_config.json`) bruker samme oppsett: `"type": "stdio"` (VS Code), `command` og `env` som over.
+
+Valgfrie miljøvariabler (`env`):
+
+| Variabel | Betydning |
+|---|---|
+| `Mcp__CompanySlug` | Bruk et annet foretak enn web-appen, f.eks. testforetaket. Lagres ikke. |
+| `Mcp__AllowDraftsForCompany` | Kommaseparerte slugs der kjøpsutkast er tillatt selv om det ikke er testforetak (f.eks. kretsens ekte foretak, når du er klar). |
+| `Mcp__PurchaseVatType` | MVA-type på kjøpsutkast. Standard `NONE` (netto = brutto). |
+| `FikenHjelper__DataDirectory` | Annen datamappe enn `%LocalAppData%\FikenHjelper`. |
+
+Web-appen og MCP-serveren kan kjøre samtidig. Fornyelse av Fiken-innloggingen og grensen på 1 kall om gangen koordineres med låsfiler i datamappen. Du kan teste serveren med MCP Inspector: `npx @modelcontextprotocol/inspector <sti til FikenHjelper.Mcp.exe>`.
+
+### 5. Kjør tester
 
 ```powershell
 dotnet test
