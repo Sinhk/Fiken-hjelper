@@ -64,7 +64,7 @@
                                 SaveApiKeyLocally="saveApiKeyLocally"
                                 OnSaveApiKeyLocallyChanged="(v) => saveApiKeyLocally = v"
                                 SavedEvents="mappings.SavedEvents"
-                                OnSelectSavedEvent="HandleSavedEventSelected"
+                                OnSelectSavedEvent="HandleSavedEventSelectedAsync"
                                 BillingMode="billingMode"
                                 OnBillingModeChanged="HandleBillingModeChanged"
                                 GroupLineMode="groupLineMode"
@@ -127,6 +127,7 @@
                 </div>
 
                 <InvoicePreviewList EventTitle="@eventData.EventTitle"
+                                    SelectedProjectLabel="@SelectedProjectLabel"
                                     Plan="invoicePlan"
                                     FikenCustomers="customers"
                                     IsSubmitting="isSubmittingDrafts"

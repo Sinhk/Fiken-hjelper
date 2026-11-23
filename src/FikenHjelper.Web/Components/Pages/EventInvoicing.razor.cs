@@ -54,8 +54,11 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     private InvoicePlanResult? invoicePlan;
     private List<DraftCreationItemResult> creationResults = [];
     private DateTimeOffset? lastDraftSavedAtLocal;
+    private bool projectEditedBeforeLoad;
 
-    private CancellationTokenSource? cts;
+    private CancellationTokenSource? fikenCts;
+    private CancellationTokenSource? eventCts;
+    private CancellationTokenSource? submitCts;
     private bool isLoadingFiken;
     private bool isLoadingEvent;
     private bool isSubmittingDrafts;
@@ -94,7 +97,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         isLoadingFiken = true;
         bannerMessage = null;
-        var token = ResetCancellationToken();
+        var token = ResetFikenToken();
 
         try
         {
@@ -158,6 +161,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     {
         selectedCompanySlug = newSlug;
         selectedProjectId = null;
+        projectEditedBeforeLoad = false;
         customers = [];
         projects = [];
         incomeAccounts = [];
@@ -167,7 +171,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(selectedCompanySlug) && fikenTokenConfigured)
         {
             isLoadingFiken = true;
-            var token = ResetCancellationToken();
+            var token = ResetFikenToken();
             try
             {
                 await LoadCompanyDataSequentiallyAsync(selectedCompanySlug, token);
@@ -189,10 +193,33 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         RebuildPlan();
     }
 
-    private Task HandleProjectChanged(long? projectId)
+    private async Task HandleProjectChanged(long? projectId)
     {
         selectedProjectId = projectId;
-        return RebuildAndPersistAsync();
+        if (eventData is not null)
+        {
+            await RebuildAndPersistAsync();
+            return;
+        }
+
+        projectEditedBeforeLoad = true;
+        if (!string.IsNullOrWhiteSpace(minSpeidingProjectId))
+        {
+            try
+            {
+                var existing = await ConfigStore.LoadEventDraftStateAsync(minSpeidingProjectId);
+                if (existing is not null)
+                {
+                    existing.FikenProjectId = projectId;
+                    await ConfigStore.SaveEventDraftStateAsync(existing);
+                    lastDraftSavedAtLocal = DateTimeOffset.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to update saved Fiken project for {ProjectId}", minSpeidingProjectId);
+            }
+        }
     }
 
     private Task HandleIncomeAccountChanged(string value)
@@ -237,7 +264,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         return RebuildAndPersistAsync();
     }
 
-    private void HandleSavedEventSelected(string projectId)
+    private async Task HandleSavedEventSelectedAsync(string projectId)
     {
         minSpeidingProjectId = projectId;
         var found = mappings.SavedEvents.FirstOrDefault(e =>
@@ -255,13 +282,47 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             saveApiKeyLocally = !string.IsNullOrWhiteSpace(found.ApiKey)
                 || !string.IsNullOrWhiteSpace(found.QuestionsApiKey);
         }
+
+        if (eventData is null && !string.IsNullOrWhiteSpace(projectId) && !projectEditedBeforeLoad)
+        {
+            var saved = await ConfigStore.LoadEventDraftStateAsync(projectId);
+            if (saved is not null)
+            {
+                selectedProjectId = saved.FikenProjectId;
+                if (!string.IsNullOrWhiteSpace(saved.IncomeAccount))
+                {
+                    incomeAccount = saved.IncomeAccount;
+                }
+
+                bankAccountNumber = saved.BankAccountNumber ?? string.Empty;
+                if (saved.IssueDate.HasValue)
+                {
+                    issueDate = saved.IssueDate.Value;
+                }
+
+                if (saved.DaysUntilDueDate.HasValue)
+                {
+                    daysUntilDueDate = saved.DaysUntilDueDate.Value;
+                }
+
+                invoiceText = saved.InvoiceText ?? string.Empty;
+                ourReference = saved.OurReference ?? string.Empty;
+                orderReferencePrefix = saved.OrderReferencePrefix ?? string.Empty;
+                lastDraftSavedAtLocal = saved.SavedAtUtc.ToLocalTime();
+            }
+            else
+            {
+                selectedProjectId = null;
+                lastDraftSavedAtLocal = null;
+            }
+        }
     }
 
     private async Task FetchFromMinSpeidingAsync()
     {
         isLoadingEvent = true;
         bannerMessage = null;
-        var token = ResetCancellationToken();
+        var token = ResetEventToken();
 
         try
         {
@@ -339,6 +400,9 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         bool loadSavedDraft = true,
         CancellationToken ct = default)
     {
+        var preSelectedProjectId = selectedProjectId;
+        var keepPreSelectedProject = projectEditedBeforeLoad;
+
         eventData = loaded;
         categoryPrices.Clear();
         excludedCategoryKeys.Clear();
@@ -354,13 +418,14 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         orderReferencePrefix = string.Empty;
         var restored = false;
+        SavedEventDraftState? saved = null;
 
         if (loadSavedDraft)
         {
-            var saved = await ConfigStore.LoadEventDraftStateAsync(loaded.ProjectId, ct);
+            saved = await ConfigStore.LoadEventDraftStateAsync(loaded.ProjectId, ct);
             if (saved is not null)
             {
-                selectedProjectId = saved.FikenProjectId;
+                selectedProjectId = keepPreSelectedProject ? preSelectedProjectId : saved.FikenProjectId;
                 if (!string.IsNullOrWhiteSpace(saved.IncomeAccount))
                 {
                     incomeAccount = saved.IncomeAccount;
@@ -409,12 +474,21 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             }
         }
 
+        projectEditedBeforeLoad = false;
+
         if (!restored && string.IsNullOrWhiteSpace(invoiceText))
         {
             invoiceText = $"Deltakeravgift – {loaded.EventTitle}";
         }
 
         RebuildPlan();
+
+        if (loadSavedDraft && ((keepPreSelectedProject && saved?.FikenProjectId != selectedProjectId)
+            || (saved is null && selectedProjectId.HasValue)))
+        {
+            await PersistCurrentDraftStateAsync();
+        }
+
         return restored;
     }
 
@@ -427,6 +501,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         await ConfigStore.DeleteEventDraftStateAsync(eventData.ProjectId);
         selectedProjectId = null;
+        projectEditedBeforeLoad = false;
         incomeAccount = settings.DefaultIncomeAccount;
         bankAccountNumber = settings.DefaultBankAccountNumber;
         issueDate = DateOnly.FromDateTime(DateTime.Today);
@@ -508,6 +583,27 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             CustomPriceNok = change.CustomPriceNok
         };
         return RebuildAndPersistAsync();
+    }
+
+    private string? SelectedProjectLabel
+    {
+        get
+        {
+            if (!selectedProjectId.HasValue)
+            {
+                return null;
+            }
+
+            var match = projects.FirstOrDefault(p => p.ProjectId == selectedProjectId.Value);
+            if (match is null)
+            {
+                return $"Prosjekt #{selectedProjectId.Value}";
+            }
+
+            return string.IsNullOrWhiteSpace(match.Number)
+                ? match.Name
+                : $"{match.Number} – {match.Name}";
+        }
     }
 
     private IReadOnlyList<string> KnownGroupNames =>
@@ -611,7 +707,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         }
 
         isSubmittingDrafts = true;
-        var token = ResetCancellationToken();
+        var token = ResetSubmitToken();
 
         try
         {
@@ -666,7 +762,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         isSubmittingDrafts = true;
         creationResults = [];
         bannerMessage = null;
-        var token = ResetCancellationToken();
+        var token = ResetSubmitToken();
         var options = BuildPlanOptions();
 
         try
@@ -761,20 +857,33 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         bannerIsError = isError;
     }
 
-    private CancellationToken ResetCancellationToken()
+    private CancellationToken ResetFikenToken() => ResetToken(ref fikenCts);
+
+    private CancellationToken ResetEventToken() => ResetToken(ref eventCts);
+
+    private CancellationToken ResetSubmitToken() => ResetToken(ref submitCts);
+
+    private static CancellationToken ResetToken(ref CancellationTokenSource? slot)
     {
-        cts?.Cancel();
-        cts?.Dispose();
-        cts = new CancellationTokenSource();
-        return cts.Token;
+        slot?.Cancel();
+        slot?.Dispose();
+        slot = new CancellationTokenSource();
+        return slot.Token;
+    }
+
+    private static async Task DisposeCtsAsync(CancellationTokenSource? source)
+    {
+        if (source is not null)
+        {
+            await source.CancelAsync();
+            source.Dispose();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (cts is not null)
-        {
-            await cts.CancelAsync();
-            cts.Dispose();
-        }
+        await DisposeCtsAsync(fikenCts);
+        await DisposeCtsAsync(eventCts);
+        await DisposeCtsAsync(submitCts);
     }
 }

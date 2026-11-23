@@ -243,6 +243,17 @@
     {
         <form class="fh-card" @onsubmit="HandleCreateDraftsSubmit" @onsubmit:preventDefault>
             <div class="fh-actions mb-2">
+                @if (!string.IsNullOrWhiteSpace(SelectedProjectLabel))
+                {
+                    <span class="fh-badge fh-badge-ok">Prosjekt i Fiken: @SelectedProjectLabel</span>
+                }
+                else
+                {
+                    <span class="fh-badge fh-badge-warn">Prosjekt i Fiken: Ikke valgt (utkast opprettes uten prosjekt)</span>
+                }
+            </div>
+
+            <div class="fh-actions mb-2">
                 <label class="fh-checkbox-option">
                     <input type="checkbox" @bind="confirmCreation" />
                     <span>
@@ -303,6 +314,7 @@
     private string? validationError;
 
     [Parameter] public string EventTitle { get; set; } = string.Empty;
+    [Parameter] public string? SelectedProjectLabel { get; set; }
     [Parameter, EditorRequired] public InvoicePlanResult Plan { get; set; } = default!;
     [Parameter, EditorRequired] public IReadOnlyList<FikenContact> FikenCustomers { get; set; } = [];
     [Parameter] public bool IsSubmitting { get; set; }
