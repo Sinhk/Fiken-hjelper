@@ -35,18 +35,15 @@ public static class BudgetReportBuilder
         {
             foreach (var line in entry.Lines ?? [])
             {
-                if (!TryParseAccount(line.Account, out var accountNumber)
-                    || accountNumber is < FirstResultAccount or > LastResultAccount)
+                if (!TryGetResultAmount(line, out _, out var amount))
                 {
                     continue;
                 }
 
-                // Fiken: debet positiv, kredit negativ. Resultatbidrag er derfor motsatt fortegn.
-                var amount = -line.Amount / 100m;
                 fikenResult += amount;
 
                 var projectIds = line.ProjectId ?? [];
-                if (projectIds.Count == 0)
+                if (PrimaryProjectId(line) is not { } projectId)
                 {
                     unallocated.Add(new UnallocatedPosting(
                         entry.JournalEntryId,
@@ -63,8 +60,6 @@ public static class BudgetReportBuilder
                     severalProjects++;
                 }
 
-                // Ved flere prosjekter på én linje brukes det første for å unngå dobbelttelling.
-                var projectId = projectIds[0];
                 perProject[projectId] = perProject.GetValueOrDefault(projectId) + amount;
             }
         }
@@ -120,6 +115,33 @@ public static class BudgetReportBuilder
             FikenResult = hasFikenData ? fikenResult : null
         };
     }
+
+    /// <summary>
+    /// Den ene felles regelen for resultatbidrag fra en posteringslinje. Gjelder bare resultatkonti
+    /// <see cref="FirstResultAccount"/>–<see cref="LastResultAccount"/>. Fiken oppgir debet positivt og
+    /// kredit negativt i øre, så resultatbidraget i kroner er <c>−amount / 100</c>
+    /// (inntekt positiv, kostnad negativ). Brukes av både budsjettrapporten og MCP-verktøyene.
+    /// </summary>
+    public static bool TryGetResultAmount(FikenJournalEntryLine line, out int account, out decimal amount)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        amount = 0;
+        if (!TryParseAccount(line.Account, out account)
+            || account is < FirstResultAccount or > LastResultAccount)
+        {
+            return false;
+        }
+
+        amount = -line.Amount / 100m;
+        return true;
+    }
+
+    /// <summary>
+    /// Prosjektet en linje telles på. Ved flere prosjekter på én linje brukes det første,
+    /// for å unngå dobbelttelling. Null når linjen ikke har prosjekt.
+    /// </summary>
+    public static long? PrimaryProjectId(FikenJournalEntryLine line) =>
+        line.ProjectId is { Count: > 0 } ids ? ids[0] : null;
 
     /// <summary>Tolker kontokoder som "3200" eller "2400:20079" (hovedkonto:underkonto).</summary>
     public static bool TryParseAccount(string? account, out int accountNumber)

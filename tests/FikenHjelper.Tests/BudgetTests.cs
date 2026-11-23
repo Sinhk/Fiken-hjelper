@@ -100,6 +100,29 @@ public sealed class BudgetReportBuilderTests
         Assert.Equal(Leir.ProjectId, Assert.Single(report.ProjectsLinkedToSeveralLines).ProjectId);
     }
 
+    [Theory]
+    [InlineData("3200", -800_000L, true, 3200, 8_000)]
+    [InlineData("6800:123", 150_000L, true, 6800, -1_500)]
+    [InlineData("1920", 150_000L, false, 1920, 0)]
+    [InlineData("8800", 99_900L, false, 8800, 0)]
+    [InlineData(null, 100L, false, 0, 0)]
+    public void TryGetResultAmount_AppliesSignAndAccountRange(string? account, long amountOre, bool expected, int expectedAccount, int expectedAmount)
+    {
+        var ok = BudgetReportBuilder.TryGetResultAmount(new FikenJournalEntryLine(amountOre, account, null, null), out var parsed, out var amount);
+
+        Assert.Equal(expected, ok);
+        Assert.Equal(expectedAccount, parsed);
+        Assert.Equal((decimal)expectedAmount, amount);
+    }
+
+    [Fact]
+    public void PrimaryProjectId_UsesFirstProjectOrNull()
+    {
+        Assert.Equal(7L, BudgetReportBuilder.PrimaryProjectId(new FikenJournalEntryLine(1, "3000", null, [7, 8])));
+        Assert.Null(BudgetReportBuilder.PrimaryProjectId(new FikenJournalEntryLine(1, "3000", null, [])));
+        Assert.Null(BudgetReportBuilder.PrimaryProjectId(new FikenJournalEntryLine(1, "3000", null, null)));
+    }
+
     [Fact]
     public void Comparison_AlignsLinesByNameAcrossYears()
     {
