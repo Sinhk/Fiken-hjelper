@@ -1,0 +1,218 @@
+@using System.Globalization
+
+<fieldset class="fh-fieldset">
+    <legend>1. Fiken-oppsett for fakturautkast</legend>
+
+    <div class="fh-actions mb-3">
+        <span class="fh-badge fh-badge-ok">Ikke MVA-pliktig (MVA = Ingen)</span>
+        <button type="button"
+                class="btn btn-outline-secondary btn-sm"
+                disabled="@IsLoadingFiken"
+                @onclick="OnReloadFiken">
+            @(IsLoadingFiken ? "Laster Fiken-data…" : "Oppdater lister fra Fiken")
+        </button>
+    </div>
+
+    <div class="fh-grid-3">
+        <div class="fh-field">
+            <label for="ctx-company">Fiken-foretak</label>
+            <select id="ctx-company"
+                    value="@SelectedCompanySlug"
+                    @onchange="HandleCompanyChanged"
+                    disabled="@IsLoadingFiken">
+                <option value="">-- Velg foretak --</option>
+                @foreach (var company in Companies)
+                {
+                    <option @key="company.Slug" value="@company.Slug">
+                        @company.Name@(company.TestCompany ? " [Test]" : string.Empty)
+                    </option>
+                }
+            </select>
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-project">Prosjekt i Fiken (valgfritt)</label>
+            <select id="ctx-project"
+                    value="@(SelectedProjectId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
+                    @onchange="HandleProjectChanged">
+                <option value="">-- Uten prosjekt --</option>
+                @foreach (var project in Projects)
+                {
+                    var label = string.IsNullOrWhiteSpace(project.Number)
+                        ? project.Name
+                        : $"{project.Number} – {project.Name}";
+                    <option @key="project.ProjectId" value="@project.ProjectId.ToString(CultureInfo.InvariantCulture)">
+                        @label
+                    </option>
+                }
+            </select>
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-account">Inntektskonto</label>
+            @if (IncomeAccounts.Count > 0)
+            {
+                <select id="ctx-account" value="@IncomeAccount" @onchange="HandleIncomeAccountChanged">
+                    @foreach (var account in IncomeAccounts)
+                    {
+                        <option @key="account.Code" value="@account.Code">@account.Code – @account.Name</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input id="ctx-account"
+                       type="text"
+                       value="@IncomeAccount"
+                       @onchange="HandleIncomeAccountChanged" />
+            }
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-bank">Bankkonto</label>
+            @if (BankAccounts.Count > 0)
+            {
+                <select id="ctx-bank" value="@BankAccountNumber" @onchange="HandleBankAccountChanged">
+                    <option value="">-- Fikens standard --</option>
+                    @foreach (var bank in BankAccounts)
+                    {
+                        var number = bank.BankAccountNumber ?? string.Empty;
+                        <option @key="bank.BankAccountId" value="@number">@bank.Name (@number)</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input id="ctx-bank"
+                       type="text"
+                       value="@BankAccountNumber"
+                       @onchange="HandleBankAccountChanged"
+                       placeholder="Valgfritt kontonummer" />
+            }
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-issue-date">Fakturadato</label>
+            <input id="ctx-issue-date"
+                   type="date"
+                   value="@IssueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)"
+                   @onchange="HandleIssueDateChanged" />
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-due-days">Dager til forfall</label>
+            <input id="ctx-due-days"
+                   type="number"
+                   min="0"
+                   max="365"
+                   value="@DaysUntilDueDate"
+                   @onchange="HandleDueDaysChanged" />
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-our-ref">Vår referanse</label>
+            <input id="ctx-our-ref"
+                   type="text"
+                   value="@OurReference"
+                   @onchange="HandleOurRefChanged"
+                   placeholder="f.eks. Kretskasserer" />
+        </div>
+
+        <div class="fh-field">
+            <label for="ctx-order-prefix">Ordrenummer-prefiks (duplikatsjekk)</label>
+            <input id="ctx-order-prefix"
+                   type="text"
+                   value="@OrderReferencePrefix"
+                   @onchange="HandleOrderPrefixChanged"
+                   placeholder="f.eks. KRETS26" />
+        </div>
+    </div>
+
+    <div class="fh-field">
+        <label for="ctx-invoice-text">Fakturatekst (vises over fakturalinjene)</label>
+        <input id="ctx-invoice-text"
+               type="text"
+               value="@InvoiceText"
+               @onchange="HandleInvoiceTextChanged"
+               placeholder="f.eks. Deltakeravgift for arrangement" />
+    </div>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<FikenCompany> Companies { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<FikenProject> Projects { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<FikenAccount> IncomeAccounts { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<FikenBankAccount> BankAccounts { get; set; } = [];
+
+    [Parameter] public string SelectedCompanySlug { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnCompanyChanged { get; set; }
+
+    [Parameter] public long? SelectedProjectId { get; set; }
+    [Parameter] public EventCallback<long?> OnProjectChanged { get; set; }
+
+    [Parameter] public string IncomeAccount { get; set; } = "3200";
+    [Parameter] public EventCallback<string> OnIncomeAccountChanged { get; set; }
+
+    [Parameter] public string BankAccountNumber { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnBankAccountNumberChanged { get; set; }
+
+    [Parameter] public DateOnly IssueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    [Parameter] public EventCallback<DateOnly> OnIssueDateChanged { get; set; }
+
+    [Parameter] public int DaysUntilDueDate { get; set; } = 14;
+    [Parameter] public EventCallback<int> OnDaysUntilDueDateChanged { get; set; }
+
+    [Parameter] public string InvoiceText { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnInvoiceTextChanged { get; set; }
+
+    [Parameter] public string OurReference { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnOurReferenceChanged { get; set; }
+
+    [Parameter] public string OrderReferencePrefix { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnOrderReferencePrefixChanged { get; set; }
+
+    [Parameter] public bool IsLoadingFiken { get; set; }
+    [Parameter] public EventCallback OnReloadFiken { get; set; }
+
+    private Task HandleCompanyChanged(ChangeEventArgs e)
+        => OnCompanyChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleProjectChanged(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        return OnProjectChanged.InvokeAsync(long.TryParse(raw, out var id) ? id : null);
+    }
+
+    private Task HandleIncomeAccountChanged(ChangeEventArgs e)
+        => OnIncomeAccountChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleBankAccountChanged(ChangeEventArgs e)
+        => OnBankAccountNumberChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleIssueDateChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParseExact(e.Value?.ToString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+        {
+            return OnIssueDateChanged.InvokeAsync(date);
+        }
+        return Task.CompletedTask;
+    }
+
+    private Task HandleDueDaysChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var days))
+        {
+            return OnDaysUntilDueDateChanged.InvokeAsync(Math.Clamp(days, 0, 365));
+        }
+        return Task.CompletedTask;
+    }
+
+    private Task HandleInvoiceTextChanged(ChangeEventArgs e)
+        => OnInvoiceTextChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleOurRefChanged(ChangeEventArgs e)
+        => OnOurReferenceChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleOrderPrefixChanged(ChangeEventArgs e)
+        => OnOrderReferencePrefixChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+}

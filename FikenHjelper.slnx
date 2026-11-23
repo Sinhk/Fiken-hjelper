@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FikenHjelper.Core/FikenHjelper.Core.csproj" />
+    <Project Path="src/FikenHjelper.Web/FikenHjelper.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FikenHjelper.Tests/FikenHjelper.Tests.csproj" />
+  </Folder>
+</Solution>

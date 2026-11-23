@@ -1,0 +1,29 @@
+﻿<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">Fiken-hjelper</a>
+    </div>
+</div>
+
+<input type="checkbox" aria-label="Åpne navigasjonsmeny" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column" aria-label="Hovedmeny">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Oversikt
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="arrangement-fakturering">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Arrangementsfakturering
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="innstillinger">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Innstillinger
+            </NavLink>
+        </div>
+    </nav>
+</div>

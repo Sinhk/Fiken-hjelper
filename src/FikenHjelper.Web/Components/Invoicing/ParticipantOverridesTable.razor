@@ -1,0 +1,166 @@
+@using System.Globalization
+
+<div class="fh-stack">
+    <search>
+        <div class="fh-field mb-0">
+            <label for="participant-search">Filtrer deltakere på navn eller speidergruppe</label>
+            <input id="participant-search"
+                   type="search"
+                   value="@searchQuery"
+                   @oninput="HandleSearchInput"
+                   placeholder="Søk etter navn, gruppe eller kategori…" />
+        </div>
+    </search>
+
+    <div tabindex="0" role="region" aria-labelledby="participants-table-caption" class="table-wrapper">
+        <table class="participants-table">
+            <caption id="participants-table-caption">
+                Deltakere (@FilteredParticipants.Count av @EventData.Participants.Count)
+            </caption>
+            <thead>
+                <tr>
+                    <th>Deltaker</th>
+                    <th>Inkluder</th>
+                    <th>Speidergruppe</th>
+                    <th>Kategori</th>
+                    <th>Status</th>
+                    <th class="fh-num-col">Pris (NOK)</th>
+                    <th>Svar / detaljer</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var participant in FilteredParticipants)
+                {
+                    var included = InvoicePlanBuilder.IsParticipantIncluded(participant, Filters, Overrides);
+                    var hasCustomPrice = Overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.CustomPriceNok.HasValue;
+                    var effectivePrice = InvoicePlanBuilder.ResolveEffectivePriceNok(participant, CategoryPrices, Overrides);
+                    var priceInputId = $"part-price-{participant.ParticipantKey}";
+                    var includeInputId = $"part-inc-{participant.ParticipantKey}";
+
+                    <tr @key="participant.ParticipantKey">
+                        <th scope="row">
+                            @participant.FullName
+                            @if (participant.MemberNo.HasValue)
+                            {
+                                <div class="fh-hint">Medl.nr @participant.MemberNo.Value</div>
+                            }
+                        </th>
+                        <td>
+                            <input id="@includeInputId"
+                                   type="checkbox"
+                                   aria-label="Inkluder @participant.FullName"
+                                   checked="@included"
+                                   @onchange="(e) => HandleIncludeChanged(participant.ParticipantKey, e)" />
+                        </td>
+                        <td>@participant.GroupName</td>
+                        <td>@participant.FeeLabel</td>
+                        <td>
+                            @if (participant.Cancelled)
+                            {
+                                <span class="fh-badge fh-badge-danger">Avmeldt</span>
+                            }
+                            else if (participant.Confirmed)
+                            {
+                                <span class="fh-badge fh-badge-ok">Bekreftet</span>
+                            }
+                            else
+                            {
+                                <span class="fh-badge fh-badge-warn">Ubekreftet</span>
+                            }
+                            @if (participant.Attended || participant.CheckedIn)
+                            {
+                                <span class="fh-badge fh-badge-neutral">Deltok</span>
+                            }
+                        </td>
+                        <td class="fh-num-col">
+                            <label for="@priceInputId" class="visually-hidden">Overstyrt pris for @participant.FullName</label>
+                            <input id="@priceInputId"
+                                   type="number"
+                                   step="0.01"
+                                   min="0"
+                                   value="@(hasCustomPrice ? ov!.CustomPriceNok!.Value.ToString(CultureInfo.InvariantCulture) : string.Empty)"
+                                   placeholder="@effectivePrice.ToString("0.##", CultureInfo.InvariantCulture)"
+                                   @onchange="(e) => HandleCustomPriceChanged(participant.ParticipantKey, e)" />
+                        </td>
+                        <td>
+                            @if (participant.Answers.Count == 0)
+                            {
+                                <span class="fh-hint">–</span>
+                            }
+                            else
+                            {
+                                @string.Join(" | ", participant.Answers.Select(kv => $"{kv.Key}: {kv.Value}"))
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <details class="fh-diagnostics">
+        <summary>API-diagnostikk fra Min speiding (rådata og ekstra felter)</summary>
+        <div class="mt-2">
+            <p class="fh-hint mb-1">
+                <strong>Prosjekt-ID:</strong> @EventData.ProjectId
+                · <strong>Spørsmål-endepunkt:</strong> @(EventData.QuestionsEndpointAvailable ? "Tilgjengelig" : "Ikke tilgjengelig (fortsetter uten)")
+                · <strong>Demodata:</strong> @(EventData.IsDemoData ? "Ja" : "Nei")
+            </p>
+            <p class="fh-hint mb-1">
+                <strong>Prislabels (<code>labels.project_fee</code>):</strong>
+                @(EventData.FeeLabels.Count == 0
+                    ? "Ingen returnert"
+                    : string.Join(", ", EventData.FeeLabels.Select(kv => $"{kv.Key}={kv.Value}")))
+            </p>
+            <p class="fh-hint mb-0">
+                <strong>Ekstra felter funnet på deltakere:</strong>
+                @(EventData.ExtraParticipantPropertyNames.Count == 0
+                    ? "Ingen"
+                    : string.Join(", ", EventData.ExtraParticipantPropertyNames))
+            </p>
+        </div>
+    </details>
+</div>
+
+@code {
+    private string searchQuery = string.Empty;
+
+    [Parameter, EditorRequired] public MinSpeidingEventLoadResult EventData { get; set; } = default!;
+    [Parameter, EditorRequired] public ParticipantFilterOptions Filters { get; set; } = new();
+    [Parameter, EditorRequired] public IReadOnlyDictionary<string, decimal> CategoryPrices { get; set; } = new Dictionary<string, decimal>();
+    [Parameter, EditorRequired] public IReadOnlyDictionary<string, ParticipantOverride> Overrides { get; set; } = new Dictionary<string, ParticipantOverride>();
+
+    [Parameter] public EventCallback<(string ParticipantKey, bool? Included)> OnIncludeChanged { get; set; }
+    [Parameter] public EventCallback<(string ParticipantKey, decimal? CustomPriceNok)> OnCustomPriceChanged { get; set; }
+
+    private IReadOnlyList<EventParticipant> FilteredParticipants =>
+        string.IsNullOrWhiteSpace(searchQuery)
+            ? EventData.Participants
+            : EventData.Participants
+                .Where(p => p.FullName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
+                    || p.GroupName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
+                    || p.FeeLabel.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+    private void HandleSearchInput(ChangeEventArgs e)
+        => searchQuery = e.Value?.ToString() ?? string.Empty;
+
+    private Task HandleIncludeChanged(string key, ChangeEventArgs e)
+        => OnIncludeChanged.InvokeAsync((key, e.Value is bool b ? b : null));
+
+    private Task HandleCustomPriceChanged(string key, ChangeEventArgs e)
+    {
+        var raw = (e.Value?.ToString() ?? string.Empty).Trim().Replace(',', '.');
+        if (string.IsNullOrEmpty(raw))
+        {
+            return OnCustomPriceChanged.InvokeAsync((key, null));
+        }
+
+        if (decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) && parsed >= 0)
+        {
+            return OnCustomPriceChanged.InvokeAsync((key, parsed));
+        }
+
+        return Task.CompletedTask;
+    }
+}

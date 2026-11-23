@@ -1,0 +1,518 @@
+:root {
+    --fh-bg: #f5f7f5;
+    --fh-surface: #ffffff;
+    --fh-border: #d4ddd7;
+    --fh-primary: #194d36;
+    --fh-primary-hover: #123827;
+    --fh-accent: #2f7d57;
+    --fh-text: #1c2420;
+    --fh-muted: #4b5a52;
+    --fh-focus: #0b57d0;
+}
+
+html, body {
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    color: var(--fh-text);
+    background-color: var(--fh-bg);
+}
+
+a {
+    color: #145338;
+}
+
+a:hover {
+    color: #0e3b28;
+}
+
+:focus-visible {
+    outline: 3px solid var(--fh-focus);
+    outline-offset: 2px;
+}
+
+h1:focus {
+    outline: none;
+}
+
+.btn-primary {
+    color: #fff;
+    background-color: var(--fh-primary);
+    border-color: var(--fh-primary);
+}
+
+.btn-primary:hover,
+.btn-primary:focus-visible {
+    background-color: var(--fh-primary-hover);
+    border-color: var(--fh-primary-hover);
+}
+
+.fh-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.fh-card {
+    background-color: var(--fh-surface);
+    border: 1px solid var(--fh-border);
+    border-radius: 0.625rem;
+    padding: 1.25rem;
+    box-shadow: 0 1px 2px rgba(16, 32, 24, 0.05);
+}
+
+.fh-card-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: safe center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-block-end: 1rem;
+}
+
+.fh-card-header h2,
+.fh-card-header h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 650;
+}
+
+.fh-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+.fh-grid-3 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1rem;
+}
+
+.fh-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.85rem;
+}
+
+.fh-kpi {
+    background-color: #f8faf9;
+    border: 1px solid var(--fh-border);
+    border-radius: 0.5rem;
+    padding: 0.85rem 1rem;
+}
+
+.fh-kpi-label {
+    display: block;
+    font-size: 0.82rem;
+    color: var(--fh-muted);
+    margin-block-end: 0.2rem;
+}
+
+.fh-kpi-value {
+    display: block;
+    font-size: 1.25rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.fh-fieldset {
+    border: 1px solid var(--fh-border);
+    border-radius: 0.5rem;
+    padding: 1rem 1.1rem;
+    margin-block-end: 1rem;
+}
+
+.fh-fieldset legend {
+    float: none;
+    inline-size: auto;
+    padding-inline: 0.4rem;
+    font-size: 0.95rem;
+    font-weight: 650;
+    color: var(--fh-primary);
+    margin-block-end: 0.5rem;
+}
+
+.fh-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-inline-size: 0;
+    margin-block-end: 0.75rem;
+}
+
+.fh-field label {
+    font-weight: 600;
+    font-size: 0.92rem;
+}
+
+.fh-field input:not([type="checkbox"]):not([type="radio"]),
+.fh-field select,
+.fh-field textarea {
+    font: inherit;
+    font-size: max(1rem, 1em);
+    min-block-size: 42px;
+    padding: 0.45rem 0.65rem;
+    border: 1px solid #8a9991;
+    border-radius: 0.375rem;
+    background-color: #fff;
+    color: var(--fh-text);
+}
+
+.fh-hint {
+    font-size: 0.84rem;
+    color: var(--fh-muted);
+}
+
+.fh-input-with-btn {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: stretch;
+}
+
+.fh-input-with-btn > input {
+    flex: 1 1 220px;
+    min-inline-size: 0;
+}
+
+.fh-radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem 1.25rem;
+    padding-block: 0.25rem;
+}
+
+.fh-radio-option,
+.fh-checkbox-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-block-size: 38px;
+    cursor: pointer;
+}
+
+.fh-radio-option input,
+.fh-checkbox-option input {
+    inline-size: 1.15rem;
+    block-size: 1.15rem;
+    accent-color: var(--fh-primary);
+    cursor: pointer;
+}
+
+.fh-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: safe center;
+    gap: 0.65rem;
+}
+
+.fh-alert {
+    border-radius: 0.5rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid transparent;
+}
+
+.fh-alert-info {
+    background-color: #e8f1ec;
+    border-color: #a9cbb9;
+    color: #133928;
+}
+
+.fh-alert-warn {
+    background-color: #fff8e6;
+    border-color: #e2b955;
+    color: #5c3d00;
+}
+
+.fh-alert-danger {
+    background-color: #fdecec;
+    border-color: #e29999;
+    color: #7c1919;
+}
+
+.fh-alert-success {
+    background-color: #e7f6ec;
+    border-color: #82c99b;
+    color: #124d27;
+}
+
+.fh-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.fh-badge-ok {
+    background-color: #dff3e5;
+    color: #14532d;
+    border: 1px solid #a7dfc0;
+}
+
+.fh-badge-warn {
+    background-color: #fef3c7;
+    color: #78350f;
+    border: 1px solid #f5d073;
+}
+
+.fh-badge-danger {
+    background-color: #fee2e2;
+    color: #7f1d1d;
+    border: 1px solid #fca5a5;
+}
+
+.fh-badge-neutral {
+    background-color: #edf1ef;
+    color: #36453e;
+    border: 1px solid #cbd5cf;
+}
+
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+}
+
+.fh-draft-card {
+    border: 1px solid var(--fh-border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    background-color: #fcfdfc;
+}
+
+.fh-draft-card[data-status="unmatched"] {
+    border-color: #d97706;
+    background-color: #fffdf7;
+}
+
+.fh-draft-card[data-status="duplicate"] {
+    border-color: #dc2626;
+}
+
+.fh-draft-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-block-end: 0.75rem;
+}
+
+.fh-draft-meta {
+    min-inline-size: 0;
+    flex: 1 1 280px;
+}
+
+.fh-draft-amount {
+    font-size: 1.15rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.fh-inline-create {
+    margin-block-start: 0.65rem;
+    padding: 0.75rem;
+    border-radius: 0.45rem;
+    background-color: #f3f7f4;
+    border: 1px dashed #8bb39b;
+}
+
+.fh-diagnostics {
+    border: 1px solid var(--fh-border);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    background-color: #fafcfb;
+}
+
+.fh-diagnostics summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+/* Responsive accessible data tables (modern-web-guidance: responsive-table) */
+.table-wrapper {
+    overflow: auto;
+    max-inline-size: 100%;
+    max-block-size: min(560px, 75vh);
+    container-type: inline-size;
+    scrollbar-gutter: stable;
+    border: 1px solid var(--fh-border);
+    border-radius: 0.5rem;
+    background-color: #fff;
+}
+
+.table-wrapper table {
+    inline-size: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 0;
+}
+
+.table-wrapper caption {
+    caption-side: top;
+    text-align: start;
+    padding: 0.65rem 0.85rem;
+    font-weight: 650;
+    color: var(--fh-text);
+    background-color: #f2f6f3;
+    border-block-end: 1px solid var(--fh-border);
+}
+
+.table-wrapper thead {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+}
+
+.table-wrapper th,
+.table-wrapper td {
+    padding: 0.55rem 0.75rem;
+    border-block-end: 1px solid #e4ebe6;
+    vertical-align: middle;
+    text-align: start;
+}
+
+.table-wrapper thead th {
+    background-color: #edf3ef;
+    font-weight: 650;
+    font-size: 0.88rem;
+    white-space: nowrap;
+    border-block-end: 2px solid var(--fh-border);
+}
+
+.table-wrapper tbody th {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    background-color: #ffffff;
+    font-weight: 600;
+}
+
+.table-wrapper tbody tr:hover td,
+.table-wrapper tbody tr:hover th {
+    background-color: #f7faf8;
+}
+
+.table-wrapper input[type="number"],
+.table-wrapper input[type="text"] {
+    min-block-size: 36px;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #8a9991;
+    border-radius: 0.3rem;
+}
+
+.fh-num-col {
+    text-align: end !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.fee-table {
+    --label-2: "Deltakere";
+    --label-3: "Oppdaget pris";
+    --label-4: "Pris (NOK)";
+}
+
+.participants-table {
+    --label-2: "Inkluder";
+    --label-3: "Speidergruppe";
+    --label-4: "Kategori";
+    --label-5: "Status";
+    --label-6: "Pris (NOK)";
+    --label-7: "Svar / detaljer";
+}
+
+.mappings-table {
+    --label-2: "Fiken kunde-ID";
+    --label-3: "Handling";
+}
+
+.lines-table {
+    --label-2: "Antall";
+    --label-3: "Enhetspris";
+    --label-4: "Sum";
+    --label-5: "Kommentar";
+}
+
+@container (width < 600px) {
+    .table-wrapper table,
+    .table-wrapper thead,
+    .table-wrapper tbody,
+    .table-wrapper tr,
+    .table-wrapper th,
+    .table-wrapper td {
+        display: block;
+    }
+
+    .table-wrapper thead {
+        display: none;
+    }
+
+    .table-wrapper tbody tr {
+        margin-block-end: 0.85rem;
+        border: 1px solid var(--fh-border);
+        border-radius: 0.45rem;
+        overflow: clip;
+    }
+
+    .table-wrapper tbody th {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 2;
+        background-color: #edf3ef;
+    }
+
+    .table-wrapper td {
+        text-align: start !important;
+    }
+
+    .table-wrapper td:nth-child(2)::before {
+        content: var(--label-2) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+
+    .table-wrapper td:nth-child(3)::before {
+        content: var(--label-3) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+
+    .table-wrapper td:nth-child(4)::before {
+        content: var(--label-4) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+
+    .table-wrapper td:nth-child(5)::before {
+        content: var(--label-5) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+
+    .table-wrapper td:nth-child(6)::before {
+        content: var(--label-6) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+
+    .table-wrapper td:nth-child(7)::before {
+        content: var(--label-7) ": ";
+        font-weight: 600;
+        color: var(--fh-muted);
+    }
+}
+
+.validation-message {
+    color: #b91c1c;
+    font-size: 0.86rem;
+}
+
+.valid.modified:not([type=checkbox]) {
+    outline: 1px solid #15803d;
+}
+
+.invalid {
+    outline: 1px solid #dc2626;
+}

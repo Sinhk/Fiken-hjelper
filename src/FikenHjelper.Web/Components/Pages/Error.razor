@@ -1,0 +1,29 @@
+﻿@page "/Error"
+@using System.Diagnostics
+
+<PageTitle>Feil – Fiken-hjelper</PageTitle>
+
+<div class="fh-card">
+    <h1 class="text-danger">Det oppstod en feil</h1>
+    <p>Beklager, forespørselen kunne ikke fullføres.</p>
+
+    @if (ShowRequestId)
+    {
+        <p>
+            <strong>Forespørsels-ID:</strong> <code>@RequestId</code>
+        </p>
+    }
+
+    <a href="" class="btn btn-primary">Tilbake til oversikten</a>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

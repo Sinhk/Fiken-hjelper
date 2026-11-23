@@ -1,0 +1,87 @@
+﻿@page "/"
+@inject ILocalConfigStore ConfigStore
+
+<PageTitle>Oversikt – Fiken-hjelper</PageTitle>
+
+<div class="fh-stack">
+    <section class="fh-card">
+        <h1>Fiken-hjelper – Romsdal og Nordmøre krets</h1>
+        <p>
+            Lokalt hjelpeverktøy i .NET for kasserer/regnskapsfører. Alt som opprettes i Fiken legges kun inn som
+            <strong>utkast</strong>, slik at du alltid har full kontroll før utsending eller betaling.
+        </p>
+
+        <div class="fh-kpi-grid">
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">Fiken-tilkobling</span>
+                <span class="fh-kpi-value">@fikenAuthStatus</span>
+            </div>
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">Standard foretak</span>
+                <span class="fh-kpi-value">@(string.IsNullOrWhiteSpace(settings?.FikenCompanySlug) ? "Ikke valgt" : settings.FikenCompanySlug)</span>
+            </div>
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">Lagrede gruppekoblinger</span>
+                <span class="fh-kpi-value">@mappingCount</span>
+            </div>
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">MVA-status</span>
+                <span class="fh-kpi-value">Ikke MVA-pliktig</span>
+            </div>
+        </div>
+
+        <div class="fh-actions mt-3">
+            <a href="arrangement-fakturering" class="btn btn-primary">Åpne arrangementsfakturering</a>
+            <a href="innstillinger" class="btn btn-outline-secondary">Innstillinger og tilkobling</a>
+        </div>
+    </section>
+
+    <section class="fh-card">
+        <div class="fh-card-header">
+            <h2>Planlagte verktøy</h2>
+        </div>
+        <div class="fh-grid-2">
+            <div>
+                <h3>1. Arrangementsfakturering (klar)</h3>
+                <p>
+                    Henter påmeldte fra <code>min.speiding.no</code> via prosjekt-ID og API-nøkkel, grupperer per speidergruppe
+                    (eller per deltaker), beregner priser per kategori med overstyring, og oppretter fakturautkast i Fiken.
+                </p>
+            </div>
+            <div>
+                <h3>2. CSV/XLSX-import (neste)</h3>
+                <p>
+                    Fleksibel filimport med kolonnemapping og lagrede profiler for arrangementer og skjemaer uten API-kobling.
+                </p>
+            </div>
+            <div>
+                <h3>3. Budsjett- og prosjektrapport (planlagt)</h3>
+                <p>
+                    Kobler intensjonsbudsjettposter mot ett eller flere Fiken-prosjekter, sjekker ufordelte bilag og eksporterer til Excel.
+                </p>
+            </div>
+            <div>
+                <h3>4. MCP-server for AI-chat (planlagt)</h3>
+                <p>
+                    AI-assistent som leser innboks/EHF-bilag i Fiken, foreslår kostnadskonto og prosjektfordeling og oppretter kjøpsutkast.
+                </p>
+            </div>
+        </div>
+    </section>
+</div>
+
+@code {
+    private AppSettings? settings;
+    private string fikenAuthStatus = "Ikke tilkoblet";
+    private int mappingCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings = await ConfigStore.LoadSettingsAsync();
+        var mappings = await ConfigStore.LoadMappingsAsync();
+        fikenAuthStatus = settings.HasFikenOAuthTokens
+            ? "OAuth2 tilkoblet"
+            : (!string.IsNullOrWhiteSpace(settings.FikenApiToken) ? "Personlig nøkkel" : "Ikke tilkoblet");
+        mappingCount = mappings.GroupNameToContactId.Count;
+    }
+}

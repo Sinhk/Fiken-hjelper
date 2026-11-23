@@ -1,0 +1,271 @@
+@page "/innstillinger"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+
+<PageTitle>Innstillinger – Fiken-hjelper</PageTitle>
+
+<div class="fh-stack">
+    <section class="fh-card">
+        <div class="fh-card-header">
+            <h1>Innstillinger og tilkobling</h1>
+        </div>
+
+        <p class="fh-hint">
+            Innstillinger og tokens lagres lokalt utenfor Git-repositoriet i <code>@ConfigStore.DataDirectory</code>
+            (eller via <code>dotnet user-secrets</code>).
+        </p>
+
+        @if (!string.IsNullOrWhiteSpace(statusMessage))
+        {
+            <div class="fh-alert @(statusIsError ? "fh-alert-danger" : "fh-alert-success") mb-3" role="status" aria-live="polite">
+                @statusMessage
+            </div>
+        }
+
+        <EditForm Model="formModel" OnValidSubmit="SaveSettingsAsync" FormName="settings-form">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <fieldset class="fh-fieldset">
+                <legend>Fiken OAuth2 (anbefalt – fungerer uten manuell godkjenning)</legend>
+
+                <div class="fh-actions mb-3">
+                    @if (hasOAuthTokens)
+                    {
+                        <span class="fh-badge fh-badge-ok">
+                            Tilkoblet med Fiken OAuth2
+                            @if (oauthExpiresAtUtc.HasValue)
+                            {
+                                <text>(token utløper @oauthExpiresAtUtc.Value.ToLocalTime().ToString("dd.MM HH:mm") – fornyes automatisk)</text>
+                            }
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="fh-badge fh-badge-neutral">Ikke koblet til via OAuth2</span>
+                    }
+                </div>
+
+                <div class="fh-alert fh-alert-info mb-3">
+                    <strong>Slik setter du opp en egen Fiken-app (tar 1 minutt):</strong>
+                    <ol class="mb-1 mt-1">
+                        <li>I Fiken: gå til <strong>Rediger konto → Profil → Andre innstillinger</strong> og kryss av for <strong>utvikler</strong>.</li>
+                        <li>Gå til <strong>API</strong>-fanen under brukerinnstillinger og opprett en ny app.</li>
+                        <li>Legg inn Redirect URI: <code>@CallbackUri</code> (gjerne med <strong>Uten client secret (PKCE)</strong> under Avanserte innstillinger).</li>
+                    </ol>
+                </div>
+
+                <div class="fh-grid-2">
+                    <div class="fh-field">
+                        <label for="fiken-client-id">Client ID</label>
+                        <InputText id="fiken-client-id"
+                                   @bind-Value="formModel.FikenOAuthClientId"
+                                   autocomplete="off"
+                                   autocorrect="off"
+                                   autocapitalize="none"
+                                   spellcheck="false" />
+                    </div>
+
+                    <div class="fh-field">
+                        <label for="fiken-client-secret">Client Secret (valgfri – la stå tom ved PKCE)</label>
+                        <div class="fh-input-with-btn">
+                            <InputText id="fiken-client-secret"
+                                       type="@(showClientSecret ? "text" : "password")"
+                                       @bind-Value="formModel.FikenOAuthClientSecret"
+                                       autocomplete="off"
+                                       autocorrect="off"
+                                       autocapitalize="none"
+                                       spellcheck="false" />
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    aria-pressed="@showClientSecret"
+                                    @onclick="ToggleClientSecretVisibility">
+                                @(showClientSecret ? "Skjul" : "Vis")
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="fh-actions mt-1">
+                    <button type="button"
+                            class="btn btn-primary"
+                            disabled="@isSaving"
+                            @onclick="SaveAndStartOAuthLoginAsync">
+                        @(hasOAuthTokens ? "Logg inn på nytt med Fiken" : "Lagre og logg inn med Fiken")
+                    </button>
+                    <button type="button"
+                            class="btn btn-outline-primary"
+                            disabled="@isTestingFiken"
+                            @onclick="TestConnectionAndLoadAsync">
+                        @(isTestingFiken ? "Tester…" : "Test tilkobling og hent foretak")
+                    </button>
+                    @if (hasOAuthTokens)
+                    {
+                        <button type="button"
+                                class="btn btn-outline-danger"
+                                disabled="@isSaving"
+                                @onclick="DisconnectOAuthAsync">
+                            Koble fra Fiken
+                        </button>
+                    }
+                </div>
+            </fieldset>
+
+            <details class="fh-diagnostics mb-3">
+                <summary>Alternativ: Personlig API-nøkkel (hvis du har fått den aktivert av api@fiken.no)</summary>
+                <div class="fh-field mt-2 mb-0">
+                    <label for="fiken-token">Personlig API-nøkkel (Bearer token)</label>
+                    <div class="fh-input-with-btn">
+                        <InputText id="fiken-token"
+                                   type="@(showToken ? "text" : "password")"
+                                   @bind-Value="formModel.FikenApiToken"
+                                   autocomplete="off"
+                                   autocorrect="off"
+                                   autocapitalize="none"
+                                   spellcheck="false" />
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                aria-pressed="@showToken"
+                                @onclick="ToggleTokenVisibility">
+                            @(showToken ? "Skjul" : "Vis")
+                        </button>
+                    </div>
+                    <span class="fh-hint">Brukes som fallback hvis OAuth2 ikke er tilkoblet.</span>
+                </div>
+            </details>
+
+            <fieldset class="fh-fieldset">
+                <legend>Standardverdier for faktura i Fiken</legend>
+
+                <div class="fh-grid-2">
+                    <div class="fh-field">
+                        <label for="fiken-company">Standard foretak</label>
+                        @if (companies.Count > 0)
+                        {
+                            <InputSelect id="fiken-company" @bind-Value="formModel.FikenCompanySlug" @bind-Value:after="LoadCompanyDefaultsAsync">
+                                <option value="">-- Velg foretak --</option>
+                                @foreach (var company in companies)
+                                {
+                                    <option @key="company.Slug" value="@company.Slug">
+                                        @company.Name (@company.Slug)@(company.TestCompany ? " [Test]" : string.Empty)
+                                    </option>
+                                }
+                            </InputSelect>
+                        }
+                        else
+                        {
+                            <InputText id="fiken-company" @bind-Value="formModel.FikenCompanySlug" placeholder="f.eks. romsdal-og-nordmore-krets" />
+                        }
+                    </div>
+
+                    <div class="fh-field">
+                        <label for="fiken-income-account">Standard inntektskonto</label>
+                        @if (accounts.Count > 0)
+                        {
+                            <InputSelect id="fiken-income-account" @bind-Value="formModel.DefaultIncomeAccount">
+                                @foreach (var account in accounts)
+                                {
+                                    <option @key="account.Code" value="@account.Code">@account.Code – @account.Name</option>
+                                }
+                            </InputSelect>
+                        }
+                        else
+                        {
+                            <InputText id="fiken-income-account" @bind-Value="formModel.DefaultIncomeAccount" />
+                        }
+                    </div>
+
+                    <div class="fh-field">
+                        <label for="fiken-bank-account">Standard bankkonto (kontonummer)</label>
+                        @if (bankAccounts.Count > 0)
+                        {
+                            <InputSelect id="fiken-bank-account" @bind-Value="formModel.DefaultBankAccountNumber">
+                                <option value="">-- Bruk Fikens standard --</option>
+                                @foreach (var bank in bankAccounts)
+                                {
+                                    var num = bank.BankAccountNumber ?? string.Empty;
+                                    <option @key="bank.BankAccountId" value="@num">@bank.Name (@num)</option>
+                                }
+                            </InputSelect>
+                        }
+                        else
+                        {
+                            <InputText id="fiken-bank-account" @bind-Value="formModel.DefaultBankAccountNumber" placeholder="11 siffer (valgfritt)" />
+                        }
+                    </div>
+
+                    <div class="fh-field">
+                        <label for="fiken-due-days">Standard forfallsfrist (dager)</label>
+                        <InputNumber id="fiken-due-days" @bind-Value="formModel.DefaultDaysUntilDueDate" />
+                    </div>
+
+                    <div class="fh-field">
+                        <label for="fiken-our-ref">Standard «Vår referanse»</label>
+                        <InputText id="fiken-our-ref" @bind-Value="formModel.DefaultOurReference" placeholder="f.eks. Kretskasserer" />
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset class="fh-fieldset">
+                <legend>Min speiding (Scoutnet API)</legend>
+                <div class="fh-field">
+                    <label for="ms-base-url">Base-URL for API</label>
+                    <InputText id="ms-base-url"
+                               @bind-Value="formModel.MinSpeidingBaseUrl"
+                               autocorrect="off"
+                               autocapitalize="none"
+                               spellcheck="false" />
+                    <span class="fh-hint">Standard er <code>https://min.speiding.no/api</code>.</span>
+                </div>
+            </fieldset>
+
+            <div class="fh-actions">
+                <button type="submit" class="btn btn-primary" disabled="@isSaving">
+                    @(isSaving ? "Lagrer…" : "Lagre innstillinger")
+                </button>
+            </div>
+        </EditForm>
+    </section>
+
+    <section class="fh-card">
+        <div class="fh-card-header">
+            <h2>Lagrede koblinger (Speidergruppe → Fiken-kunde)</h2>
+        </div>
+
+        @if (mappings.GroupNameToContactId.Count == 0)
+        {
+            <p class="fh-hint">Ingen lagrede koblinger ennå. Du kan lagre koblinger direkte i forhåndsvisningen under Arrangementsfakturering.</p>
+        }
+        else
+        {
+            <div tabindex="0" role="region" aria-labelledby="mappings-caption" class="table-wrapper">
+                <table class="mappings-table">
+                    <caption id="mappings-caption">Lagrede kundekoblinger per speidergruppe</caption>
+                    <thead>
+                        <tr>
+                            <th>Speidergruppe i Min speiding</th>
+                            <th class="fh-num-col">Fiken kunde-ID</th>
+                            <th>Handling</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var entry in mappings.GroupNameToContactId.OrderBy(k => k.Key))
+                        {
+                            <tr @key="entry.Key">
+                                <th scope="row">@entry.Key</th>
+                                <td class="fh-num-col">@entry.Value</td>
+                                <td>
+                                    <button type="button"
+                                            class="btn btn-outline-danger btn-sm"
+                                            @onclick="() => RemoveGroupMappingAsync(entry.Key)">
+                                        Fjern
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>

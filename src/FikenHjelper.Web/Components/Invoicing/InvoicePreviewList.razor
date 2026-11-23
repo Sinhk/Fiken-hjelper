@@ -1,0 +1,316 @@
+@using System.Globalization
+
+<div class="fh-stack">
+    <div class="fh-kpi-grid">
+        <div class="fh-kpi">
+            <span class="fh-kpi-label">Fakturautkast i plan</span>
+            <span class="fh-kpi-value">@Plan.Drafts.Count</span>
+        </div>
+        <div class="fh-kpi">
+            <span class="fh-kpi-label">Inkluderte deltakere</span>
+            <span class="fh-kpi-value">@Plan.IncludedParticipantCount (@Plan.ExcludedParticipantCount ekskludert)</span>
+        </div>
+        <div class="fh-kpi">
+            <span class="fh-kpi-label">Totalsum</span>
+            <span class="fh-kpi-value">@Plan.TotalNok.ToString("N2", NorwegianCulture) kr</span>
+        </div>
+        <div class="fh-kpi">
+            <span class="fh-kpi-label">Mangler Fiken-kunde</span>
+            <span class="fh-kpi-value">@Plan.UnmatchedDraftCount</span>
+        </div>
+    </div>
+
+    @if (Plan.GlobalWarnings.Count > 0)
+    {
+        <div class="fh-alert fh-alert-warn" role="alert">
+            <strong>Kontroller før opprettelse i Fiken:</strong>
+            <ul class="mb-0 mt-1">
+                @foreach (var warning in Plan.GlobalWarnings)
+                {
+                    <li @key="warning">@warning</li>
+                }
+            </ul>
+        </div>
+    }
+
+    @foreach (var draft in Plan.Drafts)
+    {
+        var cardStatus = draft.DuplicateOrderReferenceExists
+            ? "duplicate"
+            : (!draft.SelectedContactId.HasValue ? "unmatched" : "ok");
+        var customerSelectId = $"cust-{draft.DraftKey}";
+        var createOpen = openCreateDraftKeys.Contains(draft.DraftKey);
+
+        <article @key="draft.DraftKey" class="fh-draft-card" data-status="@cardStatus">
+            <div class="fh-draft-head">
+                <div class="fh-draft-meta">
+                    <h3 class="h5 mb-1">@draft.RecipientName</h3>
+                    <div class="fh-actions">
+                        <span class="fh-badge @GetBadgeClass(draft.MatchConfidence)">
+                            @draft.MatchReason
+                        </span>
+                        <span class="fh-badge fh-badge-neutral">
+                            Ordrenr: @draft.OrderReference
+                        </span>
+                        @if (draft.DuplicateOrderReferenceExists)
+                        {
+                            <span class="fh-badge fh-badge-danger">Finnes allerede i Fiken-utkast</span>
+                        }
+                    </div>
+                </div>
+                <div class="fh-draft-amount">
+                    @draft.TotalNok.ToString("N2", NorwegianCulture) kr
+                </div>
+            </div>
+
+            <div class="fh-grid-2 mb-2">
+                <div class="fh-field mb-0">
+                    <label for="@customerSelectId">Fiken-kunde</label>
+                    <select id="@customerSelectId"
+                            value="@(draft.SelectedContactId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)"
+                            @onchange="(e) => HandleCustomerChanged(draft.DraftKey, e)">
+                        <option value="">-- Velg kunde i Fiken --</option>
+                        @foreach (var customer in ActiveCustomers)
+                        {
+                            <option @key="customer.ContactId" value="@customer.ContactId.ToString(CultureInfo.InvariantCulture)">
+                                @customer.Name@(!string.IsNullOrWhiteSpace(customer.Email) ? $" ({customer.Email})" : string.Empty)
+                            </option>
+                        }
+                    </select>
+                </div>
+
+                <div class="fh-actions align-self-end">
+                    @if (!draft.SelectedContactId.HasValue && draft.SuggestedContactId.HasValue)
+                    {
+                        <button type="button"
+                                class="btn btn-outline-primary btn-sm"
+                                @onclick="() => OnManualCustomerSelected.InvokeAsync((draft.DraftKey, draft.SuggestedContactId))">
+                            Bruk forslag
+                        </button>
+                    }
+
+                    @if (draft.SelectedContactId.HasValue && IsGroupDraft(draft))
+                    {
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm"
+                                @onclick="() => OnRememberGroupMapping.InvokeAsync((draft.RecipientKey, draft.SelectedContactId.Value))">
+                            Husk kobling for gruppe
+                        </button>
+                    }
+
+                    @if (ActiveCustomers.Count > 0 || !draft.SelectedContactId.HasValue)
+                    {
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm"
+                                aria-expanded="@createOpen"
+                                @onclick="() => ToggleCreateCustomerForm(draft)">
+                            @(createOpen ? "Lukk ny kunde" : "Opprett ny kunde i Fiken")
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (createOpen)
+            {
+                <div class="fh-inline-create">
+                    <div class="fh-grid-2">
+                        <div class="fh-field mb-0">
+                            <label for="new-name-@draft.DraftKey">Kundenavn i Fiken</label>
+                            <input id="new-name-@draft.DraftKey"
+                                   type="text"
+                                   @bind="newCustomerNames[draft.DraftKey]" />
+                        </div>
+                        <div class="fh-field mb-0">
+                            <label for="new-email-@draft.DraftKey">E-post for faktura (valgfritt)</label>
+                            <input id="new-email-@draft.DraftKey"
+                                   type="email"
+                                   @bind="newCustomerEmails[draft.DraftKey]" />
+                        </div>
+                    </div>
+                    <div class="fh-actions mt-2">
+                        <button type="button"
+                                class="btn btn-primary btn-sm"
+                                disabled="@IsSubmitting"
+                                @onclick="() => SubmitCreateCustomerAsync(draft.DraftKey)">
+                            Opprett kunde og koble til utkast
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @if (draft.Warnings.Count > 0)
+            {
+                <div class="fh-alert fh-alert-warn mt-2 mb-2" role="alert">
+                    @string.Join(" ", draft.Warnings)
+                </div>
+            }
+
+            <div tabindex="0" role="region" aria-label="Fakturalinjer for @draft.RecipientName" class="table-wrapper mt-2">
+                <table class="lines-table">
+                    <thead>
+                        <tr>
+                            <th>Beskrivelse</th>
+                            <th class="fh-num-col">Antall</th>
+                            <th class="fh-num-col">Enhetspris</th>
+                            <th class="fh-num-col">Sum</th>
+                            <th>Kommentar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in draft.Lines)
+                        {
+                            <tr>
+                                <th scope="row">@line.Description</th>
+                                <td class="fh-num-col">@line.Quantity.ToString("0.##", NorwegianCulture)</td>
+                                <td class="fh-num-col">@line.UnitPriceNok.ToString("N2", NorwegianCulture) kr</td>
+                                <td class="fh-num-col">@CurrencyHelper.FromOre(line.LineTotalOre).ToString("N2", NorwegianCulture) kr</td>
+                                <td>@(line.Comment ?? "–")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </article>
+    }
+
+    @if (Plan.Drafts.Count > 0)
+    {
+        <form class="fh-card" @onsubmit="HandleCreateDraftsSubmit" @onsubmit:preventDefault>
+            <div class="fh-actions mb-2">
+                <label class="fh-checkbox-option">
+                    <input type="checkbox" @bind="confirmCreation" />
+                    <span>
+                        Jeg bekrefter at <strong>@ReadyDraftCount</strong> fakturautkast (sum @ReadyTotalNok.ToString("N2", NorwegianCulture) kr)
+                        skal opprettes som <strong>utkast</strong> i Fiken (MVA = Ingen).
+                    </span>
+                </label>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                <div class="fh-alert fh-alert-danger mb-2" role="alert">
+                    @validationError
+                </div>
+            }
+
+            <div class="fh-actions">
+                <button type="submit" class="btn btn-primary" disabled="@IsSubmitting">
+                    @(IsSubmitting ? "Oppretter fakturautkast i Fiken…" : $"Opprett {ReadyDraftCount} fakturautkast i Fiken")
+                </button>
+            </div>
+        </form>
+    }
+
+    @if (CreationResults.Count > 0)
+    {
+        <section class="fh-card" role="status" aria-live="polite">
+            <h3>Resultat fra Fiken</h3>
+            <ul class="mb-0">
+                @foreach (var res in CreationResults)
+                {
+                    <li @key="res.DraftKey">
+                        @if (res.Success)
+                        {
+                            <span class="fh-badge fh-badge-ok">Opprettet</span>
+                            <span>@res.RecipientName – Fiken utkast-ID: <strong>@(res.CreatedDraftId?.ToString() ?? "ukjent")</strong></span>
+                        }
+                        else
+                        {
+                            <span class="fh-badge fh-badge-danger">Feil</span>
+                            <span>@res.RecipientName – @res.ErrorMessage</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+</div>
+
+@code {
+    private static readonly CultureInfo NorwegianCulture = CultureInfo.GetCultureInfo("nb-NO");
+
+    private readonly HashSet<string> openCreateDraftKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> newCustomerNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> newCustomerEmails = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool confirmCreation;
+    private string? validationError;
+
+    [Parameter, EditorRequired] public InvoicePlanResult Plan { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<FikenContact> FikenCustomers { get; set; } = [];
+    [Parameter] public bool IsSubmitting { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<DraftCreationItemResult> CreationResults { get; set; } = [];
+
+    [Parameter] public EventCallback<(string DraftKey, long? ContactId)> OnManualCustomerSelected { get; set; }
+    [Parameter] public EventCallback<(string RecipientName, long ContactId)> OnRememberGroupMapping { get; set; }
+    [Parameter] public EventCallback<(string DraftKey, string Name, string? Email)> OnCreateFikenCustomer { get; set; }
+    [Parameter] public EventCallback OnCreateDraftsRequested { get; set; }
+
+    private IReadOnlyList<FikenContact> ActiveCustomers =>
+        FikenCustomers.Where(c => c.Customer && !c.Inactive).OrderBy(c => c.Name).ToList();
+
+    private int ReadyDraftCount => Plan.Drafts.Count(d => d.IsReadyToCreate);
+    private decimal ReadyTotalNok => Plan.Drafts.Where(d => d.IsReadyToCreate).Sum(d => d.TotalNok);
+
+    private Task HandleCustomerChanged(string draftKey, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        return OnManualCustomerSelected.InvokeAsync((draftKey, long.TryParse(raw, out var id) ? id : null));
+    }
+
+    private void ToggleCreateCustomerForm(PlannedInvoiceDraft draft)
+    {
+        if (!openCreateDraftKeys.Add(draft.DraftKey))
+        {
+            openCreateDraftKeys.Remove(draft.DraftKey);
+            return;
+        }
+
+        newCustomerNames[draft.DraftKey] = draft.RecipientName;
+        newCustomerEmails[draft.DraftKey] = draft.RecipientEmail ?? string.Empty;
+    }
+
+    private async Task SubmitCreateCustomerAsync(string draftKey)
+    {
+        var name = newCustomerNames.TryGetValue(draftKey, out var n) ? n.Trim() : string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var email = newCustomerEmails.TryGetValue(draftKey, out var em) && !string.IsNullOrWhiteSpace(em)
+            ? em.Trim()
+            : null;
+
+        await OnCreateFikenCustomer.InvokeAsync((draftKey, name, email));
+        openCreateDraftKeys.Remove(draftKey);
+    }
+
+    private async Task HandleCreateDraftsSubmit()
+    {
+        validationError = null;
+        if (ReadyDraftCount == 0)
+        {
+            validationError = "Ingen utkast er klare for opprettelse. Koble minst én mottaker til en kunde i Fiken først.";
+            return;
+        }
+
+        if (!confirmCreation)
+        {
+            validationError = "Huk av bekreftelsen før du oppretter fakturautkast i Fiken.";
+            return;
+        }
+
+        await OnCreateDraftsRequested.InvokeAsync();
+    }
+
+    private static bool IsGroupDraft(PlannedInvoiceDraft draft)
+        => draft.DraftKey.StartsWith("group:", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetBadgeClass(CustomerMatchConfidence confidence) => confidence switch
+    {
+        CustomerMatchConfidence.SavedMapping or CustomerMatchConfidence.ExactName or CustomerMatchConfidence.NormalizedName or CustomerMatchConfidence.ExactEmail => "fh-badge-ok",
+        CustomerMatchConfidence.FuzzySuggestion => "fh-badge-warn",
+        _ => "fh-badge-danger"
+    };
+}

@@ -1,0 +1,173 @@
+using System.Net;
+using System.Text;
+using FikenHjelper.Core.Config;
+using FikenHjelper.Core.MinSpeiding;
+
+namespace FikenHjelper.Tests;
+
+public sealed class MinSpeidingParserTests
+{
+    [Fact]
+    public void Parse_ValidParticipantsAndQuestions_ResolvesGroupsFeesPricesAndChoices()
+    {
+        const string participantsJson = """
+            {
+              "participants": {
+                "10": {
+                  "member_no": 12345,
+                  "first_name": "Ola",
+                  "last_name": "Nordmann",
+                  "primary_email": "ola@example.no",
+                  "fee_id": 101,
+                  "cancelled": false,
+                  "confirmed": true,
+                  "attended": true,
+                  "checked_in": false,
+                  "primary_membership_info": {
+                    "group_id": 55,
+                    "group_name": "Molde speidergruppe",
+                    "troop_name": "Tropp"
+                  },
+                  "group_registration_info": {
+                    "group_id": 77,
+                    "group_name": "Aukra speidergruppe"
+                  },
+                  "questions": {
+                    "5": ["1", "2"],
+                    "6": "Telt"
+                  },
+                  "custom_norway_field": "krets-ok"
+                },
+                "11": {
+                  "member_no": "12346",
+                  "first_name": "Kari",
+                  "last_name": "Berg",
+                  "fee_id": 102,
+                  "cancelled": 1,
+                  "confirmed": "true",
+                  "primary_membership_info": [],
+                  "group_registration_info": [],
+                  "questions": []
+                }
+              },
+              "labels": {
+                "project_fee": {
+                  "101": "Speider (450 kr)",
+                  "102": "Leder 250,-"
+                }
+              }
+            }
+            """;
+
+        const string questionsJson = """
+            {
+              "forms": {
+                "1": {
+                  "title": "Kretsleir 2026",
+                  "id": 1,
+                  "form_type": "group"
+                }
+              },
+              "questions": {
+                "5": {
+                  "question": "Allergi",
+                  "type": "choice",
+                  "choices": {
+                    "1": { "value": 1, "option": "Gluten" },
+                    "2": { "value": 2, "option": "Nøtter" }
+                  }
+                },
+                "6": {
+                  "question": "Overnatting",
+                  "type": "text"
+                }
+              }
+            }
+            """;
+
+        var result = MinSpeidingParser.Parse("999", participantsJson, questionsJson, questionsEndpointAvailable: true);
+
+        Assert.Equal("Kretsleir 2026", result.EventTitle);
+        Assert.Equal(2, result.Participants.Count);
+        Assert.Contains("custom_norway_field", result.ExtraParticipantPropertyNames);
+
+        var ola = result.Participants.Single(p => p.ParticipantKey == "10");
+        Assert.Equal("Aukra speidergruppe", ola.GroupName); // group_registration_info takes priority
+        Assert.Equal(450m, ola.DetectedPriceNok);
+        Assert.Equal("Speider (450 kr)", ola.FeeLabel);
+        Assert.Equal("Gluten, Nøtter", ola.Answers["Allergi"]);
+        Assert.Equal("Telt", ola.Answers["Overnatting"]);
+
+        var kari = result.Participants.Single(p => p.ParticipantKey == "11");
+        Assert.Equal("Uten gruppe", kari.GroupName);
+        Assert.True(kari.Cancelled);
+        Assert.True(kari.Confirmed);
+        Assert.Equal(250m, kari.DetectedPriceNok);
+    }
+
+    [Fact]
+    public void Parse_PhpEmptyArrayParticipants_ReturnsEmptyListGracefully()
+    {
+        const string json = """
+            {
+              "participants": [],
+              "labels": []
+            }
+            """;
+
+        var result = MinSpeidingParser.Parse("42", json, null, questionsEndpointAvailable: false);
+
+        Assert.Equal("Arrangement 42", result.EventTitle);
+        Assert.Empty(result.Participants);
+        Assert.Empty(result.FeeCategories);
+    }
+
+    [Theory]
+    [InlineData("Speider (450 kr)", 450.0)]
+    [InlineData("Leder 250,-", 250.0)]
+    [InlineData("kr 375.50", 375.50)]
+    [InlineData("Gratis", 0.0)]
+    [InlineData("Jamboree 2026", null)]
+    public void TryExtractPriceNokFromLabel_HandlesNorwegianPriceFormatsWithoutFalsePositivesOnYears(
+        string label,
+        double? expectedDouble)
+    {
+        var expected = expectedDouble.HasValue ? (decimal?)Convert.ToDecimal(expectedDouble.Value) : null;
+        var actual = MinSpeidingParser.TryExtractPriceNokFromLabel(label);
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task MinSpeidingClient_SendsBasicAuthAndContinuesWhenQuestionsEndpointReturns403()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpHandler((req, _) =>
+        {
+            requests.Add(req);
+            if (req.RequestUri!.AbsolutePath.EndsWith("/project/get/participants"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"participants":[],"labels":[]}""", Encoding.UTF8, "application/json")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+        });
+
+        using var http = new HttpClient(handler);
+        var store = new LocalConfigStore(dataDirectory: Path.Combine(Path.GetTempPath(), "fh-test-" + Guid.NewGuid().ToString("N")));
+        var client = new MinSpeidingClient(http, store);
+
+        var result = await client.GetEventParticipantsAsync("12345", "secret-key", "https://min.speiding.no/api");
+
+        Assert.False(result.QuestionsEndpointAvailable);
+        Assert.Equal(2, requests.Count);
+        var expectedAuth = Convert.ToBase64String(Encoding.UTF8.GetBytes("12345:secret-key"));
+        Assert.All(requests, r =>
+        {
+            Assert.Equal("Basic", r.Headers.Authorization?.Scheme);
+            Assert.Equal(expectedAuth, r.Headers.Authorization?.Parameter);
+        });
+    }
+}

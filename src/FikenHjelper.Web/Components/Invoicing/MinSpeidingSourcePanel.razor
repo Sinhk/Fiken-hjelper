@@ -1,0 +1,215 @@
+<fieldset class="fh-fieldset">
+    <legend>2. Hent deltakere fra Min speiding</legend>
+
+    @if (SavedEvents.Count > 0)
+    {
+        <div class="fh-field">
+            <label for="ms-saved-event">Lagrede arrangementer</label>
+            <select id="ms-saved-event" value="@ProjectId" @onchange="HandleSavedEventSelected">
+                <option value="">-- Velg lagret arrangement --</option>
+                @foreach (var ev in SavedEvents)
+                {
+                    <option @key="ev.ProjectId" value="@ev.ProjectId">@ev.Name (ID: @ev.ProjectId)</option>
+                }
+            </select>
+        </div>
+    }
+
+    <div class="fh-grid-3">
+        <div class="fh-field">
+            <label for="ms-project-id">Prosjekt-ID i Min speiding</label>
+            <input id="ms-project-id"
+                   type="text"
+                   inputmode="numeric"
+                   value="@ProjectId"
+                   @onchange="HandleProjectIdChanged"
+                   placeholder="f.eks. 12345"
+                   autocorrect="off"
+                   autocapitalize="none"
+                   spellcheck="false" />
+        </div>
+
+        <div class="fh-field">
+            <label for="ms-api-key">API-nøkkel for arrangementet</label>
+            <div class="fh-input-with-btn">
+                <input id="ms-api-key"
+                       type="@(showApiKey ? "text" : "password")"
+                       value="@ApiKey"
+                       @onchange="HandleApiKeyChanged"
+                       autocomplete="off"
+                       autocorrect="off"
+                       autocapitalize="none"
+                       spellcheck="false" />
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        aria-pressed="@showApiKey"
+                        @onclick="ToggleApiKeyVisibility">
+                    @(showApiKey ? "Skjul" : "Vis")
+                </button>
+            </div>
+        </div>
+
+        <div class="fh-field">
+            <label for="ms-event-name">Navn på arrangement (valgfritt)</label>
+            <input id="ms-event-name"
+                   type="text"
+                   value="@EventNameToSave"
+                   @onchange="HandleEventNameChanged"
+                   placeholder="f.eks. Kretsleir 2026" />
+        </div>
+    </div>
+
+    <div class="fh-actions mb-3">
+        <label class="fh-checkbox-option">
+            <input type="checkbox" checked="@RememberEvent" @onchange="HandleRememberChanged" />
+            <span>Husk dette arrangementet lokalt</span>
+        </label>
+
+        @if (RememberEvent)
+        {
+            <label class="fh-checkbox-option">
+                <input type="checkbox" checked="@SaveApiKeyLocally" @onchange="HandleSaveKeyChanged" />
+                <span>Lagre også API-nøkkel lokalt</span>
+            </label>
+        }
+    </div>
+
+    <div class="fh-actions mb-3">
+        <button type="button"
+                class="btn btn-primary"
+                disabled="@IsLoadingEvent"
+                @onclick="OnFetchFromMinSpeiding">
+            @(IsLoadingEvent ? "Henter deltakere…" : "Hent fra Min speiding")
+        </button>
+        <button type="button"
+                class="btn btn-outline-secondary"
+                disabled="@IsLoadingEvent"
+                @onclick="OnLoadDemo">
+            Last inn demodata
+        </button>
+    </div>
+
+    <div class="fh-grid-2">
+        <div>
+            <strong class="d-block mb-1">Hvordan skal det faktureres?</strong>
+            <div class="fh-radio-group" role="radiogroup" aria-label="Faktureringsmåte">
+                <label class="fh-radio-option">
+                    <input type="radio"
+                           name="billing-mode"
+                           checked="@(BillingMode == BillingMode.PerScoutGroup)"
+                           @onchange="() => OnBillingModeChanged.InvokeAsync(BillingMode.PerScoutGroup)" />
+                    <span>Samlefaktura per speidergruppe</span>
+                </label>
+                <label class="fh-radio-option">
+                    <input type="radio"
+                           name="billing-mode"
+                           checked="@(BillingMode == BillingMode.PerParticipant)"
+                           @onchange="() => OnBillingModeChanged.InvokeAsync(BillingMode.PerParticipant)" />
+                    <span>Enkeltfaktura per deltaker</span>
+                </label>
+            </div>
+        </div>
+
+        @if (BillingMode == BillingMode.PerScoutGroup)
+        {
+            <div>
+                <strong class="d-block mb-1">Linjer på gruppefaktura</strong>
+                <div class="fh-radio-group" role="radiogroup" aria-label="Linjetype for gruppefaktura">
+                    <label class="fh-radio-option">
+                        <input type="radio"
+                               name="group-line-mode"
+                               checked="@(GroupLineMode == GroupLineMode.OneLinePerParticipant)"
+                               @onchange="() => OnGroupLineModeChanged.InvokeAsync(GroupLineMode.OneLinePerParticipant)" />
+                        <span>Én linje per deltaker</span>
+                    </label>
+                    <label class="fh-radio-option">
+                        <input type="radio"
+                               name="group-line-mode"
+                               checked="@(GroupLineMode == GroupLineMode.SummaryPerFeeCategory)"
+                               @onchange="() => OnGroupLineModeChanged.InvokeAsync(GroupLineMode.SummaryPerFeeCategory)" />
+                        <span>Sammendrag per priskategori</span>
+                    </label>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="fh-actions mt-2">
+        <label class="fh-checkbox-option">
+            <input type="checkbox" checked="@Filters.ExcludeCancelled" @onchange="HandleExcludeCancelledChanged" />
+            <span>Ekskluder avmeldte</span>
+        </label>
+        <label class="fh-checkbox-option">
+            <input type="checkbox" checked="@Filters.RequireConfirmed" @onchange="HandleRequireConfirmedChanged" />
+            <span>Kun bekreftede</span>
+        </label>
+        <label class="fh-checkbox-option">
+            <input type="checkbox" checked="@Filters.RequireAttended" @onchange="HandleRequireAttendedChanged" />
+            <span>Kun deltok / sjekket inn</span>
+        </label>
+    </div>
+</fieldset>
+
+@code {
+    private bool showApiKey;
+
+    [Parameter] public string ProjectId { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnProjectIdChanged { get; set; }
+
+    [Parameter] public string ApiKey { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnApiKeyChanged { get; set; }
+
+    [Parameter] public string EventNameToSave { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> OnEventNameToSaveChanged { get; set; }
+
+    [Parameter] public bool RememberEvent { get; set; }
+    [Parameter] public EventCallback<bool> OnRememberEventChanged { get; set; }
+
+    [Parameter] public bool SaveApiKeyLocally { get; set; }
+    [Parameter] public EventCallback<bool> OnSaveApiKeyLocallyChanged { get; set; }
+
+    [Parameter] public IReadOnlyList<SavedMinSpeidingEvent> SavedEvents { get; set; } = [];
+    [Parameter] public EventCallback<string> OnSelectSavedEvent { get; set; }
+
+    [Parameter] public BillingMode BillingMode { get; set; } = BillingMode.PerScoutGroup;
+    [Parameter] public EventCallback<BillingMode> OnBillingModeChanged { get; set; }
+
+    [Parameter] public GroupLineMode GroupLineMode { get; set; } = GroupLineMode.OneLinePerParticipant;
+    [Parameter] public EventCallback<GroupLineMode> OnGroupLineModeChanged { get; set; }
+
+    [Parameter, EditorRequired] public ParticipantFilterOptions Filters { get; set; } = new();
+    [Parameter] public EventCallback<ParticipantFilterOptions> OnFiltersChanged { get; set; }
+
+    [Parameter] public bool IsLoadingEvent { get; set; }
+    [Parameter] public EventCallback OnFetchFromMinSpeiding { get; set; }
+    [Parameter] public EventCallback OnLoadDemo { get; set; }
+
+    private void ToggleApiKeyVisibility() => showApiKey = !showApiKey;
+
+    private Task HandleSavedEventSelected(ChangeEventArgs e)
+        => OnSelectSavedEvent.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleProjectIdChanged(ChangeEventArgs e)
+        => OnProjectIdChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleApiKeyChanged(ChangeEventArgs e)
+        => OnApiKeyChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleEventNameChanged(ChangeEventArgs e)
+        => OnEventNameToSaveChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task HandleRememberChanged(ChangeEventArgs e)
+        => OnRememberEventChanged.InvokeAsync(e.Value is bool b && b);
+
+    private Task HandleSaveKeyChanged(ChangeEventArgs e)
+        => OnSaveApiKeyLocallyChanged.InvokeAsync(e.Value is bool b && b);
+
+    private Task HandleExcludeCancelledChanged(ChangeEventArgs e)
+        => OnFiltersChanged.InvokeAsync(Filters with { ExcludeCancelled = e.Value is bool b && b });
+
+    private Task HandleRequireConfirmedChanged(ChangeEventArgs e)
+        => OnFiltersChanged.InvokeAsync(Filters with { RequireConfirmed = e.Value is bool b && b });
+
+    private Task HandleRequireAttendedChanged(ChangeEventArgs e)
+        => OnFiltersChanged.InvokeAsync(Filters with { RequireAttended = e.Value is bool b && b });
+}

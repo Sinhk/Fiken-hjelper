@@ -1,0 +1,119 @@
+@page "/arrangement-fakturering"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+
+<PageTitle>Arrangementsfakturering – Fiken-hjelper</PageTitle>
+
+<div class="fh-stack">
+    <section class="fh-card">
+        <div class="fh-card-header">
+            <h1>Arrangementsfakturering (Min speiding → Fiken-utkast)</h1>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(bannerMessage))
+        {
+            <div class="fh-alert @(bannerIsError ? "fh-alert-danger" : "fh-alert-info") mb-3" role="status" aria-live="polite">
+                @bannerMessage
+            </div>
+        }
+
+        @if (!fikenTokenConfigured)
+        {
+            <div class="fh-alert fh-alert-warn mb-3" role="alert">
+                <strong>Fiken er ikke tilkoblet ennå.</strong>
+                Du kan teste oppsett og forhåndsvisning med demodata nå, og logge inn med Fiken OAuth2 (eller legge inn API-nøkkel) under
+                <a href="innstillinger">Innstillinger</a> når du er klar til å opprette utkast.
+            </div>
+        }
+
+        <FikenContextBar Companies="companies"
+                         Projects="projects"
+                         IncomeAccounts="incomeAccounts"
+                         BankAccounts="bankAccounts"
+                         SelectedCompanySlug="@selectedCompanySlug"
+                         OnCompanyChanged="HandleCompanyChangedAsync"
+                         SelectedProjectId="selectedProjectId"
+                         OnProjectChanged="HandleProjectChanged"
+                         IncomeAccount="@incomeAccount"
+                         OnIncomeAccountChanged="HandleIncomeAccountChanged"
+                         BankAccountNumber="@bankAccountNumber"
+                         OnBankAccountNumberChanged="HandleBankAccountChanged"
+                         IssueDate="issueDate"
+                         OnIssueDateChanged="HandleIssueDateChanged"
+                         DaysUntilDueDate="daysUntilDueDate"
+                         OnDaysUntilDueDateChanged="HandleDueDaysChanged"
+                         InvoiceText="@invoiceText"
+                         OnInvoiceTextChanged="HandleInvoiceTextChanged"
+                         OurReference="@ourReference"
+                         OnOurReferenceChanged="HandleOurReferenceChanged"
+                         OrderReferencePrefix="@orderReferencePrefix"
+                         OnOrderReferencePrefixChanged="HandleOrderPrefixChanged"
+                         IsLoadingFiken="isLoadingFiken"
+                         OnReloadFiken="ReloadFikenContextAsync" />
+
+        <MinSpeidingSourcePanel ProjectId="@minSpeidingProjectId"
+                                OnProjectIdChanged="(v) => minSpeidingProjectId = v"
+                                ApiKey="@minSpeidingApiKey"
+                                OnApiKeyChanged="(v) => minSpeidingApiKey = v"
+                                EventNameToSave="@eventNameToSave"
+                                OnEventNameToSaveChanged="(v) => eventNameToSave = v"
+                                RememberEvent="rememberEvent"
+                                OnRememberEventChanged="(v) => rememberEvent = v"
+                                SaveApiKeyLocally="saveApiKeyLocally"
+                                OnSaveApiKeyLocallyChanged="(v) => saveApiKeyLocally = v"
+                                SavedEvents="mappings.SavedEvents"
+                                OnSelectSavedEvent="HandleSavedEventSelected"
+                                BillingMode="billingMode"
+                                OnBillingModeChanged="HandleBillingModeChanged"
+                                GroupLineMode="groupLineMode"
+                                OnGroupLineModeChanged="HandleGroupLineModeChanged"
+                                Filters="filters"
+                                OnFiltersChanged="HandleFiltersChanged"
+                                IsLoadingEvent="isLoadingEvent"
+                                OnFetchFromMinSpeiding="FetchFromMinSpeidingAsync"
+                                OnLoadDemo="LoadDemoEvent" />
+    </section>
+
+    @if (eventData is not null)
+    {
+        <section class="fh-card">
+            <div class="fh-card-header">
+                <h2>@eventData.EventTitle</h2>
+                <span class="fh-badge @(eventData.IsDemoData ? "fh-badge-warn" : "fh-badge-ok")">
+                    @(eventData.IsDemoData ? "Demodata" : "Hentet fra Min speiding")
+                </span>
+            </div>
+
+            <div class="fh-stack">
+                <FeePricingTable Categories="eventData.FeeCategories"
+                                 CategoryPrices="categoryPrices"
+                                 OnCategoryPriceChanged="HandleCategoryPriceChanged" />
+
+                <ParticipantOverridesTable EventData="eventData"
+                                           Filters="filters"
+                                           CategoryPrices="categoryPrices"
+                                           Overrides="participantOverrides"
+                                           OnIncludeChanged="HandleParticipantIncludeChanged"
+                                           OnCustomPriceChanged="HandleParticipantPriceChanged" />
+            </div>
+        </section>
+
+        @if (invoicePlan is not null)
+        {
+            <section class="fh-card">
+                <div class="fh-card-header">
+                    <h2>4. Forhåndsvisning av fakturautkast</h2>
+                </div>
+
+                <InvoicePreviewList Plan="invoicePlan"
+                                    FikenCustomers="customers"
+                                    IsSubmitting="isSubmittingDrafts"
+                                    CreationResults="creationResults"
+                                    OnManualCustomerSelected="HandleManualCustomerSelected"
+                                    OnRememberGroupMapping="HandleRememberGroupMappingAsync"
+                                    OnCreateFikenCustomer="HandleCreateFikenCustomerAsync"
+                                    OnCreateDraftsRequested="CreateFikenDraftsAsync" />
+            </section>
+        }
+    }
+</div>

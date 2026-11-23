@@ -1,0 +1,61 @@
+@using System.Globalization
+
+@if (Categories.Count > 0)
+{
+    <div tabindex="0" role="region" aria-labelledby="fee-table-caption" class="table-wrapper">
+        <table class="fee-table">
+            <caption id="fee-table-caption">3. Priser per deltakerkategori (overstyr etter behov)</caption>
+            <thead>
+                <tr>
+                    <th>Kategori i Min speiding</th>
+                    <th class="fh-num-col">Aktive deltakere</th>
+                    <th class="fh-num-col">Oppdaget sats</th>
+                    <th class="fh-num-col">Pris (NOK)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var category in Categories)
+                {
+                    var currentPrice = CategoryPrices.TryGetValue(category.Key, out var configured)
+                        ? configured
+                        : (category.SuggestedPriceNok ?? 0m);
+                    var inputId = $"cat-price-{category.Key.Replace(':', '-')}";
+
+                    <tr @key="category.Key">
+                        <th scope="row">@category.Label</th>
+                        <td class="fh-num-col">@category.ParticipantCount</td>
+                        <td class="fh-num-col">
+                            @(category.SuggestedPriceNok.HasValue ? $"{category.SuggestedPriceNok.Value:N2} kr" : "Ikke funnet")
+                        </td>
+                        <td class="fh-num-col">
+                            <label for="@inputId" class="visually-hidden">Pris i kroner for @category.Label</label>
+                            <input id="@inputId"
+                                   type="number"
+                                   step="0.01"
+                                   min="0"
+                                   value="@currentPrice.ToString(CultureInfo.InvariantCulture)"
+                                   @onchange="(e) => HandlePriceChanged(category.Key, e)" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<FeeCategorySummary> Categories { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyDictionary<string, decimal> CategoryPrices { get; set; } = new Dictionary<string, decimal>();
+    [Parameter] public EventCallback<(string CategoryKey, decimal PriceNok)> OnCategoryPriceChanged { get; set; }
+
+    private Task HandlePriceChanged(string categoryKey, ChangeEventArgs e)
+    {
+        var raw = (e.Value?.ToString() ?? string.Empty).Replace(',', '.');
+        if (decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) && parsed >= 0)
+        {
+            return OnCategoryPriceChanged.InvokeAsync((categoryKey, parsed));
+        }
+
+        return Task.CompletedTask;
+    }
+}

@@ -1,0 +1,48 @@
+﻿@inherits LayoutComponentBase
+
+<div class="page">
+    <aside class="sidebar">
+        <NavMenu />
+    </aside>
+
+    <main>
+        <header class="top-row">
+            <span class="top-row-title">Romsdal og Nordmøre krets (NSF) – Fiken-hjelper</span>
+        </header>
+
+        <article class="content">
+            <ErrorBoundary @ref="errorBoundary">
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent>
+                    <div class="fh-alert fh-alert-danger" role="alert">
+                        <strong>Noe gikk galt i visningen.</strong>
+                        <p>Prøv å laste delen på nytt, eller gå til Innstillinger for å kontrollere tilkoblingen.</p>
+                        <button type="button" class="btn btn-outline-dark btn-sm" @onclick="RecoverError">Prøv igjen</button>
+                    </div>
+                </ErrorContent>
+            </ErrorBoundary>
+        </article>
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    Det oppstod en uventet feil.
+    <a href="." class="reload">Last inn siden på nytt</a>
+    <span class="dismiss" role="button" aria-label="Lukk">🗙</span>
+</div>
+
+@code {
+    private ErrorBoundary? errorBoundary;
+
+    protected override void OnParametersSet()
+    {
+        errorBoundary?.Recover();
+    }
+
+    private void RecoverError()
+    {
+        errorBoundary?.Recover();
+    }
+}

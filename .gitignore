@@ -1,0 +1,25 @@
+# .NET
+bin/
+obj/
+out/
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+
+# Local secrets & configuration
+local-data/
+*.local.json
+appsettings.Local.json
+appsettings.Development.json
+.env
+.env.*
+secrets.json
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*~
