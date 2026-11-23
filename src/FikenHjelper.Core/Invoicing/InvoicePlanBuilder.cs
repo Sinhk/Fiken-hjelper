@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.MinSpeiding;
 
@@ -259,13 +258,12 @@ public static partial class InvoicePlanBuilder
 
     public static string BuildOrderReference(string? prefix, string projectId, string key)
     {
-        var basePrefix = string.IsNullOrWhiteSpace(prefix)
-            ? $"MS-{projectId}"
-            : prefix.Trim();
+        if (string.IsNullOrWhiteSpace(prefix))
+        {
+            return string.Empty;
+        }
 
-        var sanitizedKey = SanitizeReferenceSlug(key);
-        var combined = $"{basePrefix}-{sanitizedKey}";
-        return Truncate(combined, MaxOrderReferenceLength);
+        return Truncate(prefix.Trim(), MaxOrderReferenceLength);
     }
 
     private static List<PlannedInvoiceDraft> BuildPerGroupDrafts(
@@ -468,12 +466,9 @@ public static partial class InvoicePlanBuilder
             matchReason = match.MatchReason;
         }
 
-        var slugSeed = options.BillingMode == BillingMode.PerScoutGroup
-            ? recipientName
-            : participants[0].ParticipantKey;
-
-        var orderReference = BuildOrderReference(options.OrderReferencePrefix, eventData.ProjectId, slugSeed);
-        var duplicateExists = existingDraftOrderReferences is not null
+        var orderReference = BuildOrderReference(options.OrderReferencePrefix, eventData.ProjectId, string.Empty);
+        var duplicateExists = !string.IsNullOrWhiteSpace(orderReference)
+            && existingDraftOrderReferences is not null
             && existingDraftOrderReferences.Contains(orderReference);
 
         var totalOre = lines.Sum(l => l.LineTotalOre);
@@ -516,33 +511,6 @@ public static partial class InvoicePlanBuilder
             Warnings: warnings);
     }
 
-    private static string SanitizeReferenceSlug(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return "ukjent";
-        }
-
-        var lower = input.Trim().ToLowerInvariant()
-            .Replace("æ", "ae")
-            .Replace("ø", "o")
-            .Replace("å", "a");
-
-        var normalized = lower.Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder(normalized.Length);
-        foreach (var ch in normalized)
-        {
-            var cat = CharUnicodeInfo.GetUnicodeCategory(ch);
-            if (cat != UnicodeCategory.NonSpacingMark)
-            {
-                sb.Append(ch);
-            }
-        }
-
-        var ascii = NonAlnumRegex().Replace(sb.ToString(), "-").Trim('-');
-        return string.IsNullOrEmpty(ascii) ? "ukjent" : ascii;
-    }
-
     private static string Truncate(string? value, int maxLength)
     {
         if (string.IsNullOrEmpty(value))
@@ -571,7 +539,4 @@ public static partial class InvoicePlanBuilder
 
     private static string? NullIfWhiteSpace(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
-    [GeneratedRegex(@"[^a-z0-9]+")]
-    private static partial Regex NonAlnumRegex();
 }

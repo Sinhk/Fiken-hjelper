@@ -47,9 +47,9 @@ FikenHjelper.slnx
 - **Kundematching, søk og Fiken-utkast:**
   - Søkbare nedtrekkslister (`SearchableSelect`) for Fiken-kunde, prosjekt og inntektskonto.
   - Automatisk matching mot kunder i Fiken (lagrede koblinger → eksakt navn → normalisert gruppenavn → e-post → forslag).
-  - Lagrede gruppe-til-kunde-koblinger i `%LocalAppData%\FikenHjelper\mappings.json`.
+  - Lagrede gruppe-til-kunde-koblinger i `%LocalAppData%\FikenHjelper\mappings.json` og automatisk lokal lagring av arbeidsutkast/deltakervalg per arrangement i `%LocalAppData%\FikenHjelper\drafts\`.
   - Mulighet til å opprette manglende kunde i Fiken direkte fra forhåndsvisningen.
-  - Varsel ved duplikat `orderReference` mot eksisterende fakturautkast i Fiken.
+  - Valgfritt ordrenummer (`orderReference`, sendes kun når utfylt) med varsel ved duplikat mot eksisterende fakturautkast i Fiken.
   - Sekvensiell opprettelse av `POST /companies/{slug}/invoices/drafts` med `vatType: "OUTSIDE"`.
 
 ---

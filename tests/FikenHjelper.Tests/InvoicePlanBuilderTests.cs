@@ -105,11 +105,9 @@ public sealed class InvoicePlanBuilderTests
         var longEventName = new string('A', 240);
         var eventData = DemoEventFactory.CreateDemoEvent() with { EventTitle = longEventName };
 
-        var expectedOrderRef = InvoicePlanBuilder.BuildOrderReference("KBK26", eventData.ProjectId, "Molde speidergruppe");
-        var existingRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { expectedOrderRef };
-
-        var options = new InvoiceDraftPlanOptions(
-            BillingMode: BillingMode.PerParticipant,
+        // Blank OrderReferencePrefix omits orderReference from drafts and Fiken requests
+        var noPrefixOptions = new InvoiceDraftPlanOptions(
+            BillingMode: BillingMode.PerScoutGroup,
             GroupLineMode: GroupLineMode.OneLinePerParticipant,
             Filters: new ParticipantFilterOptions(ExcludeCancelled: true),
             CategoryPricesNok: new Dictionary<string, decimal> { ["fee:101"] = 450m, ["fee:102"] = 250m },
@@ -122,28 +120,44 @@ public sealed class InvoicePlanBuilderTests
             BankAccountNumber: null,
             InvoiceText: null,
             OurReference: null,
-            OrderReferencePrefix: "KBK26");
+            OrderReferencePrefix: string.Empty);
 
-        var plan = InvoicePlanBuilder.Build(
+        var existingRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "KBK26" };
+        var noPrefixPlan = InvoicePlanBuilder.Build(
             eventData,
-            options,
+            noPrefixOptions,
             Customers,
             new Dictionary<string, long>(),
             existingRefs);
 
-        Assert.All(plan.Drafts, d => Assert.All(d.Lines, l => Assert.True(l.Description.Length <= 200)));
+        Assert.All(noPrefixPlan.Drafts, d =>
+        {
+            Assert.Equal(string.Empty, d.OrderReference);
+            Assert.False(d.DuplicateOrderReferenceExists);
+            Assert.All(d.Lines, l => Assert.True(l.Description.Length <= 200));
+        });
+        Assert.Equal(0, noPrefixPlan.DuplicateWarningCount);
 
-        // Switch to PerScoutGroup to verify duplicate detection on Molde speidergruppe
+        var moldeNoPrefix = noPrefixPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
+        Assert.Null(InvoicePlanBuilder.ToFikenRequest(moldeNoPrefix, noPrefixOptions).OrderReference);
+
+        // When explicitly provided, OrderReferencePrefix is used directly and checked against existing drafts
+        var expectedOrderRef = InvoicePlanBuilder.BuildOrderReference("KBK26", eventData.ProjectId, "Molde speidergruppe");
+        Assert.Equal("KBK26", expectedOrderRef);
+
+        var withPrefixOptions = noPrefixOptions with { OrderReferencePrefix = "KBK26" };
         var groupPlan = InvoicePlanBuilder.Build(
             eventData,
-            options with { BillingMode = BillingMode.PerScoutGroup },
+            withPrefixOptions,
             Customers,
             new Dictionary<string, long>(),
             existingRefs);
 
         var molde = groupPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
+        Assert.Equal("KBK26", molde.OrderReference);
         Assert.True(molde.DuplicateOrderReferenceExists);
-        Assert.Equal(1, groupPlan.DuplicateWarningCount);
+        Assert.Equal("KBK26", InvoicePlanBuilder.ToFikenRequest(molde, withPrefixOptions).OrderReference);
+        Assert.Equal(groupPlan.Drafts.Count, groupPlan.DuplicateWarningCount);
     }
 
     [Fact]

@@ -112,9 +112,12 @@
                         <span class="fh-badge @GetBadgeClass(draft.MatchConfidence)">
                             @draft.MatchReason
                         </span>
-                        <span class="fh-badge fh-badge-neutral">
-                            Ordrenr: @draft.OrderReference
-                        </span>
+                        @if (!string.IsNullOrWhiteSpace(draft.OrderReference))
+                        {
+                            <span class="fh-badge fh-badge-neutral">
+                                Ordrenr: @draft.OrderReference
+                            </span>
+                        }
                         @if (draft.DuplicateOrderReferenceExists)
                         {
                             <span class="fh-badge fh-badge-danger">Finnes allerede i Fiken-utkast</span>

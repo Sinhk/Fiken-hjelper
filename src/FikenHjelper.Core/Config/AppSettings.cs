@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FikenHjelper.Core.Invoicing;
 
 namespace FikenHjelper.Core.Config;
 
@@ -64,6 +65,27 @@ public sealed class MappingsData
     public List<SavedMinSpeidingEvent> SavedEvents { get; set; } = [];
 }
 
+public sealed class SavedEventDraftState
+{
+    public string ProjectId { get; set; } = string.Empty;
+    public DateTimeOffset SavedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public long? FikenProjectId { get; set; }
+    public string? IncomeAccount { get; set; }
+    public string? BankAccountNumber { get; set; }
+    public DateOnly? IssueDate { get; set; }
+    public int? DaysUntilDueDate { get; set; }
+    public string? InvoiceText { get; set; }
+    public string? OurReference { get; set; }
+    public string? OrderReferencePrefix { get; set; }
+    public BillingMode BillingMode { get; set; } = BillingMode.PerScoutGroup;
+    public GroupLineMode GroupLineMode { get; set; } = GroupLineMode.OneLinePerParticipant;
+    public ParticipantFilterOptions Filters { get; set; } = new();
+    public Dictionary<string, decimal> CategoryPricesNok { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<string> ExcludedCategoryKeys { get; set; } = [];
+    public Dictionary<string, ParticipantOverride> ParticipantOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, long> ManualRecipientContactIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 public interface ILocalConfigStore
 {
     string DataDirectory { get; }
@@ -81,6 +103,9 @@ public interface ILocalConfigStore
     Task RemoveGroupMappingAsync(string groupName, CancellationToken ct = default);
     Task SaveEventAsync(SavedMinSpeidingEvent savedEvent, CancellationToken ct = default);
     Task RemoveEventAsync(string projectId, CancellationToken ct = default);
+    Task<SavedEventDraftState?> LoadEventDraftStateAsync(string projectId, CancellationToken ct = default);
+    Task SaveEventDraftStateAsync(SavedEventDraftState draftState, CancellationToken ct = default);
+    Task DeleteEventDraftStateAsync(string projectId, CancellationToken ct = default);
 }
 
 public sealed class LocalConfigStore : ILocalConfigStore
@@ -354,6 +379,151 @@ public sealed class LocalConfigStore : ILocalConfigStore
         }
     }
 
+    public async Task<SavedEventDraftState?> LoadEventDraftStateAsync(string projectId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(projectId))
+        {
+            return null;
+        }
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var raw = await ReadJsonAsync<SavedEventDraftState>(GetDraftPath(projectId), ct);
+            return raw is null ? null : NormalizeDraftState(raw, projectId.Trim());
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task SaveEventDraftStateAsync(SavedEventDraftState draftState, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(draftState);
+        if (string.IsNullOrWhiteSpace(draftState.ProjectId))
+        {
+            throw new ArgumentException("Prosjekt-ID må fylles ut.", nameof(draftState));
+        }
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var normalized = NormalizeDraftState(draftState, draftState.ProjectId.Trim());
+            normalized.SavedAtUtc = DateTimeOffset.UtcNow;
+            await WriteJsonAsync(GetDraftPath(normalized.ProjectId), normalized, ct);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task DeleteEventDraftStateAsync(string projectId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(projectId))
+        {
+            return;
+        }
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var path = GetDraftPath(projectId);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private string GetDraftPath(string projectId)
+        => Path.Combine(DataDirectory, "drafts", $"{SanitizeFileKey(projectId)}.json");
+
+    private static string SanitizeFileKey(string projectId)
+    {
+        var trimmed = projectId.Trim();
+        var chars = new char[trimmed.Length];
+        for (var i = 0; i < trimmed.Length; i++)
+        {
+            var ch = trimmed[i];
+            chars[i] = char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == '_' ? ch : '_';
+        }
+
+        var cleaned = new string(chars);
+        return string.IsNullOrWhiteSpace(cleaned) ? "event" : cleaned;
+    }
+
+    private static SavedEventDraftState NormalizeDraftState(SavedEventDraftState source, string projectId)
+    {
+        var categoryPrices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        if (source.CategoryPricesNok is not null)
+        {
+            foreach (var (key, value) in source.CategoryPricesNok)
+            {
+                if (!string.IsNullOrWhiteSpace(key) && value >= 0m)
+                {
+                    categoryPrices[key.Trim()] = value;
+                }
+            }
+        }
+
+        var excluded = (source.ExcludedCategoryKeys ?? [])
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Select(k => k.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var overrides = new Dictionary<string, ParticipantOverride>(StringComparer.OrdinalIgnoreCase);
+        if (source.ParticipantOverrides is not null)
+        {
+            foreach (var (key, ov) in source.ParticipantOverrides)
+            {
+                if (!string.IsNullOrWhiteSpace(key) && ov is not null)
+                {
+                    overrides[key.Trim()] = ov;
+                }
+            }
+        }
+
+        var manualContacts = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        if (source.ManualRecipientContactIds is not null)
+        {
+            foreach (var (key, value) in source.ManualRecipientContactIds)
+            {
+                if (!string.IsNullOrWhiteSpace(key) && value > 0)
+                {
+                    manualContacts[key.Trim()] = value;
+                }
+            }
+        }
+
+        return new SavedEventDraftState
+        {
+            ProjectId = projectId,
+            SavedAtUtc = source.SavedAtUtc,
+            FikenProjectId = source.FikenProjectId,
+            IncomeAccount = string.IsNullOrWhiteSpace(source.IncomeAccount) ? null : source.IncomeAccount.Trim(),
+            BankAccountNumber = string.IsNullOrWhiteSpace(source.BankAccountNumber) ? null : source.BankAccountNumber.Trim(),
+            IssueDate = source.IssueDate,
+            DaysUntilDueDate = source.DaysUntilDueDate,
+            InvoiceText = source.InvoiceText,
+            OurReference = source.OurReference,
+            OrderReferencePrefix = source.OrderReferencePrefix,
+            BillingMode = source.BillingMode,
+            GroupLineMode = source.GroupLineMode,
+            Filters = source.Filters ?? new ParticipantFilterOptions(),
+            CategoryPricesNok = categoryPrices,
+            ExcludedCategoryKeys = excluded,
+            ParticipantOverrides = overrides,
+            ManualRecipientContactIds = manualContacts
+        };
+    }
+
     private void ApplyDefaults(AppSettings settings)
     {
         if (string.IsNullOrWhiteSpace(settings.FikenApiToken) && !string.IsNullOrWhiteSpace(_defaults.FikenApiToken))
@@ -440,7 +610,8 @@ public sealed class LocalConfigStore : ILocalConfigStore
 
     private async Task WriteJsonAsync<T>(string path, T value, CancellationToken ct)
     {
-        Directory.CreateDirectory(DataDirectory);
+        var directory = Path.GetDirectoryName(path) ?? DataDirectory;
+        Directory.CreateDirectory(directory);
         var tempPath = path + ".tmp";
         await using (var stream = File.Create(tempPath))
         {

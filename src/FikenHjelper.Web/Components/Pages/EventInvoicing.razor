@@ -73,7 +73,7 @@
                                 OnFiltersChanged="HandleFiltersChanged"
                                 IsLoadingEvent="isLoadingEvent"
                                 OnFetchFromMinSpeiding="FetchFromMinSpeidingAsync"
-                                OnLoadDemo="LoadDemoEvent" />
+                                OnLoadDemo="LoadDemoEventAsync" />
     </section>
 
     @if (eventData is not null)
@@ -81,9 +81,22 @@
         <section class="fh-card">
             <div class="fh-card-header">
                 <h2>@eventData.EventTitle</h2>
-                <span class="fh-badge @(eventData.IsDemoData ? "fh-badge-warn" : "fh-badge-ok")">
-                    @(eventData.IsDemoData ? "Demodata" : "Hentet fra Min speiding")
-                </span>
+                <div class="fh-actions">
+                    <span class="fh-badge @(eventData.IsDemoData ? "fh-badge-warn" : "fh-badge-ok")">
+                        @(eventData.IsDemoData ? "Demodata" : "Hentet fra Min speiding")
+                    </span>
+                    @if (lastDraftSavedAtLocal.HasValue)
+                    {
+                        <span class="fh-badge fh-badge-neutral">
+                            Lagret lokalt @lastDraftSavedAtLocal.Value.ToString("HH:mm")
+                        </span>
+                    }
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm"
+                            @onclick="ResetSavedEventChoicesAsync">
+                        Nullstill lagrede valg
+                    </button>
+                </div>
             </div>
 
             <div class="fh-stack">

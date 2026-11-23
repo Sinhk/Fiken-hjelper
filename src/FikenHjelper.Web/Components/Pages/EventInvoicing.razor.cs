@@ -53,6 +53,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     private readonly Dictionary<string, long> manualRecipientContactIds = new(StringComparer.OrdinalIgnoreCase);
     private InvoicePlanResult? invoicePlan;
     private List<DraftCreationItemResult> creationResults = [];
+    private DateTimeOffset? lastDraftSavedAtLocal;
 
     private CancellationTokenSource? cts;
     private bool isLoadingFiken;
@@ -188,52 +189,52 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         RebuildPlan();
     }
 
-    private void HandleProjectChanged(long? projectId)
+    private Task HandleProjectChanged(long? projectId)
     {
         selectedProjectId = projectId;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleIncomeAccountChanged(string value)
+    private Task HandleIncomeAccountChanged(string value)
     {
         incomeAccount = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleBankAccountChanged(string value)
+    private Task HandleBankAccountChanged(string value)
     {
         bankAccountNumber = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleIssueDateChanged(DateOnly value)
+    private Task HandleIssueDateChanged(DateOnly value)
     {
         issueDate = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleDueDaysChanged(int value)
+    private Task HandleDueDaysChanged(int value)
     {
         daysUntilDueDate = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleInvoiceTextChanged(string value)
+    private Task HandleInvoiceTextChanged(string value)
     {
         invoiceText = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleOurReferenceChanged(string value)
+    private Task HandleOurReferenceChanged(string value)
     {
         ourReference = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleOrderPrefixChanged(string value)
+    private Task HandleOrderPrefixChanged(string value)
     {
         orderReferencePrefix = value;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
     private void HandleSavedEventSelected(string projectId)
@@ -244,12 +245,15 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         if (found is not null)
         {
             eventNameToSave = found.Name;
+            rememberEvent = true;
             if (!string.IsNullOrWhiteSpace(found.ApiKey))
             {
                 minSpeidingApiKey = found.ApiKey;
             }
 
             minSpeidingQuestionsApiKey = found.QuestionsApiKey ?? string.Empty;
+            saveApiKeyLocally = !string.IsNullOrWhiteSpace(found.ApiKey)
+                || !string.IsNullOrWhiteSpace(found.QuestionsApiKey);
         }
     }
 
@@ -283,8 +287,12 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 mappings = await ConfigStore.LoadMappingsAsync(token);
             }
 
-            ApplyLoadedEvent(loaded);
-            SetBanner($"Hentet {loaded.Participants.Count} deltakere fra Min speiding.", isError: false);
+            var restored = await ApplyLoadedEventAsync(loaded, loadSavedDraft: true, token);
+            SetBanner(
+                restored
+                    ? $"Hentet {loaded.Participants.Count} deltakere fra Min speiding og gjenopprettet lagrede lokale valg."
+                    : $"Hentet {loaded.Participants.Count} deltakere fra Min speiding.",
+                isError: false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -305,7 +313,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         }
     }
 
-    private void LoadDemoEvent()
+    private async Task LoadDemoEventAsync()
     {
         var demo = DemoEventFactory.CreateDemoEvent();
         if (customers.Count == 0)
@@ -318,11 +326,18 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             ];
         }
 
-        ApplyLoadedEvent(demo);
-        SetBanner("Lastet inn demodata for Romsdal og Nordmøre krets.", isError: false);
+        var restored = await ApplyLoadedEventAsync(demo, loadSavedDraft: true);
+        SetBanner(
+            restored
+                ? "Lastet inn demodata og gjenopprettet lagrede lokale valg."
+                : "Lastet inn demodata for Romsdal og Nordmøre krets.",
+            isError: false);
     }
 
-    private void ApplyLoadedEvent(MinSpeidingEventLoadResult loaded)
+    private async Task<bool> ApplyLoadedEventAsync(
+        MinSpeidingEventLoadResult loaded,
+        bool loadSavedDraft = true,
+        CancellationToken ct = default)
     {
         eventData = loaded;
         categoryPrices.Clear();
@@ -330,46 +345,128 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         participantOverrides.Clear();
         manualRecipientContactIds.Clear();
         creationResults.Clear();
+        lastDraftSavedAtLocal = null;
 
         foreach (var cat in loaded.FeeCategories)
         {
             categoryPrices[cat.Key] = cat.SuggestedPriceNok ?? 0m;
         }
 
-        orderReferencePrefix = $"MS-{loaded.ProjectId}";
-        if (string.IsNullOrWhiteSpace(invoiceText))
+        orderReferencePrefix = string.Empty;
+        var restored = false;
+
+        if (loadSavedDraft)
+        {
+            var saved = await ConfigStore.LoadEventDraftStateAsync(loaded.ProjectId, ct);
+            if (saved is not null)
+            {
+                selectedProjectId = saved.FikenProjectId;
+                if (!string.IsNullOrWhiteSpace(saved.IncomeAccount))
+                {
+                    incomeAccount = saved.IncomeAccount;
+                }
+
+                bankAccountNumber = saved.BankAccountNumber ?? string.Empty;
+                if (saved.IssueDate.HasValue)
+                {
+                    issueDate = saved.IssueDate.Value;
+                }
+
+                if (saved.DaysUntilDueDate.HasValue)
+                {
+                    daysUntilDueDate = saved.DaysUntilDueDate.Value;
+                }
+
+                invoiceText = saved.InvoiceText ?? string.Empty;
+                ourReference = saved.OurReference ?? string.Empty;
+                orderReferencePrefix = saved.OrderReferencePrefix ?? string.Empty;
+                billingMode = saved.BillingMode;
+                groupLineMode = saved.GroupLineMode;
+                filters = saved.Filters;
+
+                foreach (var (key, value) in saved.CategoryPricesNok)
+                {
+                    categoryPrices[key] = value;
+                }
+
+                foreach (var key in saved.ExcludedCategoryKeys)
+                {
+                    excludedCategoryKeys.Add(key);
+                }
+
+                foreach (var (key, ov) in saved.ParticipantOverrides)
+                {
+                    participantOverrides[key] = ov;
+                }
+
+                foreach (var (key, contactId) in saved.ManualRecipientContactIds)
+                {
+                    manualRecipientContactIds[key] = contactId;
+                }
+
+                lastDraftSavedAtLocal = saved.SavedAtUtc.ToLocalTime();
+                restored = true;
+            }
+        }
+
+        if (!restored && string.IsNullOrWhiteSpace(invoiceText))
         {
             invoiceText = $"Deltakeravgift – {loaded.EventTitle}";
         }
 
         RebuildPlan();
+        return restored;
     }
 
-    private void HandleBillingModeChanged(BillingMode mode)
+    private async Task ResetSavedEventChoicesAsync()
+    {
+        if (eventData is null)
+        {
+            return;
+        }
+
+        await ConfigStore.DeleteEventDraftStateAsync(eventData.ProjectId);
+        selectedProjectId = null;
+        incomeAccount = settings.DefaultIncomeAccount;
+        bankAccountNumber = settings.DefaultBankAccountNumber;
+        issueDate = DateOnly.FromDateTime(DateTime.Today);
+        daysUntilDueDate = settings.DefaultDaysUntilDueDate;
+        ourReference = settings.DefaultOurReference;
+        orderReferencePrefix = string.Empty;
+        invoiceText = $"Deltakeravgift – {eventData.EventTitle}";
+        billingMode = BillingMode.PerScoutGroup;
+        groupLineMode = GroupLineMode.OneLinePerParticipant;
+        filters = new ParticipantFilterOptions();
+
+        await ApplyLoadedEventAsync(eventData, loadSavedDraft: false);
+        SetBanner("Nullstilte lagrede valg for dette arrangementet.", isError: false);
+    }
+
+    private Task HandleBillingModeChanged(BillingMode mode)
     {
         billingMode = mode;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleGroupLineModeChanged(GroupLineMode mode)
+    private Task HandleGroupLineModeChanged(GroupLineMode mode)
     {
         groupLineMode = mode;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleFiltersChanged(ParticipantFilterOptions newFilters)
+    private Task HandleFiltersChanged(ParticipantFilterOptions newFilters)
     {
         filters = newFilters;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleCategoryPriceChanged((string CategoryKey, decimal PriceNok) change)
+    private Task HandleCategoryPriceChanged((string CategoryKey, decimal PriceNok) change)
     {
         categoryPrices[change.CategoryKey] = change.PriceNok;
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleCategoryIncludeChanged((string CategoryKey, bool Included) change)
+    private Task HandleCategoryIncludeChanged((string CategoryKey, bool Included) change)
     {
         if (change.Included)
         {
@@ -380,37 +477,37 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             excludedCategoryKeys.Add(change.CategoryKey);
         }
 
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleParticipantIncludeChanged((string ParticipantKey, bool? Included) change)
+    private Task HandleParticipantIncludeChanged((string ParticipantKey, bool? Included) change)
     {
         participantOverrides.TryGetValue(change.ParticipantKey, out var existing);
         participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
         {
             Included = change.Included
         };
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleParticipantCoveredByDistrictChanged((string ParticipantKey, bool CoveredByDistrict) change)
+    private Task HandleParticipantCoveredByDistrictChanged((string ParticipantKey, bool CoveredByDistrict) change)
     {
         participantOverrides.TryGetValue(change.ParticipantKey, out var existing);
         participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
         {
             CoveredByDistrict = change.CoveredByDistrict
         };
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleParticipantPriceChanged((string ParticipantKey, decimal? CustomPriceNok) change)
+    private Task HandleParticipantPriceChanged((string ParticipantKey, decimal? CustomPriceNok) change)
     {
         participantOverrides.TryGetValue(change.ParticipantKey, out var existing);
         participantOverrides[change.ParticipantKey] = (existing ?? new ParticipantOverride()) with
         {
             CustomPriceNok = change.CustomPriceNok
         };
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
     private IReadOnlyList<string> KnownGroupNames =>
@@ -418,7 +515,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             .OrderBy(k => k, StringComparer.Create(CultureInfo.GetCultureInfo("nb-NO"), ignoreCase: true))
             .ToList();
 
-    private void HandleParticipantGroupChanged((string ParticipantKey, string? CustomGroupName) change)
+    private Task HandleParticipantGroupChanged((string ParticipantKey, string? CustomGroupName) change)
     {
         var defaultGroup = eventData?.Participants
             .FirstOrDefault(p => string.Equals(p.ParticipantKey, change.ParticipantKey, StringComparison.OrdinalIgnoreCase))
@@ -435,10 +532,10 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         {
             CustomGroupName = normalized
         };
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
-    private void HandleManualCustomerSelected((string DraftKey, long? ContactId) selection)
+    private Task HandleManualCustomerSelected((string DraftKey, long? ContactId) selection)
     {
         if (selection.ContactId.HasValue)
         {
@@ -449,7 +546,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             manualRecipientContactIds.Remove(selection.DraftKey);
         }
 
-        RebuildPlan();
+        return RebuildAndPersistAsync();
     }
 
     private async Task HandleRememberGroupMappingAsync((string RecipientName, long ContactId) args)
@@ -458,6 +555,51 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         mappings = await ConfigStore.LoadMappingsAsync();
         SetBanner($"Lagret kobling for «{args.RecipientName}» til fremtidige arrangementer.", isError: false);
         RebuildPlan();
+    }
+
+    private async Task RebuildAndPersistAsync()
+    {
+        RebuildPlan();
+        await PersistCurrentDraftStateAsync();
+    }
+
+    private async Task PersistCurrentDraftStateAsync()
+    {
+        if (eventData is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var draftState = new SavedEventDraftState
+            {
+                ProjectId = eventData.ProjectId,
+                SavedAtUtc = DateTimeOffset.UtcNow,
+                FikenProjectId = selectedProjectId,
+                IncomeAccount = incomeAccount,
+                BankAccountNumber = bankAccountNumber,
+                IssueDate = issueDate,
+                DaysUntilDueDate = daysUntilDueDate,
+                InvoiceText = invoiceText,
+                OurReference = ourReference,
+                OrderReferencePrefix = orderReferencePrefix,
+                BillingMode = billingMode,
+                GroupLineMode = groupLineMode,
+                Filters = filters,
+                CategoryPricesNok = new Dictionary<string, decimal>(categoryPrices, StringComparer.OrdinalIgnoreCase),
+                ExcludedCategoryKeys = excludedCategoryKeys.ToList(),
+                ParticipantOverrides = new Dictionary<string, ParticipantOverride>(participantOverrides, StringComparer.OrdinalIgnoreCase),
+                ManualRecipientContactIds = new Dictionary<string, long>(manualRecipientContactIds, StringComparer.OrdinalIgnoreCase)
+            };
+
+            await ConfigStore.SaveEventDraftStateAsync(draftState);
+            lastDraftSavedAtLocal = DateTimeOffset.Now;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to save local draft state for project {ProjectId}", eventData.ProjectId);
+        }
     }
 
     private async Task HandleCreateFikenCustomerAsync((string DraftKey, string Name, string? Email) args)
@@ -485,7 +627,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             }
 
             SetBanner($"Opprettet kunden «{args.Name}» i Fiken.", isError: false);
-            RebuildPlan();
+            await RebuildAndPersistAsync();
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
