@@ -102,13 +102,16 @@
             <div class="fh-stack">
                 <FeePricingTable Categories="eventData.FeeCategories"
                                  CategoryPrices="categoryPrices"
+                                 CategoryLabels="categoryLabels"
                                  ExcludedCategoryKeys="excludedCategoryKeys"
                                  OnCategoryPriceChanged="HandleCategoryPriceChanged"
+                                 OnCategoryLabelChanged="HandleCategoryLabelChanged"
                                  OnCategoryIncludeChanged="HandleCategoryIncludeChanged" />
 
                 <ParticipantOverridesTable EventData="eventData"
                                            Filters="filters"
                                            CategoryPrices="categoryPrices"
+                                           CategoryLabels="categoryLabels"
                                            Overrides="participantOverrides"
                                            ExcludedCategoryKeys="excludedCategoryKeys"
                                            KnownGroupNames="KnownGroupNames"

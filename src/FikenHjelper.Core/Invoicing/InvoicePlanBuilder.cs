@@ -80,6 +80,20 @@ public static partial class InvoicePlanBuilder
         return participant.GroupName;
     }
 
+    public static string ResolveEffectiveFeeLabel(
+        EventParticipant participant,
+        IReadOnlyDictionary<string, string>? categoryLabels)
+    {
+        if (categoryLabels is not null
+            && categoryLabels.TryGetValue(participant.FeeCategoryKey, out var customLabel)
+            && !string.IsNullOrWhiteSpace(customLabel))
+        {
+            return customLabel.Trim();
+        }
+
+        return participant.FeeLabel;
+    }
+
     public static decimal ResolveEffectivePriceNok(
         EventParticipant participant,
         IReadOnlyDictionary<string, decimal> categoryPricesNok,
@@ -143,7 +157,7 @@ public static partial class InvoicePlanBuilder
                     FullName: displayName,
                     MemberNo: participant.MemberNo,
                     GroupName: ResolveEffectiveGroupName(participant, options.ParticipantOverrides),
-                    FeeLabel: participant.FeeLabel,
+                    FeeLabel: ResolveEffectiveFeeLabel(participant, options.CategoryLabels),
                     AmountNok: amountNok,
                     AmountOre: amountOre));
                 continue;
@@ -324,7 +338,7 @@ public static partial class InvoicePlanBuilder
             var recipientKey = $"participant:{participant.ParticipantKey}";
             var priceNok = ResolveEffectivePriceNok(participant, options.CategoryPricesNok, options.ParticipantOverrides);
             var priceOre = CurrencyHelper.ToOre(priceNok);
-            var description = Truncate($"{eventData.EventTitle} – {participant.FeeLabel}", MaxFikenLineFieldLength);
+            var description = Truncate($"{eventData.EventTitle} – {ResolveEffectiveFeeLabel(participant, options.CategoryLabels)}", MaxFikenLineFieldLength);
             var effectiveGroupName = ResolveEffectiveGroupName(participant, options.ParticipantOverrides);
             var comment = string.Equals(effectiveGroupName, "Uten gruppe", StringComparison.OrdinalIgnoreCase)
                 ? null
@@ -375,7 +389,7 @@ public static partial class InvoicePlanBuilder
             var priceNok = ResolveEffectivePriceNok(member, options.CategoryPricesNok, options.ParticipantOverrides);
             var priceOre = CurrencyHelper.ToOre(priceNok);
             var name = string.IsNullOrWhiteSpace(member.FullName) ? $"Medlem {member.MemberNo}" : member.FullName;
-            var description = Truncate($"{name} ({member.FeeLabel})", MaxFikenLineFieldLength);
+            var description = Truncate($"{name} ({ResolveEffectiveFeeLabel(member, options.CategoryLabels)})", MaxFikenLineFieldLength);
             var comment = TruncateOrNull(
                 member.MemberNo.HasValue ? $"{eventTitle} – Medl.nr {member.MemberNo.Value}" : eventTitle,
                 MaxFikenLineFieldLength);
@@ -415,7 +429,7 @@ public static partial class InvoicePlanBuilder
             var unitPriceOre = CurrencyHelper.ToOre(first.PriceNok);
             var totalOre = unitPriceOre * count;
             var names = string.Join(", ", bucket.Select(x => x.Member.FullName).Where(n => !string.IsNullOrWhiteSpace(n)));
-            var description = Truncate($"{first.Member.FeeLabel} – {eventTitle}", MaxFikenLineFieldLength);
+            var description = Truncate($"{ResolveEffectiveFeeLabel(first.Member, options.CategoryLabels)} – {eventTitle}", MaxFikenLineFieldLength);
             var comment = TruncateOrNull(string.IsNullOrWhiteSpace(names) ? null : $"Deltakere: {names}", MaxFikenLineFieldLength);
 
             lines.Add(new PlannedInvoiceLine(

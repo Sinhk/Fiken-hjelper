@@ -48,6 +48,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private MinSpeidingEventLoadResult? eventData;
     private readonly Dictionary<string, decimal> categoryPrices = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, decimal> manualCategoryPrices = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> categoryLabels = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> excludedCategoryKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ParticipantOverride> participantOverrides = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, long> manualRecipientContactIds = new(StringComparer.OrdinalIgnoreCase);
@@ -405,6 +407,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         eventData = loaded;
         categoryPrices.Clear();
+        manualCategoryPrices.Clear();
+        categoryLabels.Clear();
         excludedCategoryKeys.Clear();
         participantOverrides.Clear();
         manualRecipientContactIds.Clear();
@@ -449,9 +453,40 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 groupLineMode = saved.GroupLineMode;
                 filters = saved.Filters;
 
+                var suggestedByKey = loaded.FeeCategories
+                    .ToDictionary(c => c.Key, c => c.SuggestedPriceNok, StringComparer.OrdinalIgnoreCase);
+
                 foreach (var (key, value) in saved.CategoryPricesNok)
                 {
+                    if (suggestedByKey.TryGetValue(key, out var suggested)
+                        && suggested.HasValue
+                        && suggested.Value == value)
+                    {
+                        continue;
+                    }
+
                     categoryPrices[key] = value;
+                    manualCategoryPrices[key] = value;
+                }
+
+                var originalLabelByKey = loaded.FeeCategories
+                    .ToDictionary(c => c.Key, c => c.Label.Trim(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var (key, label) in saved.CategoryLabels)
+                {
+                    var trimmed = label.Trim();
+                    if (string.IsNullOrWhiteSpace(trimmed))
+                    {
+                        continue;
+                    }
+
+                    if (originalLabelByKey.TryGetValue(key, out var orig)
+                        && string.Equals(trimmed, orig, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    categoryLabels[key] = trimmed;
                 }
 
                 foreach (var key in saved.ExcludedCategoryKeys)
@@ -538,6 +573,41 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     private Task HandleCategoryPriceChanged((string CategoryKey, decimal PriceNok) change)
     {
         categoryPrices[change.CategoryKey] = change.PriceNok;
+
+        var suggestedPrice = eventData?.FeeCategories
+            .FirstOrDefault(c => string.Equals(c.Key, change.CategoryKey, StringComparison.OrdinalIgnoreCase))
+            ?.SuggestedPriceNok;
+
+        if (suggestedPrice.HasValue && suggestedPrice.Value == change.PriceNok)
+        {
+            manualCategoryPrices.Remove(change.CategoryKey);
+        }
+        else
+        {
+            manualCategoryPrices[change.CategoryKey] = change.PriceNok;
+        }
+
+        return RebuildAndPersistAsync();
+    }
+
+    private Task HandleCategoryLabelChanged((string CategoryKey, string? Label) change)
+    {
+        var trimmed = change.Label?.Trim();
+        var originalLabel = eventData?.FeeCategories
+            .FirstOrDefault(c => string.Equals(c.Key, change.CategoryKey, StringComparison.OrdinalIgnoreCase))
+            ?.Label.Trim();
+
+        if (string.IsNullOrWhiteSpace(trimmed)
+            || (!string.IsNullOrWhiteSpace(originalLabel)
+                && string.Equals(trimmed, originalLabel, StringComparison.Ordinal)))
+        {
+            categoryLabels.Remove(change.CategoryKey);
+        }
+        else
+        {
+            categoryLabels[change.CategoryKey] = trimmed;
+        }
+
         return RebuildAndPersistAsync();
     }
 
@@ -683,7 +753,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 BillingMode = billingMode,
                 GroupLineMode = groupLineMode,
                 Filters = filters,
-                CategoryPricesNok = new Dictionary<string, decimal>(categoryPrices, StringComparer.OrdinalIgnoreCase),
+                CategoryPricesNok = new Dictionary<string, decimal>(manualCategoryPrices, StringComparer.OrdinalIgnoreCase),
+                CategoryLabels = new Dictionary<string, string>(categoryLabels, StringComparer.OrdinalIgnoreCase),
                 ExcludedCategoryKeys = excludedCategoryKeys.ToList(),
                 ParticipantOverrides = new Dictionary<string, ParticipantOverride>(participantOverrides, StringComparer.OrdinalIgnoreCase),
                 ManualRecipientContactIds = new Dictionary<string, long>(manualRecipientContactIds, StringComparer.OrdinalIgnoreCase)
@@ -833,7 +904,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         InvoiceText: invoiceText,
         OurReference: ourReference,
         OrderReferencePrefix: orderReferencePrefix,
-        ExcludedCategoryKeys: excludedCategoryKeys);
+        ExcludedCategoryKeys: excludedCategoryKeys,
+        CategoryLabels: categoryLabels);
 
     private void RebuildPlan()
     {

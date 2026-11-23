@@ -95,6 +95,10 @@ public sealed class LocalConfigStoreTests : IDisposable
             {
                 ["fee:101"] = 490.50m
             },
+            CategoryLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["fee:101"] = "  Deltakeravgift speider  "
+            },
             ExcludedCategoryKeys = ["fee:103"],
             ParticipantOverrides = new Dictionary<string, ParticipantOverride>(StringComparer.OrdinalIgnoreCase)
             {
@@ -130,6 +134,7 @@ public sealed class LocalConfigStoreTests : IDisposable
         Assert.True(loaded.Filters.RequireAttended);
         Assert.True(loaded.Filters.ExcludeZeroPrice);
         Assert.Equal(490.50m, loaded.CategoryPricesNok["FEE:101"]);
+        Assert.Equal("Deltakeravgift speider", loaded.CategoryLabels["FEE:101"]);
         Assert.Single(loaded.ExcludedCategoryKeys, "fee:103");
         Assert.True(loaded.ParticipantOverrides.TryGetValue("90003", out var ov));
         Assert.Equal(true, ov!.Included);

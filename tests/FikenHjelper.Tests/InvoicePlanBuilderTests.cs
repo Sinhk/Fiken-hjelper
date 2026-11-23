@@ -325,4 +325,77 @@ public sealed class InvoicePlanBuilderTests
         Assert.Equal("90003", covered.ParticipantKey);
         Assert.Equal("Aukra speidergruppe", covered.GroupName);
     }
+
+    [Fact]
+    public void Build_CustomCategoryLabels_UsedOnInvoiceLinesAndDistrictCoveredSummary()
+    {
+        var demo = DemoEventFactory.CreateDemoEvent();
+        var originalFee101Label = demo.FeeCategories.Single(c => c.Key == "fee:101").Label;
+        var originalFee102Label = demo.FeeCategories.Single(c => c.Key == "fee:102").Label;
+
+        var customLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["fee:101"] = "Egen speideravgift",
+            ["fee:102"] = "Egen lederavgift"
+        };
+
+        var baseOptions = new InvoiceDraftPlanOptions(
+            BillingMode: BillingMode.PerScoutGroup,
+            GroupLineMode: GroupLineMode.OneLinePerParticipant,
+            Filters: new ParticipantFilterOptions(ExcludeCancelled: true),
+            CategoryPricesNok: new Dictionary<string, decimal>
+            {
+                ["fee:101"] = 450m,
+                ["fee:102"] = 250m
+            },
+            ParticipantOverrides: new Dictionary<string, ParticipantOverride>
+            {
+                ["90007"] = new ParticipantOverride(CoveredByDistrict: true)
+            },
+            ManualRecipientContactIds: new Dictionary<string, long>(),
+            IncomeAccount: "3200",
+            IssueDate: new DateOnly(2026, 11, 23),
+            DaysUntilDueDate: 14,
+            FikenProjectId: null,
+            BankAccountNumber: null,
+            InvoiceText: null,
+            OurReference: null,
+            OrderReferencePrefix: null,
+            CategoryLabels: customLabels);
+
+        // 1. PerScoutGroup + OneLinePerParticipant + DistrictCovered
+        var oneLinePlan = InvoicePlanBuilder.Build(demo, baseOptions, Customers, new Dictionary<string, long>());
+        var moldeOneLine = oneLinePlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
+        Assert.Contains(moldeOneLine.Lines, l => l.Description.Contains("Egen speideravgift", StringComparison.Ordinal));
+        Assert.Contains(moldeOneLine.Lines, l => l.Description.Contains("Egen lederavgift", StringComparison.Ordinal));
+        Assert.DoesNotContain(moldeOneLine.Lines, l => l.Description.Contains(originalFee101Label, StringComparison.Ordinal));
+        Assert.DoesNotContain(moldeOneLine.Lines, l => l.Description.Contains(originalFee102Label, StringComparison.Ordinal));
+
+        var covered = Assert.Single(oneLinePlan.DistrictCoveredParticipants);
+        Assert.Equal("Egen lederavgift", covered.FeeLabel);
+        var coveredSummary = InvoicePlanBuilder.FormatDistrictCoveredSummaryText(
+            demo.EventTitle,
+            oneLinePlan.DistrictCoveredParticipants);
+        Assert.Contains("Egen lederavgift", coveredSummary, StringComparison.Ordinal);
+
+        // 2. PerScoutGroup + SummaryPerFeeCategory
+        var summaryPlan = InvoicePlanBuilder.Build(
+            demo,
+            baseOptions with { GroupLineMode = GroupLineMode.SummaryPerFeeCategory },
+            Customers,
+            new Dictionary<string, long>());
+        var moldeSummary = summaryPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
+        Assert.Contains(moldeSummary.Lines, l => l.Description.StartsWith("Egen speideravgift", StringComparison.Ordinal));
+        Assert.Contains(moldeSummary.Lines, l => l.Description.StartsWith("Egen lederavgift", StringComparison.Ordinal));
+
+        // 3. PerParticipant
+        var perParticipantPlan = InvoicePlanBuilder.Build(
+            demo,
+            baseOptions with { BillingMode = BillingMode.PerParticipant },
+            Customers,
+            new Dictionary<string, long>());
+        Assert.Contains(
+            perParticipantPlan.Drafts.SelectMany(d => d.Lines),
+            l => l.Description.EndsWith("Egen speideravgift", StringComparison.Ordinal));
+    }
 }

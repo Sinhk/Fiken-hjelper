@@ -81,6 +81,7 @@ public sealed class SavedEventDraftState
     public GroupLineMode GroupLineMode { get; set; } = GroupLineMode.OneLinePerParticipant;
     public ParticipantFilterOptions Filters { get; set; } = new();
     public Dictionary<string, decimal> CategoryPricesNok { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> CategoryLabels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> ExcludedCategoryKeys { get; set; } = [];
     public Dictionary<string, ParticipantOverride> ParticipantOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, long> ManualRecipientContactIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -472,6 +473,18 @@ public sealed class LocalConfigStore : ILocalConfigStore
             }
         }
 
+        var categoryLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (source.CategoryLabels is not null)
+        {
+            foreach (var (key, value) in source.CategoryLabels)
+            {
+                if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+                {
+                    categoryLabels[key.Trim()] = value.Trim();
+                }
+            }
+        }
+
         var excluded = (source.ExcludedCategoryKeys ?? [])
             .Where(k => !string.IsNullOrWhiteSpace(k))
             .Select(k => k.Trim())
@@ -518,6 +531,7 @@ public sealed class LocalConfigStore : ILocalConfigStore
             GroupLineMode = source.GroupLineMode,
             Filters = source.Filters ?? new ParticipantFilterOptions(),
             CategoryPricesNok = categoryPrices,
+            CategoryLabels = categoryLabels,
             ExcludedCategoryKeys = excluded,
             ParticipantOverrides = overrides,
             ManualRecipientContactIds = manualContacts
