@@ -21,20 +21,30 @@ FikenHjelper.slnx
 4. **Fiken API-begrensning:** Fiken tillater maks **1 samtidig spørring** og maks **4 kall per sekund**. All kommunikasjon går gjennom `FikenRateLimitHandler` som serialiserer forespørsler med `SemaphoreSlim(1, 1)` og minst 260 ms mellomrom.
 5. **Testforetak støttes:** Alt kan kobles mot et gratis testforetak i Fiken før man kjører mot kretsens ekte regnskap.
 
+### UI og komponentbibliotek
+- For Fase 1 ble det laget en enkel egen `SearchableSelect`-komponent uten ekstra pakkeavhengigheter for å komme raskt i mål.
+- Før videre UI-utbygging (Fase 2/3 med kolonnemapping, større tabeller, filtre, dialoger og budsjettrapporter) bør løsningen ta i bruk et åpent / gratis-for-frivillige Blazor-komponentbibliotek (**MIT-lisens**, uten lisensnøkler) i stedet for å bygge og vedlikeholde egne komplekse UI-komponenter:
+  - **MudBlazor** (MIT) – bredt utvalg komponenter (`MudAutocomplete`, `MudDataGrid`, dialoger, tema) i ren C#/Blazor.
+  - **Radzen.Blazor** (MIT) – sterk på søkbare nedtrekkslister (`RadzenDropDown`), avanserte datatabeller (`RadzenDataGrid`) og grafer til budsjettrapporter.
+  - **Microsoft Fluent UI Blazor** (MIT) – offisielt Microsoft-bibliotek med rent grensesnitt (`FluentAutocomplete`, `FluentDataGrid`).
+- Når bibliotek er valgt, erstattes dagens `SearchableSelect` og håndskrevne tabeller/skjemaer gradvis.
+
 ---
 
 ## Fase 1 – Arrangementsfakturering via Min speiding API *(Implementert)*
 **Mål:** Hente påmeldte fra et arrangement i `min.speiding.no`, beregne priser per rolle/kategori og opprette fakturautkast i Fiken.
 
-- **Kilde (`min.speiding.no/api`):**
-  - `GET /project/get/participants` og best-effort `GET /project/get/questions` med HTTP Basic auth (`projectId:apiKey`).
+- **Kilde (`min.speiding.no/api`) og autentisering:**
+  - Separate API-nøkler per Min speiding-endepunkt (`GET /project/get/participants` + valgfri `GET /project/get/questions`) med HTTP Basic auth (`projectId:apiKey`), med lokal lagring per arrangement.
+  - Fiken **OAuth2 + PKCE**-innlogging (med personlig API-nøkkel som fallback).
   - Robust JSON-parsing som håndterer PHP-særegenheter (tomme lister `[]` i stedet for `{}` på objekter/oppslag, streng/tall/liste på spørsmålssvar, ekstra norske felter via `JsonExtensionData`).
-- **Regler og prising:**
-  - Samlefaktura per speidergruppe (standard) – valgfritt med én linje per deltaker eller sammendrag per priskategori.
-  - Enkeltfaktura per deltaker som alternativ.
+- **Regler, prising og filtrering:**
+  - Samlefaktura per speidergruppe (standard) – valgfritt med én linje per deltaker eller sammendrag per priskategori – eller enkeltfaktura per deltaker.
   - Auto-forslag av pris fra `labels.project_fee` (f.eks. *Speider 450 kr*, *Leder 250 kr*) med redigerbare priser per kategori og overstyring/ekskludering per enkeltperson.
-  - Filter for avmeldte, bekreftede og oppmøtte.
-- **Kundematching og Fiken-utkast:**
+  - Filter for avmeldte, gratis (`0 kr`), bekreftede og oppmøtte, samt mulighet til å ekskludere hele priskategorier (f.eks. `Stab`) uten tomme fakturautkast.
+  - Avkrysning for **«Dekkes av kretsen»** per deltaker: trekkes ut av gruppefakturaene og vises i egen oppsummeringstabell og kopierbar tekstoversikt.
+- **Kundematching, søk og Fiken-utkast:**
+  - Søkbare nedtrekkslister (`SearchableSelect`) for Fiken-kunde, prosjekt og inntektskonto.
   - Automatisk matching mot kunder i Fiken (lagrede koblinger → eksakt navn → normalisert gruppenavn → e-post → forslag).
   - Lagrede gruppe-til-kunde-koblinger i `%LocalAppData%\FikenHjelper\mappings.json`.
   - Mulighet til å opprette manglende kunde i Fiken direkte fra forhåndsvisningen.
