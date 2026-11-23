@@ -309,9 +309,14 @@
                 continue;
             }
 
-            var sample = EventData.Participants
-                .Select(p => p.ExtraFields.TryGetValue(fieldName, out var val) ? val : null)
-                .FirstOrDefault(val => !string.IsNullOrWhiteSpace(val));
+            var nonEmptyValues = EventData.Participants
+                .Select(p => p.ExtraFields.TryGetValue(fieldName, out var val) ? val?.Trim() : null)
+                .Where(val => !string.IsNullOrWhiteSpace(val))
+                .Cast<string>()
+                .ToList();
+
+            var sample = nonEmptyValues.FirstOrDefault(v => !TrivialDiagnosticValues.Contains(v))
+                ?? nonEmptyValues.FirstOrDefault();
 
             if (string.IsNullOrWhiteSpace(sample))
             {
@@ -319,7 +324,7 @@
             }
             else
             {
-                var compact = sample.Trim();
+                var compact = sample;
                 if (compact.Length > 120)
                 {
                     compact = compact[..119] + "…";
@@ -331,6 +336,17 @@
 
         return string.Join(", ", parts);
     }
+
+    private static readonly HashSet<string> TrivialDiagnosticValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "0",
+        "0.0",
+        "0.00",
+        "[]",
+        "{}",
+        "false",
+        "null"
+    };
 
     private static bool IsSensitiveDiagnosticKey(string key)
         => SensitiveDiagnosticFragments.Any(f => key.Contains(f, StringComparison.OrdinalIgnoreCase));

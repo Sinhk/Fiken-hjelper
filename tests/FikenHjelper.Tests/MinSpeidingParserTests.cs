@@ -132,6 +132,8 @@ public sealed class MinSpeidingParserTests
     [InlineData("Speider (450 kr)", 450.0)]
     [InlineData("Leder 250,-", 250.0)]
     [InlineData("kr 375.50", 375.50)]
+    [InlineData("Leir 1 200 kr", 1200.0)]
+    [InlineData("kr 1 450,50", 1450.5)]
     [InlineData("Gratis", 0.0)]
     [InlineData("Jamboree 2026", null)]
     public void TryExtractPriceNokFromLabel_HandlesNorwegianPriceFormatsWithoutFalsePositivesOnYears(
@@ -300,5 +302,100 @@ public sealed class MinSpeidingParserTests
         Assert.False(p.HasMultipleGroups);
         var onlyGroup = Assert.Single(p.AvailableGroups);
         Assert.Equal("1. Batnfjord speidergruppe", onlyGroup.GroupName);
+    }
+
+    [Fact]
+    public void Parse_DetectsFeeAmountAndTotalAmount_AndSkipsLegacyDeprecatedFields()
+    {
+        const string json = """
+            {
+              "participants": {
+                "1": {
+                  "member_no": 1001,
+                  "first_name": "Ola",
+                  "last_name": "Speider",
+                  "fee_id": 101,
+                  "fee_amount": 450,
+                  "purchase_amount": 0,
+                  "total_amount": 450,
+                  "group_id": "Deprecated - use group_registration_info",
+                  "group_name": "Deprecated - use group_registration_info",
+                  "district_name": "Deprecated - use group_registration_info",
+                  "patrol_name": "Deprecated - use group_registration_info",
+                  "org_name": "Deprecated - use group_registration_info",
+                  "group_registration_info": {
+                    "group_id": 501,
+                    "group_name": "Molde speidergruppe"
+                  }
+                },
+                "2": {
+                  "member_no": 1002,
+                  "first_name": "Kari",
+                  "last_name": "Tillegg",
+                  "fee_id": 102,
+                  "fee_amount": 0,
+                  "purchase_amount": 150,
+                  "total_amount": 150,
+                  "group_registration_info": {
+                    "group_id": 501,
+                    "group_name": "Molde speidergruppe"
+                  }
+                },
+                "3": {
+                  "member_no": 1003,
+                  "first_name": "Per",
+                  "last_name": "Leder",
+                  "fee_id": 103,
+                  "fee_amount": 0,
+                  "purchase_amount": 0,
+                  "total_amount": 0,
+                  "group_registration_info": {
+                    "group_id": 501,
+                    "group_name": "Molde speidergruppe"
+                  }
+                },
+                "4": {
+                  "member_no": 1004,
+                  "first_name": "Lise",
+                  "last_name": "Stab",
+                  "fee_id": 104,
+                  "fee_amount": 0,
+                  "purchase_amount": 0,
+                  "total_amount": 0,
+                  "group_registration_info": {
+                    "group_id": 501,
+                    "group_name": "Molde speidergruppe"
+                  }
+                }
+              },
+              "labels": {
+                "project_fee": {
+                  "101": "Speider",
+                  "102": "Tillegg",
+                  "103": "Leder (1 250 kr)",
+                  "104": "Stab"
+                }
+              }
+            }
+            """;
+
+        var result = MinSpeidingParser.Parse("999", json, null, questionsEndpointAvailable: false);
+
+        Assert.Equal(450m, result.Participants.Single(p => p.ParticipantKey == "1").DetectedPriceNok);
+        Assert.Equal(150m, result.Participants.Single(p => p.ParticipantKey == "2").DetectedPriceNok);
+        Assert.Equal(1250m, result.Participants.Single(p => p.ParticipantKey == "3").DetectedPriceNok);
+        Assert.Equal(0m, result.Participants.Single(p => p.ParticipantKey == "4").DetectedPriceNok);
+
+        Assert.Equal(450m, result.FeeCategories.Single(c => c.Key == "fee:101").SuggestedPriceNok);
+        Assert.Equal(150m, result.FeeCategories.Single(c => c.Key == "fee:102").SuggestedPriceNok);
+        Assert.Equal(1250m, result.FeeCategories.Single(c => c.Key == "fee:103").SuggestedPriceNok);
+        Assert.Equal(0m, result.FeeCategories.Single(c => c.Key == "fee:104").SuggestedPriceNok);
+
+        Assert.All(result.Participants, p =>
+        {
+            Assert.False(p.HasMultipleGroups);
+            var only = Assert.Single(p.AvailableGroups);
+            Assert.Equal("Molde speidergruppe", only.GroupName);
+        });
     }
 }
