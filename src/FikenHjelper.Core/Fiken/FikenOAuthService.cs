@@ -13,6 +13,7 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
     public const string AuthorizeEndpoint = "https://fiken.no/oauth/authorize";
     public const string TokenEndpoint = "https://fiken.no/oauth/token";
     public const string RevokeEndpoint = "https://fiken.no/oauth/revoke";
+    public const string RefreshLockFileName = "fiken-oauth.lock";
 
     private static readonly TimeSpan ExpiryRefreshMargin = TimeSpan.FromMinutes(2);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -118,12 +119,22 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
             return settings.FikenOAuthAccessToken;
         }
 
+        var accessTokenBeforeLock = settings.FikenOAuthAccessToken;
+
         await _refreshGate.WaitAsync(ct);
         try
         {
+            // Låsfila hindrer at flere prosesser (f.eks. Web og MCP-serveren) fornyer samtidig.
+            // Fiken roterer refresh-tokenet, så samtidig fornyelse ville ellers logget ut den ene.
+            using var fileLock = await CrossProcessFileLock.AcquireAsync(
+                Path.Combine(_configStore.DataDirectory, RefreshLockFileName),
+                ct);
+
             settings = await _configStore.LoadSettingsAsync(ct);
-            if (!forceRefresh && HasFreshAccessToken(settings))
+            if (HasFreshAccessToken(settings)
+                && (!forceRefresh || !string.Equals(settings.FikenOAuthAccessToken, accessTokenBeforeLock, StringComparison.Ordinal)))
             {
+                // Enten er tokenet fortsatt gyldig, eller så har en annen tråd/prosess allerede fornyet det.
                 return settings.FikenOAuthAccessToken;
             }
 
@@ -148,10 +159,11 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
                     "Fiken OAuth2 Client ID mangler under Innstillinger.");
             }
 
+            var sentRefreshToken = settings.FikenOAuthRefreshToken.Trim();
             var formFields = new Dictionary<string, string>
             {
                 ["grant_type"] = "refresh_token",
-                ["refresh_token"] = settings.FikenOAuthRefreshToken.Trim()
+                ["refresh_token"] = sentRefreshToken
             };
 
             var isConfidential = !string.IsNullOrWhiteSpace(clientSecret);
@@ -160,11 +172,33 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
                 formFields["client_id"] = clientId;
             }
 
-            var refreshed = await PostTokenFormAsync(
-                formFields,
-                isConfidential ? (clientId, clientSecret) : null,
-                isRefresh: true,
-                ct);
+            FikenOAuthTokenResponse refreshed;
+            try
+            {
+                refreshed = await PostTokenFormAsync(
+                    formFields,
+                    isConfidential ? (clientId, clientSecret) : null,
+                    isRefresh: true,
+                    ct);
+            }
+            catch (RefreshTokenRejectedException rejected)
+            {
+                // Har en annen prosess rotert refresh-tokenet i mellomtiden (f.eks. en eldre versjon uten låsfil),
+                // brukes det nye tokenet i stedet for å logge ut.
+                var current = await _configStore.LoadSettingsAsync(ct);
+                if (!string.IsNullOrWhiteSpace(current.FikenOAuthAccessToken)
+                    && !string.IsNullOrWhiteSpace(current.FikenOAuthRefreshToken)
+                    && !string.Equals(current.FikenOAuthRefreshToken.Trim(), sentRefreshToken, StringComparison.Ordinal))
+                {
+                    return current.FikenOAuthAccessToken;
+                }
+
+                await _configStore.ClearFikenOAuthTokensAsync(ct);
+                throw new FikenApiException(
+                    HttpStatusCode.Unauthorized,
+                    "Fiken-innloggingen er utløpt eller trukket tilbake. Logg inn på nytt med Fiken under Innstillinger.",
+                    rejected.Detail);
+            }
 
             var expiresAtUtc = ComputeExpiresAtUtc(refreshed.ExpiresIn);
             await _configStore.SaveFikenOAuthTokensAsync(
@@ -251,11 +285,7 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
 
                 if (isRefresh && (response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.Unauthorized))
                 {
-                    await _configStore.ClearFikenOAuthTokensAsync(ct);
-                    throw new FikenApiException(
-                        HttpStatusCode.Unauthorized,
-                        "Fiken-innloggingen er utløpt eller trukket tilbake. Logg inn på nytt med Fiken under Innstillinger.",
-                        errorBody?.ErrorDescription ?? errorBody?.Error);
+                    throw new RefreshTokenRejectedException(errorBody?.ErrorDescription ?? errorBody?.Error);
                 }
 
                 var detail = errorBody?.ErrorDescription ?? errorBody?.Error;
@@ -299,4 +329,9 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
         => expiresInSeconds > 0 ? DateTimeOffset.UtcNow.AddSeconds(expiresInSeconds) : null;
 
     public void Dispose() => _refreshGate.Dispose();
+
+    private sealed class RefreshTokenRejectedException(string? detail) : Exception("Fiken avviste refresh-tokenet.")
+    {
+        public string? Detail { get; } = detail;
+    }
 }

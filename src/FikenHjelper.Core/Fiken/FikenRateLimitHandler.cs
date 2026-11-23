@@ -1,48 +1,113 @@
 using System.Net;
+using FikenHjelper.Core.Config;
 
 namespace FikenHjelper.Core.Fiken;
 
 /// <summary>
 /// Thread-safe singleton coordinator enforcing Fiken API v2 limits:
 /// maximum 1 concurrent request and minimum spacing between requests.
+/// Med en låsfil gjelder grensene også på tvers av prosesser (f.eks. Web og MCP-serveren samtidig):
+/// låsen holdes under hele kallet, og tidspunktet for siste kall lagres i fila.
 /// </summary>
 public sealed class FikenRateLimiter : IDisposable
 {
+    public const string LockFileName = "fiken-api.lock";
+    public static readonly TimeSpan DefaultMinimumSpacing = TimeSpan.FromMilliseconds(260);
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeSpan _minimumSpacing;
+    private readonly string? _lockFilePath;
     private DateTimeOffset _nextAllowedRequestUtc = DateTimeOffset.MinValue;
+    private CrossProcessFileLock? _currentFileLock;
 
     public FikenRateLimiter()
-        : this(TimeSpan.FromMilliseconds(260))
+        : this(DefaultMinimumSpacing)
     {
     }
 
     public FikenRateLimiter(TimeSpan minimumSpacing)
+        : this(minimumSpacing, lockFilePath: null)
+    {
+    }
+
+    public FikenRateLimiter(TimeSpan minimumSpacing, string? lockFilePath)
     {
         _minimumSpacing = minimumSpacing < TimeSpan.Zero ? TimeSpan.Zero : minimumSpacing;
+        _lockFilePath = string.IsNullOrWhiteSpace(lockFilePath) ? null : lockFilePath;
     }
+
+    /// <summary>Rate limiter som deler grensene med andre prosesser som bruker samme datamappe.</summary>
+    public static FikenRateLimiter CreateShared(string dataDirectory) =>
+        new(DefaultMinimumSpacing, Path.Combine(dataDirectory, LockFileName));
 
     public async Task<IDisposable> AcquireSlotAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
+        if (_lockFilePath is not null)
+        {
+            try
+            {
+                _currentFileLock = await CrossProcessFileLock.AcquireAsync(_lockFilePath, cancellationToken);
+            }
+            catch
+            {
+                _gate.Release();
+                throw;
+            }
+        }
+
         return new SlotLease(this);
     }
 
     public async Task WaitForSpacingAsync(CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (_nextAllowedRequestUtc > now)
+        var nextAllowed = _nextAllowedRequestUtc;
+        if (_currentFileLock is { } fileLock)
         {
-            await Task.Delay(_nextAllowedRequestUtc - now, cancellationToken);
+            var sharedTicks = fileLock.ReadInt64();
+            if (sharedTicks > 0)
+            {
+                var shared = new DateTimeOffset(sharedTicks, TimeSpan.Zero);
+                if (shared > nextAllowed)
+                {
+                    nextAllowed = shared;
+                }
+            }
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (nextAllowed > now)
+        {
+            // Beskytter mot en klokke som er stilt bakover: aldri vent mer enn ett mellomrom.
+            var wait = nextAllowed - now;
+            if (wait > _minimumSpacing)
+            {
+                wait = _minimumSpacing;
+            }
+
+            await Task.Delay(wait, cancellationToken);
         }
     }
 
     public void RecordRequestCompleted()
     {
         _nextAllowedRequestUtc = DateTimeOffset.UtcNow + _minimumSpacing;
+        _currentFileLock?.WriteInt64(_nextAllowedRequestUtc.UtcTicks);
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose()
+    {
+        _currentFileLock?.Dispose();
+        _gate.Dispose();
+    }
+
+    private void ReleaseSlot()
+    {
+        var fileLock = _currentFileLock;
+        _currentFileLock = null;
+        fileLock?.Dispose();
+        _gate.Release();
+    }
 
     private sealed class SlotLease(FikenRateLimiter owner) : IDisposable
     {
@@ -52,7 +117,7 @@ public sealed class FikenRateLimiter : IDisposable
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                owner._gate.Release();
+                owner.ReleaseSlot();
             }
         }
     }

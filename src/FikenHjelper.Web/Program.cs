@@ -53,6 +53,8 @@ builder.Services.AddSingleton<IFikenOAuthService>(sp =>
         sp.GetRequiredService<ILocalConfigStore>());
 });
 
+// Delt med MCP-serveren via låsfil i datamappen. Må registreres før AddFikenApiClient (TryAdd).
+builder.Services.AddSingleton(sp => FikenRateLimiter.CreateShared(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
 builder.Services.AddFikenApiClient();
 
 builder.Services.AddHttpClient<IMinSpeidingClient, MinSpeidingClient>(client =>
