@@ -7,7 +7,9 @@ var web = builder.AddDotnetProject(
         "../FikenHjelper.Web/FikenHjelper.Web.csproj",
         options => options.LaunchProfileName = "https")
     .WithEndpoint("https", endpoint => endpoint.IsProxied = false)
-    .WithEndpoint("http", endpoint => endpoint.IsProxied = false);
+    .WithEndpoint("http", endpoint => endpoint.IsProxied = false)
+    // OAuth-redirect-URI bygges fra Request.Scheme/Host – ikke la X-Forwarded-* påvirke den.
+    .DisableForwardedHeaders();
 
 // Valgfrie hemmeligheter fra AppHost sine user-secrets (Parameters:<navn>).
 // Kobles bare til når de finnes, så oppstart aldri stopper på manglende verdi.

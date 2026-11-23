@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
@@ -21,6 +22,7 @@ public static class Extensions
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
     private const string UrlQueryTag = "url.query";
+    private const string UrlFullTag = "url.full";
     private const string RedactedQuery = "?Redacted";
 
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
@@ -51,6 +53,10 @@ public static class Extensions
             logging.IncludeScopes = true;
         });
 
+        // Hosting-loggen ("Request starting ... ?code=...&state=...") skal aldri eksporteres til dashboardet,
+        // selv om noen senker loggnivået lokalt.
+        builder.Logging.AddFilter<OpenTelemetryLoggerProvider>("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics =>
             {
@@ -75,7 +81,18 @@ public static class Extensions
                             }
                         };
                     })
-                    .AddHttpClientInstrumentation();
+                    .AddHttpClientInstrumentation(options =>
+                    {
+                        // Aspire slår også av query-redigering for utgående kall. Fjern query fra url.full,
+                        // så eventuelle nøkler i URL-er aldri havner i traces.
+                        options.EnrichWithHttpRequestMessage = (activity, request) =>
+                        {
+                            if (request.RequestUri is { Query.Length: > 0 } uri)
+                            {
+                                activity.SetTag(UrlFullTag, uri.GetLeftPart(UriPartial.Path) + RedactedQuery);
+                            }
+                        };
+                    });
             });
 
         builder.AddOpenTelemetryExporters();
