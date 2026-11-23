@@ -266,4 +266,39 @@ public sealed class MinSpeidingParserTests
         Assert.Equal("Vestnes speidergruppe", p.AvailableGroups[4].GroupName);
         Assert.Null(p.AvailableGroups[4].GroupId);
     }
+
+    [Fact]
+    public void Parse_IgnoresDeprecatedPlaceholderGroupFields()
+    {
+        const string json = """
+            {
+              "participants": {
+                "30": {
+                  "member_no": 30001,
+                  "first_name": "Ola",
+                  "last_name": "Speider",
+                  "fee_id": 101,
+                  "group": "Deprecated - use group_registration_info",
+                  "group_registration_info": {
+                    "group_id": 10,
+                    "group_name": "1. Batnfjord speidergruppe"
+                  }
+                }
+              },
+              "labels": {
+                "project_fee": {
+                  "101": "Speider (450 kr)"
+                }
+              }
+            }
+            """;
+
+        var result = MinSpeidingParser.Parse("999", json, null, questionsEndpointAvailable: false);
+
+        var p = Assert.Single(result.Participants);
+        Assert.Equal("1. Batnfjord speidergruppe", p.GroupName);
+        Assert.False(p.HasMultipleGroups);
+        var onlyGroup = Assert.Single(p.AvailableGroups);
+        Assert.Equal("1. Batnfjord speidergruppe", onlyGroup.GroupName);
+    }
 }

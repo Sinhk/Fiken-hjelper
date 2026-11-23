@@ -205,7 +205,7 @@ public static partial class MinSpeidingParser
             }
 
             var trimmed = rawName.Trim();
-            if (string.Equals(trimmed, UnknownGroupName, StringComparison.OrdinalIgnoreCase))
+            if (IsIgnoredGroupName(trimmed))
             {
                 return;
             }
@@ -490,6 +490,13 @@ public static partial class MinSpeidingParser
 
         return decimal.TryParse(value.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out _);
     }
+
+    private static bool IsIgnoredGroupName(string value)
+        => string.Equals(value, UnknownGroupName, StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("deprecated", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("deprecated - use", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("use group_registration_info", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("use primary_membership_info", StringComparison.OrdinalIgnoreCase);
 
     private static readonly string[] GroupLabelKeys = ["groups", "group"];
 
