@@ -115,7 +115,22 @@ public static partial class MinSpeidingParser
             .ThenBy(p => p.FirstName, StringComparer.Create(CultureInfo.GetCultureInfo("nb-NO"), ignoreCase: true))
             .ToList();
 
-        var categories = orderedParticipants
+        var categories = SummarizeFeeCategories(orderedParticipants);
+
+        return new MinSpeidingEventLoadResult(
+            ProjectId: projectId,
+            EventTitle: eventTitle,
+            Participants: orderedParticipants,
+            FeeCategories: categories,
+            FeeLabels: feeLabels,
+            ExtraParticipantPropertyNames: extraKeys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList(),
+            QuestionsEndpointAvailable: questionsEndpointAvailable,
+            IsDemoData: isDemoData);
+    }
+
+    /// <summary>Lager priskategori-sammendrag (antall og foreslått pris) fra deltakerne. Brukes også av filimporten.</summary>
+    public static IReadOnlyList<FeeCategorySummary> SummarizeFeeCategories(IEnumerable<EventParticipant> participants)
+        => participants
             .GroupBy(p => p.FeeCategoryKey, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
@@ -133,17 +148,6 @@ public static partial class MinSpeidingParser
             .OrderBy(c => c.FeeId ?? long.MaxValue)
             .ThenBy(c => c.Label, StringComparer.OrdinalIgnoreCase)
             .ToList();
-
-        return new MinSpeidingEventLoadResult(
-            ProjectId: projectId,
-            EventTitle: eventTitle,
-            Participants: orderedParticipants,
-            FeeCategories: categories,
-            FeeLabels: feeLabels,
-            ExtraParticipantPropertyNames: extraKeys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList(),
-            QuestionsEndpointAvailable: questionsEndpointAvailable,
-            IsDemoData: isDemoData);
-    }
 
     public static decimal? TryExtractPriceNokFromLabel(string? label)
     {
