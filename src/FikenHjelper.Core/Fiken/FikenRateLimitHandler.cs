@@ -129,6 +129,9 @@ public sealed class FikenRateLimiter : IDisposable
 public sealed class FikenRateLimitHandler : DelegatingHandler
 {
     private const int MaxRateLimitRetries = 2;
+
+    /// <summary>Lengste ventetid ved 429 mens låsen holdes, så andre prosesser ikke blir stående lenge.</summary>
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(10);
     private readonly FikenRateLimiter _limiter;
     private readonly bool _ownsLimiter;
 
@@ -163,8 +166,25 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
             await _limiter.WaitForSpacingAsync(cancellationToken);
 
             using var outgoing = CloneRequest(request, bufferedContent, bufferedMediaType);
-            var response = await base.SendAsync(outgoing, cancellationToken);
-            _limiter.RecordRequestCompleted();
+            HttpResponseMessage? response = null;
+            try
+            {
+                response = await base.SendAsync(outgoing, cancellationToken);
+
+                // Les hele svaret mens plassen holdes: HttpClient leser ellers innholdet etter at handleren har
+                // returnert, og da kunne et nytt kall (også fra en annen prosess) startet samtidig.
+                await response.Content.LoadIntoBufferAsync(cancellationToken);
+            }
+            catch
+            {
+                response?.Dispose();
+                throw;
+            }
+            finally
+            {
+                // Mellomrommet gjelder også etter feil og tidsavbrudd.
+                _limiter.RecordRequestCompleted();
+            }
 
             if (response.StatusCode != HttpStatusCode.TooManyRequests || attempt >= MaxRateLimitRetries)
             {
@@ -172,6 +192,11 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
             }
 
             var retryDelay = ResolveRetryDelay(response);
+            if (retryDelay > MaxRetryDelay)
+            {
+                return response;
+            }
+
             response.Dispose();
             if (retryDelay > TimeSpan.Zero)
             {

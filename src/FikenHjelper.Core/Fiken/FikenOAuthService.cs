@@ -104,14 +104,15 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
             tokenResponse.AccessToken,
             tokenResponse.RefreshToken,
             expiresAtUtc,
-            ct);
+            CancellationToken.None);
 
         return tokenResponse;
     }
 
     public async Task<string> GetValidAccessTokenAsync(
         bool forceRefresh = false,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? rejectedAccessToken = null)
     {
         var settings = await _configStore.LoadSettingsAsync(ct);
         if (!forceRefresh && HasFreshAccessToken(settings))
@@ -119,7 +120,10 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
             return settings.FikenOAuthAccessToken;
         }
 
-        var accessTokenBeforeLock = settings.FikenOAuthAccessToken;
+        // Tokenet som regnes som ugyldig ved tvungen fornyelse: det Fiken avviste, ellers det vi leste nå.
+        var staleAccessToken = string.IsNullOrWhiteSpace(rejectedAccessToken)
+            ? settings.FikenOAuthAccessToken
+            : rejectedAccessToken.Trim();
 
         await _refreshGate.WaitAsync(ct);
         try
@@ -132,7 +136,7 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
 
             settings = await _configStore.LoadSettingsAsync(ct);
             if (HasFreshAccessToken(settings)
-                && (!forceRefresh || !string.Equals(settings.FikenOAuthAccessToken, accessTokenBeforeLock, StringComparison.Ordinal)))
+                && (!forceRefresh || !string.Equals(settings.FikenOAuthAccessToken, staleAccessToken, StringComparison.Ordinal)))
             {
                 // Enten er tokenet fortsatt gyldig, eller så har en annen tråd/prosess allerede fornyet det.
                 return settings.FikenOAuthAccessToken;
@@ -175,11 +179,13 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
             FikenOAuthTokenResponse refreshed;
             try
             {
+                // Ikke avbryt etter at forespørselen er sendt: Fiken kan allerede ha rotert refresh-tokenet,
+                // og da må de nye tokenene lagres, ellers er alle prosesser logget ut. HttpClient-timeout gjelder fortsatt.
                 refreshed = await PostTokenFormAsync(
                     formFields,
                     isConfidential ? (clientId, clientSecret) : null,
                     isRefresh: true,
-                    ct);
+                    CancellationToken.None);
             }
             catch (RefreshTokenRejectedException rejected)
             {
@@ -200,13 +206,7 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
                     rejected.Detail);
             }
 
-            var expiresAtUtc = ComputeExpiresAtUtc(refreshed.ExpiresIn);
-            await _configStore.SaveFikenOAuthTokensAsync(
-                refreshed.AccessToken,
-                refreshed.RefreshToken,
-                expiresAtUtc,
-                ct);
-
+            await SaveRefreshedTokensAsync(refreshed);
             return refreshed.AccessToken;
         }
         finally
@@ -283,12 +283,25 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
                     // Ignore malformed error body.
                 }
 
-                if (isRefresh && (response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.Unauthorized))
+                var detail = errorBody?.ErrorDescription ?? errorBody?.Error;
+
+                // Bare invalid_grant betyr at refresh-tokenet er ugyldig. Andre feil (f.eks. invalid_client fordi
+                // en prosess har feil Client ID) skal ikke logge ut Web og MCP.
+                if (isRefresh
+                    && (response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.Unauthorized)
+                    && string.Equals(errorBody?.Error, "invalid_grant", StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new RefreshTokenRejectedException(errorBody?.ErrorDescription ?? errorBody?.Error);
+                    throw new RefreshTokenRejectedException(detail);
                 }
 
-                var detail = errorBody?.ErrorDescription ?? errorBody?.Error;
+                if (isRefresh)
+                {
+                    throw new FikenApiException(
+                        response.StatusCode,
+                        "Fornyelse av Fiken-innloggingen feilet. Innloggingen er beholdt; kontroller Client ID og Client Secret i Innstillinger.",
+                        detail);
+                }
+
                 throw new FikenApiException(
                     response.StatusCode,
                     "Fiken OAuth2-autentisering feilet. Kontroller Client ID, Client Secret og Redirect URI.",
@@ -327,6 +340,27 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
 
     private static DateTimeOffset? ComputeExpiresAtUtc(int expiresInSeconds)
         => expiresInSeconds > 0 ? DateTimeOffset.UtcNow.AddSeconds(expiresInSeconds) : null;
+
+    private async Task SaveRefreshedTokensAsync(FikenOAuthTokenResponse refreshed)
+    {
+        var expiresAtUtc = ComputeExpiresAtUtc(refreshed.ExpiresIn);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await _configStore.SaveFikenOAuthTokensAsync(
+                    refreshed.AccessToken,
+                    refreshed.RefreshToken,
+                    expiresAtUtc,
+                    CancellationToken.None);
+                return;
+            }
+            catch (Exception ex) when (attempt < 3 && ex is IOException or UnauthorizedAccessException or TimeoutException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt));
+            }
+        }
+    }
 
     public void Dispose() => _refreshGate.Dispose();
 

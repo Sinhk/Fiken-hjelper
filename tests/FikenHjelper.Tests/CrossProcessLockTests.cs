@@ -316,3 +316,124 @@ public sealed class CrossProcessLockTests : IDisposable
         }
     }
 }
+
+public sealed class OAuthReviewFixTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "fiken-oauth-fix-" + Guid.NewGuid().ToString("N"));
+
+    private async Task<LocalConfigStore> SeedAsync(DateTimeOffset expires)
+    {
+        var store = new LocalConfigStore(dataDirectory: _tempDir);
+        await store.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client" });
+        await store.SaveFikenOAuthTokensAsync("acc-1", "ref-1", expires);
+        return store;
+    }
+
+    [Fact]
+    public async Task RefreshFailingWithInvalidClient_KeepsTokens()
+    {
+        var store = await SeedAsync(DateTimeOffset.UtcNow.AddMinutes(-5));
+        using var http = new HttpClient(new StubHttpHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("""{"error":"invalid_client"}""", Encoding.UTF8, "application/json")
+            })));
+        using var oauth = new FikenOAuthService(http, store);
+
+        var ex = await Assert.ThrowsAsync<FikenApiException>(() => oauth.GetValidAccessTokenAsync());
+
+        Assert.Contains("beholdt", ex.Message);
+        var loaded = await store.LoadSettingsAsync();
+        Assert.Equal("ref-1", loaded.FikenOAuthRefreshToken);
+    }
+
+    [Fact]
+    public async Task CancellationAfterTokenRequestIsSent_StillSavesRotatedTokens()
+    {
+        var store = await SeedAsync(DateTimeOffset.UtcNow.AddMinutes(-5));
+        using var cts = new CancellationTokenSource();
+        using var http = new HttpClient(new StubHttpHandler((_, _) =>
+        {
+            cts.Cancel(); // Kallet avbrytes mens Fiken allerede har rotert tokenet.
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"access_token":"acc-2","refresh_token":"ref-2","token_type":"bearer","expires_in":3600}""",
+                    Encoding.UTF8,
+                    "application/json")
+            });
+        }));
+        using var oauth = new FikenOAuthService(http, store);
+
+        try
+        {
+            await oauth.GetValidAccessTokenAsync(ct: cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Akseptabelt, så lenge tokenene er lagret.
+        }
+
+        var loaded = await store.LoadSettingsAsync();
+        Assert.Equal("ref-2", loaded.FikenOAuthRefreshToken);
+        Assert.Equal("acc-2", loaded.FikenOAuthAccessToken);
+    }
+
+    [Fact]
+    public async Task ForceRefresh_WithRejectedTokenAlreadyReplaced_DoesNotRefreshAgain()
+    {
+        var store = await SeedAsync(DateTimeOffset.UtcNow.AddHours(1));
+        var calls = 0;
+        using var http = new HttpClient(new StubHttpHandler((_, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        }));
+        using var oauth = new FikenOAuthService(http, store);
+
+        // En annen prosess har allerede byttet acc-0 (som Fiken avviste) ut med acc-1.
+        var token = await oauth.GetValidAccessTokenAsync(forceRefresh: true, rejectedAccessToken: "acc-0");
+
+        Assert.Equal("acc-1", token);
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task RateLimitHandler_RecordsSpacingWhenRequestThrows()
+    {
+        var spacing = TimeSpan.FromMilliseconds(150);
+        using var limiter = new FikenRateLimiter(spacing, Path.Combine(_tempDir, FikenRateLimiter.LockFileName));
+        var times = new List<DateTimeOffset>();
+        var first = true;
+        using var http = new HttpClient(new FikenRateLimitHandler(limiter)
+        {
+            InnerHandler = new StubHttpHandler((_, _) =>
+            {
+                times.Add(DateTimeOffset.UtcNow);
+                if (first)
+                {
+                    first = false;
+                    throw new HttpRequestException("nettverksfeil");
+                }
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            })
+        })
+        {
+            BaseAddress = new Uri(FikenClient.DefaultBaseAddress)
+        };
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync("companies"));
+        await http.GetAsync("companies");
+
+        Assert.True(times[1] - times[0] >= spacing - TimeSpan.FromMilliseconds(15));
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+    }
+}
