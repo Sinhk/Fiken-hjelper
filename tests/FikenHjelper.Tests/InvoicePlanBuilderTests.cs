@@ -59,7 +59,7 @@ public sealed class InvoicePlanBuilderTests
         Assert.Equal("12345678903", fikenReq.BankAccountNumber);
         Assert.All(fikenReq.Lines, l =>
         {
-            Assert.Equal("NONE", l.VatType);
+            Assert.Equal("OUTSIDE", l.VatType);
             Assert.Equal("3200", l.IncomeAccount);
         });
     }

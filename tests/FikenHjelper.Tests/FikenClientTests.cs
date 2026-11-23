@@ -72,7 +72,7 @@ public sealed class FikenClientTests
             OrderReference: "MS-1-molde",
             Lines:
             [
-                new FikenInvoiceDraftLineRequest("Ola Nordmann", 45000, "NONE", 1m, "3200", "Kretsleir")
+                new FikenInvoiceDraftLineRequest("Ola Nordmann", 45000, "OUTSIDE", 1m, "3200", "Kretsleir")
             ],
             Currency: "NOK",
             BankAccountNumber: "12345678903",
@@ -94,7 +94,7 @@ public sealed class FikenClientTests
 
         var firstLine = root.GetProperty("lines")[0];
         Assert.Equal(45000, firstLine.GetProperty("unitPrice").GetInt64());
-        Assert.Equal("NONE", firstLine.GetProperty("vatType").GetString());
+        Assert.Equal("OUTSIDE", firstLine.GetProperty("vatType").GetString());
         Assert.Equal("3200", firstLine.GetProperty("incomeAccount").GetString());
     }
 

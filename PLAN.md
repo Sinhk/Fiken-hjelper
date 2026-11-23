@@ -17,7 +17,7 @@ FikenHjelper.slnx
 ### Faste sikkerhetsregler
 1. **Alltid utkast først:** Verktøyene oppretter kun *fakturautkast* og *kjøpsutkast* i Fiken. Selve utsendingen og bankutbetalingen skjer manuelt etter kontroll i Fiken.
 2. **Ingen hemmeligheter i Git:** API-nøkler (Fiken og Min speiding) lagres lokalt via `dotnet user-secrets` eller i `%LocalAppData%\FikenHjelper\`, aldri i kode eller appsettings som sjekkes inn.
-3. **Ikke MVA-pliktig:** Alle fakturalinjer fra kretsen opprettes med `vatType = "NONE"`.
+3. **Ikke MVA-pliktig:** Alle fakturalinjer fra kretsen opprettes med `vatType = "OUTSIDE"` (Fiken krever `OUTSIDE` for foretak som ikke er MVA-registrert).
 4. **Fiken API-begrensning:** Fiken tillater maks **1 samtidig spørring** og maks **4 kall per sekund**. All kommunikasjon går gjennom `FikenRateLimitHandler` som serialiserer forespørsler med `SemaphoreSlim(1, 1)` og minst 260 ms mellomrom.
 5. **Testforetak støttes:** Alt kan kobles mot et gratis testforetak i Fiken før man kjører mot kretsens ekte regnskap.
 
@@ -50,7 +50,7 @@ FikenHjelper.slnx
   - Lagrede gruppe-til-kunde-koblinger i `%LocalAppData%\FikenHjelper\mappings.json`.
   - Mulighet til å opprette manglende kunde i Fiken direkte fra forhåndsvisningen.
   - Varsel ved duplikat `orderReference` mot eksisterende fakturautkast i Fiken.
-  - Sekvensiell opprettelse av `POST /companies/{slug}/invoices/drafts` med `vatType: "NONE"`.
+  - Sekvensiell opprettelse av `POST /companies/{slug}/invoices/drafts` med `vatType: "OUTSIDE"`.
 
 ---
 

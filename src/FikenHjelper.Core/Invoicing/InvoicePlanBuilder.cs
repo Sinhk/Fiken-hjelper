@@ -236,7 +236,7 @@ public static partial class InvoicePlanBuilder
             .Select(line => new FikenInvoiceDraftLineRequest(
                 Description: Truncate(line.Description, MaxFikenLineFieldLength),
                 UnitPrice: line.UnitPriceOre,
-                VatType: "NONE",
+                VatType: "OUTSIDE",
                 Quantity: line.Quantity,
                 IncomeAccount: incomeAccount,
                 Comment: TruncateOrNull(line.Comment, MaxFikenLineFieldLength)))
