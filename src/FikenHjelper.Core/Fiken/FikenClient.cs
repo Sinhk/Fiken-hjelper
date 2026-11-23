@@ -130,6 +130,19 @@ public sealed class FikenClient : IFikenClient
         return await PostForLocationAsync(path, request, auth, ct);
     }
 
+    public async Task<IReadOnlyList<FikenJournalEntry>> GetJournalEntriesAsync(
+        string companySlug,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken ct = default)
+    {
+        ValidateSlug(companySlug);
+        var auth = await ResolveAuthAsync(null, ct);
+        var path = $"companies/{Uri.EscapeDataString(companySlug)}/journalEntries"
+                   + $"?dateGe={from:yyyy-MM-dd}&dateLe={to:yyyy-MM-dd}";
+        return await GetAllPagesAsync<FikenJournalEntry>(path, auth, ct);
+    }
+
     private async Task<AuthResolution> ResolveAuthAsync(string? overrideToken, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(overrideToken))

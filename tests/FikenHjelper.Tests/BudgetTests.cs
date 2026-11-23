@@ -1,0 +1,281 @@
+using ClosedXML.Excel;
+using FikenHjelper.Core.Budgeting;
+using FikenHjelper.Core.Fiken;
+
+namespace FikenHjelper.Tests;
+
+public sealed class BudgetReportBuilderTests
+{
+    private static readonly FikenProject Leir = new(1, "1", "Landsleir", null, null, null, false);
+    private static readonly FikenProject Kurs = new(2, "2", "Kurs for ledere", null, null, null, false);
+    private static readonly FikenProject Glemt = new(3, "3", "Nytt prosjekt", null, null, null, false);
+
+    private static FikenJournalEntry Entry(long id, params FikenJournalEntryLine[] lines) =>
+        new(id, id, "Fri", (int)id, $"Bilag {id}", "2026-03-01", lines);
+
+    private static FikenJournalEntryLine Line(string account, long amountOre, params long[] projects) =>
+        new(amountOre, account, null, projects);
+
+    [Fact]
+    public void Build_SumsResultAccountsPerProjectWithResultSign()
+    {
+        var budget = new BudgetYear
+        {
+            Year = 2026,
+            Lines =
+            [
+                new BudgetLine { Name = "Drift", Amount = -10_000m, ProjectIds = [Leir.ProjectId] },
+                new BudgetLine { Name = "Kurs", Amount = 5_000m, ProjectIds = [Kurs.ProjectId] }
+            ]
+        };
+
+        var entries = new[]
+        {
+            // Kostnad 1 500 kr på leir: debet 6800, kredit bank.
+            Entry(1, Line("6800", 150_000, Leir.ProjectId), Line("1920:10001", -150_000)),
+            // Inntekt 8 000 kr på kurs: kredit 3200, debet kunde (underkonto).
+            Entry(2, Line("3200", -800_000, Kurs.ProjectId), Line("1500:20001", 800_000)),
+        };
+
+        var report = BudgetReportBuilder.Build(budget, [Leir, Kurs], entries);
+
+        Assert.Equal(-1_500m, report.Lines[0].Actual);
+        Assert.Equal(8_500m, report.Lines[0].Variance);
+        Assert.Equal(8_000m, report.Lines[1].Actual);
+        Assert.Equal(0.6m, report.Lines[1].VariancePercent);
+        Assert.Equal(6_500m, report.FikenResult);
+        Assert.Empty(report.UnallocatedPostings);
+        Assert.Empty(report.UnlinkedProjects);
+    }
+
+    [Fact]
+    public void Build_FlagsUnallocatedPostingsAndUnlinkedProjects_AndIgnoresYearEndAccounts()
+    {
+        var budget = new BudgetYear
+        {
+            Year = 2026,
+            Lines = [new BudgetLine { Name = "Drift", Amount = 0, ProjectIds = [Leir.ProjectId] }]
+        };
+
+        var entries = new[]
+        {
+            Entry(1, Line("6300", 20_000), Line("1920", -20_000)),
+            Entry(2, Line("6800", 5_000, Glemt.ProjectId), Line("1920", -5_000)),
+            Entry(3, Line("8800", 99_900), Line("2050", -99_900)),
+        };
+
+        var report = BudgetReportBuilder.Build(budget, [Leir, Glemt], entries);
+
+        var posting = Assert.Single(report.UnallocatedPostings);
+        Assert.Equal("6300", posting.Account);
+        Assert.Equal(-200m, posting.Amount);
+
+        var unlinked = Assert.Single(report.UnlinkedProjects);
+        Assert.Equal("Nytt prosjekt", unlinked.Name);
+        Assert.Equal(-50m, unlinked.Amount);
+
+        Assert.Equal(-250m, report.FikenResult);
+        Assert.Equal(report.FikenResult, report.TotalActual + report.UnallocatedTotal + report.UnlinkedTotal);
+    }
+
+    [Fact]
+    public void Build_UsesManualActualAndFlagsProjectLinkedTwice()
+    {
+        var budget = new BudgetYear
+        {
+            Year = 2024,
+            Lines =
+            [
+                new BudgetLine { Name = "A", Amount = 100m, ManualActual = 80m, ProjectIds = [Leir.ProjectId] },
+                new BudgetLine { Name = "B", Amount = 0m, ProjectIds = [Leir.ProjectId] }
+            ]
+        };
+
+        var report = BudgetReportBuilder.Build(budget, [Leir], journalEntries: null);
+
+        Assert.True(report.Lines[0].IsManualActual);
+        Assert.Equal(80m, report.Lines[0].Actual);
+        Assert.False(report.HasFikenData);
+        Assert.Null(report.FikenResult);
+        Assert.Equal(Leir.ProjectId, Assert.Single(report.ProjectsLinkedToSeveralLines).ProjectId);
+    }
+
+    [Fact]
+    public void Comparison_AlignsLinesByNameAcrossYears()
+    {
+        var y2026 = BudgetReportBuilder.Build(
+            new BudgetYear { Year = 2026, Lines = [new() { Name = "Drift", Amount = 1 }, new() { Name = "Kryss og tvers", Amount = 2 }] },
+            [], null);
+        var y2025 = BudgetReportBuilder.Build(
+            new BudgetYear { Year = 2025, Lines = [new() { Name = "drift", Amount = 3 }] },
+            [], null);
+
+        var comparison = BudgetComparison.Build([y2025, y2026]);
+
+        Assert.Equal([2026, 2025], comparison.Years);
+        Assert.Equal(2, comparison.Rows.Count);
+        Assert.Equal(3, comparison.Rows[0].ByYear[2025]!.Budget);
+        Assert.Null(comparison.Rows[1].ByYear[2025]);
+    }
+}
+
+public sealed class BudgetWorkbookTests
+{
+    private static MemoryStream CreateWorkbook()
+    {
+        using var wb = new XLWorkbook();
+        var overview = wb.AddWorksheet("Ark 1");
+        overview.Cell("B1").Value = "Budsjett 2026";
+        overview.Cell("C1").Value = "Regnskap 2026";
+        overview.Cell("D1").Value = "Avvik 2026";
+        overview.Cell("E1").Value = "Budsjett 2024";
+        overview.Cell("F1").Value = "Regnskap 2024";
+
+        overview.Cell("A2").Value = "Medlemskontingent";
+        overview.Cell("B2").Value = 92070;
+        overview.Cell("C2").Value = 0;
+        overview.Cell("E2").Value = 89000;
+        overview.Cell("F2").Value = 85625;
+
+        overview.Cell("A3").Value = "Drift";
+        overview.Cell("B3").Value = -13500;
+        overview.Cell("E3").Value = -26500;
+        overview.Cell("F3").FormulaA1 = "-10188+11813-40-5291";
+
+        overview.Cell("A4").Value = "Kryss og tvers";
+        overview.Cell("B4").Value = 100000;
+
+        overview.Cell("A5").Value = "Resultat";
+        overview.Cell("B5").FormulaA1 = "SUM(B2:B4)";
+
+        var projects = wb.AddWorksheet("Regnskap 2026");
+        projects.Cell("A1").Value = "Prosjekter 2026";
+        projects.Cell("B1").Value = "Sum";
+        projects.Cell("C1").Value = "Budsjettpost";
+        projects.Cell("A2").Value = "Drift";
+        projects.Cell("C2").Value = "Drift";
+        projects.Cell("A3").Value = "landsleir";
+        projects.Cell("C3").Value = "drift";
+        projects.Cell("A4").Value = "kryss og tvers";
+        projects.Cell("C4").Value = "Kryss og tvers";
+        projects.Cell("A5").Value = "Ukjent prosjekt";
+        projects.Cell("C5").Value = "Drift";
+
+        var stream = new MemoryStream();
+        wb.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    [Fact]
+    public void Import_ReadsBudgetLinesAndMapsProjectsByName()
+    {
+        FikenProject[] fiken =
+        [
+            new(10, "1", "Drift", null, null, null, false),
+            new(11, "2", "Landsleir", null, null, null, false),
+            new(12, "3", "Kryss og tvers", null, null, null, false),
+        ];
+
+        using var stream = CreateWorkbook();
+        var result = BudgetWorkbookImporter.Import(stream, fiken);
+
+        Assert.Equal([2026, 2024], result.Years.Select(y => y.Year));
+
+        var y2026 = result.Years[0];
+        Assert.Equal(["Medlemskontingent", "Drift", "Kryss og tvers"], y2026.Lines.Select(l => l.Name));
+        Assert.All(y2026.Lines, l => Assert.Null(l.ManualActual));
+        Assert.Equal([10L, 11L], y2026.Lines[1].ProjectIds);
+        Assert.Equal([12L], y2026.Lines[2].ProjectIds);
+
+        var y2024 = result.Years[1];
+        Assert.Equal(2, y2024.Lines.Count);
+        Assert.Equal(85625m, y2024.Lines[0].ManualActual);
+        Assert.Equal(-26500m, y2024.Lines[1].Amount);
+
+        Assert.Contains(result.Warnings, w => w.Contains("Ukjent prosjekt"));
+        Assert.Contains(result.Warnings, w => w.Contains("Regnskap 2024"));
+    }
+
+    [Fact]
+    public void Import_ToleratesGoogleSheetsRelationshipsWithoutIdOrTarget()
+    {
+        using var original = CreateWorkbook();
+        var broken = new MemoryStream();
+        original.CopyTo(broken);
+        using (var zip = new System.IO.Compression.ZipArchive(broken, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+        {
+            var entry = zip.GetEntry("xl/_rels/workbook.xml.rels")!;
+            string xml;
+            using (var reader = new StreamReader(entry.Open()))
+            {
+                xml = reader.ReadToEnd();
+            }
+
+            entry.Delete();
+            var patched = zip.CreateEntry("xl/_rels/workbook.xml.rels");
+            using var writer = new StreamWriter(patched.Open());
+            writer.Write(xml.Replace(
+                "</Relationships>",
+                "<Relationship Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath\" TargetMode=\"External\"/></Relationships>"));
+        }
+
+        broken.Position = 0;
+        var result = BudgetWorkbookImporter.Import(broken, []);
+
+        Assert.Equal(2, result.Years.Count);
+    }
+
+    [Fact]
+    public void Export_RoundTripsOverviewThroughImporter()
+    {
+        var report = BudgetReportBuilder.Build(
+            new BudgetYear
+            {
+                Year = 2025,
+                Lines =
+                [
+                    new() { Name = "Medlemskontingent", Amount = 100965m, ManualActual = 92227.5m },
+                    new() { Name = "Drift", Amount = -13500m, ManualActual = -102203.39m }
+                ]
+            },
+            [], null);
+
+        var bytes = BudgetWorkbookExporter.Export(BudgetComparison.Build([report]));
+
+        using var wb = new XLWorkbook(new MemoryStream(bytes));
+        Assert.True(wb.TryGetWorksheet("Budsjettoversikt", out _));
+        Assert.True(wb.TryGetWorksheet("Prosjekter", out _));
+        Assert.True(wb.TryGetWorksheet("Kontroll", out _));
+
+        var imported = BudgetWorkbookImporter.Import(new MemoryStream(bytes), []);
+        var year = Assert.Single(imported.Years);
+        Assert.Equal(92227.5m, year.Lines[0].ManualActual);
+        Assert.Equal(-13500m, year.Lines[1].Amount);
+    }
+}
+
+public sealed class JsonBudgetStoreTests
+{
+    [Fact]
+    public async Task SaveAndLoad_RoundTripsAndNormalizes()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "fh-budget-" + Guid.NewGuid().ToString("N"));
+        var store = new JsonBudgetStore(dir);
+
+        await store.SaveAsync(new BudgetData
+        {
+            Years =
+            [
+                new BudgetYear { Year = 2025, Lines = [new() { Name = " Drift ", Amount = -1, ProjectIds = [5, 5, 0] }, new() { Name = "  " }] },
+                new BudgetYear { Year = 2026 }
+            ]
+        });
+
+        var loaded = await store.LoadAsync();
+        Assert.Equal([2026, 2025], loaded.Years.Select(y => y.Year));
+        var line = Assert.Single(loaded.FindYear(2025)!.Lines);
+        Assert.Equal("Drift", line.Name);
+        Assert.Equal([5L], line.ProjectIds);
+    }
+}

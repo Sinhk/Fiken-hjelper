@@ -1,3 +1,4 @@
+using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.MinSpeiding;
@@ -30,6 +31,11 @@ builder.Services.AddSingleton<ILocalConfigStore>(sp =>
         FikenOAuthClientSecret: config["Fiken:ClientSecret"]);
     return new LocalConfigStore(defaults, dataDirOverride);
 });
+
+builder.Services.AddSingleton<IBudgetStore>(sp =>
+    new JsonBudgetStore(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
+builder.Services.AddSingleton<FikenDataCache>();
+builder.Services.AddScoped<BudgetReportService>();
 
 builder.Services.AddSingleton<FikenOAuthStateStore>();
 builder.Services.AddHttpClient(FikenOAuthService.HttpClientName, client =>
@@ -147,6 +153,25 @@ app.MapGet("/fiken/oauth/callback", async (
         logger.LogError(ex, "Unexpected error during Fiken OAuth callback");
         return Results.Redirect("/innstillinger?oauthError=token_exchange_failed");
     }
+});
+
+app.MapGet("/budsjett/eksport", async (
+    int? year,
+    int? years,
+    BudgetReportService reports,
+    CancellationToken ct) =>
+{
+    var lastYear = year ?? DateTime.Today.Year;
+    var count = Math.Clamp(years ?? 3, 1, 10);
+    var comparison = await reports.BuildComparisonAsync(
+        Enumerable.Range(0, count).Select(i => lastYear - i),
+        refresh: false,
+        ct);
+    var bytes = BudgetWorkbookExporter.Export(comparison);
+    return Results.File(
+        bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        $"Budsjett og regnskap {lastYear - count + 1}-{lastYear}.xlsx");
 });
 
 app.MapStaticAssets();
