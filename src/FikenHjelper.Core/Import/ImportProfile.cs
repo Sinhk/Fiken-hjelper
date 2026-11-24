@@ -22,6 +22,13 @@ public sealed class ImportProfile
     public string? GroupIdColumn { get; set; }
     public string? CategoryColumn { get; set; }
     public string? AmountColumn { get; set; }
+
+    /// <summary>
+    /// true: beløpet gjelder hele raden (f.eks. «Totalbeløp») og deles på <see cref="QuantityColumn"/>.
+    /// false: beløpet er pris per deltaker.
+    /// </summary>
+    public bool AmountIsTotal { get; set; }
+
     public string? QuantityColumn { get; set; }
 
     /// <summary>Deltakeren regnes som avmeldt når denne kolonnen er utfylt (f.eks. «Avmeldingsdato»).</summary>
@@ -36,6 +43,9 @@ public sealed class ImportProfile
 
     /// <summary>Ja/nei-kolonne for oppmøtt/til stede. Ikke satt = alle regnes som oppmøtt.</summary>
     public string? AttendedColumn { get; set; }
+
+    /// <summary>Ja/nei-kolonne for innsjekket. Ikke satt = samme som oppmøtt.</summary>
+    public string? CheckedInColumn { get; set; }
 
     public string? RegistrationDateColumn { get; set; }
 
@@ -57,12 +67,14 @@ public sealed class ImportProfile
         GroupIdColumn = GroupIdColumn,
         CategoryColumn = CategoryColumn,
         AmountColumn = AmountColumn,
+        AmountIsTotal = AmountIsTotal,
         QuantityColumn = QuantityColumn,
         CancelledDateColumn = CancelledDateColumn,
         StatusColumn = StatusColumn,
         CancelledValues = [.. CancelledValues],
         ConfirmedColumn = ConfirmedColumn,
         AttendedColumn = AttendedColumn,
+        CheckedInColumn = CheckedInColumn,
         RegistrationDateColumn = RegistrationDateColumn,
         DefaultGroupName = DefaultGroupName,
         ExtraColumns = [.. ExtraColumns]
@@ -75,7 +87,7 @@ public sealed class ImportProfile
         [
             FullNameColumn, FirstNameColumn, LastNameColumn, MemberNoColumn, GroupColumn, GroupIdColumn,
             CategoryColumn, AmountColumn, QuantityColumn, CancelledDateColumn, StatusColumn,
-            ConfirmedColumn, AttendedColumn, RegistrationDateColumn
+            ConfirmedColumn, AttendedColumn, CheckedInColumn, RegistrationDateColumn
         ];
 
         return singles

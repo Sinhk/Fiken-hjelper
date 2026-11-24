@@ -107,8 +107,17 @@ public sealed class JsonImportProfileStore : IImportProfileStore
         }
 
         await using var stream = File.OpenRead(_path);
-        return await JsonSerializer.DeserializeAsync<ImportProfilesData>(stream, JsonOptions, ct)
+        var data = await JsonSerializer.DeserializeAsync<ImportProfilesData>(stream, JsonOptions, ct)
             ?? new ImportProfilesData();
+        data.Profiles = (data.Profiles ?? []).Where(p => p is not null && !string.IsNullOrWhiteSpace(p.Name)).ToList();
+        foreach (var profile in data.Profiles)
+        {
+            profile.EmailColumns ??= [];
+            profile.CancelledValues ??= [];
+            profile.ExtraColumns ??= [];
+        }
+
+        return data;
     }
 
     private async Task WriteAsync(ImportProfilesData data, CancellationToken ct)

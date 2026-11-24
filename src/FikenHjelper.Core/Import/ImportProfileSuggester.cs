@@ -23,7 +23,12 @@ public static partial class ImportProfileSuggester
     private static readonly string[] CancelledDateKeys = ["avmeldingsdato", "avmeldtdato", "cancelleddate"];
     private static readonly string[] StatusKeys = ["avmeldt", "status"];
     private static readonly string[] ConfirmedKeys = ["bekreftet", "confirmed"];
-    private static readonly string[] AttendedKeys = ["tilstede", "oppmott", "attended", "innsjekket"];
+    private static readonly string[] AttendedKeys = ["tilstede", "oppmott", "attended"];
+    private static readonly string[] CheckedInKeys = ["innsjekket", "checkedin"];
+    private static readonly string[] TotalAmountKeys = ["totalbelop", "sum", "total", "totalt"];
+
+    // Skjemaspørsmål som typisk inneholder sensitive personopplysninger tas ikke med som standard.
+    private static readonly string[] SensitiveQuestionWords = ["mobil", "telefon", "fodsel", "adresse", "personnummer", "foresatt"];
     private static readonly string[] RegistrationDateKeys = ["pameldtdato", "pameldingsdato", "registreringsdato"];
     private static readonly string[] ExtraKeys = ["kommentar", "merknad", "comment"];
 
@@ -44,15 +49,22 @@ public static partial class ImportProfileSuggester
             StatusColumn = Find(headers, StatusKeys),
             ConfirmedColumn = Find(headers, ConfirmedKeys),
             AttendedColumn = Find(headers, AttendedKeys),
+            CheckedInColumn = Find(headers, CheckedInKeys),
             RegistrationDateColumn = Find(headers, RegistrationDateKeys)
         };
 
         if (profile.FirstNameColumn is null || profile.LastNameColumn is null)
         {
-            profile.FirstNameColumn = null;
-            profile.LastNameColumn = null;
             profile.FullNameColumn = Find(headers, FullNameKeys);
+            if (profile.FullNameColumn is not null)
+            {
+                profile.FirstNameColumn = null;
+                profile.LastNameColumn = null;
+            }
         }
+
+        profile.AmountIsTotal = profile.AmountColumn is not null
+            && TotalAmountKeys.Contains(ImportValueParser.NormalizeKey(profile.AmountColumn));
 
         // E-post: alle kolonner som heter «E-post» (Min speiding har to), deretter skjemaets e-postsvar.
         profile.EmailColumns = headers
@@ -73,6 +85,7 @@ public static partial class ImportProfileSuggester
         profile.ExtraColumns = headers
             .Where(h => !mapped.Contains(h))
             .Where(h => FormQuestionPrefix().IsMatch(h) || ExtraKeys.Contains(ImportValueParser.NormalizeKey(h)))
+            .Where(h => !SensitiveQuestionWords.Any(w => ImportValueParser.NormalizeKey(h).Contains(w, StringComparison.Ordinal)))
             .ToList();
 
         return profile;
@@ -88,8 +101,11 @@ public static partial class ImportProfileSuggester
     {
         var headerSet = new HashSet<string>(headers, StringComparer.OrdinalIgnoreCase);
         var best = savedProfiles
-            .Select(p => (Profile: p, Columns: p.ReferencedColumns().ToList()))
-            .Where(x => x.Columns.Count > 0 && x.Columns.All(headerSet.Contains) && HasName(x.Profile))
+            .Select(p => (Profile: p, Columns: p.ReferencedColumns().Except(p.EmailColumns, StringComparer.OrdinalIgnoreCase).ToList()))
+            .Where(x => x.Columns.Count > 0
+                && x.Columns.All(headerSet.Contains)
+                && (x.Profile.EmailColumns.Count == 0 || x.Profile.EmailColumns.Any(headerSet.Contains))
+                && HasName(x.Profile))
             .OrderByDescending(x => x.Columns.Count)
             .Select(x => x.Profile)
             .FirstOrDefault();

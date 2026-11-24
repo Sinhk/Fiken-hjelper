@@ -26,6 +26,7 @@ public static class CsvTableReader
 
     public static TabularData Parse(string text, string? encodingName = null)
     {
+        text = text.TrimStart('\uFEFF');
         var delimiter = DetectDelimiter(text);
         var records = SplitRecords(text, delimiter);
 
@@ -73,48 +74,50 @@ public static class CsvTableReader
         }
     }
 
+    /// <summary>
+    /// Velger skilletegnet som gir flest rader med samme antall kolonner som overskriften (minst to kolonner).
+    /// Bare de første radene vurderes. Ved likt resultat vinner flest kolonner, deretter semikolon før komma før tab.
+    /// </summary>
     internal static char DetectDelimiter(string text)
     {
-        // Tell skilletegn utenfor anførselstegn i første ikke-tomme linje.
-        var counts = new Dictionary<char, int>();
-        var inQuotes = false;
-        var sawContent = false;
-        foreach (var ch in text)
+        var sample = text.Length > 64_000 ? text[..64_000] : text;
+        var best = ',';
+        var bestScore = (Consistent: -1, Columns: 0);
+
+        foreach (var candidate in CandidateDelimiters)
         {
-            if (ch == '"')
+            List<List<string>> records;
+            try
             {
-                inQuotes = !inQuotes;
-                sawContent = true;
+                records = SplitRecords(sample, candidate, throwOnUnclosedQuote: false)
+                    .Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c)))
+                    .Take(20)
+                    .ToList();
+            }
+            catch (InvalidDataException)
+            {
                 continue;
             }
 
-            if (!inQuotes && (ch == '\n' || ch == '\r'))
+            if (records.Count == 0 || records[0].Count < 2)
             {
-                if (sawContent)
-                {
-                    break;
-                }
-
                 continue;
             }
 
-            if (!inQuotes && Array.IndexOf(CandidateDelimiters, ch) >= 0)
+            var columns = records[0].Count;
+            var consistent = records.Count(r => r.Count == columns);
+            if (consistent > bestScore.Consistent
+                || (consistent == bestScore.Consistent && columns > bestScore.Columns))
             {
-                counts[ch] = counts.GetValueOrDefault(ch) + 1;
-            }
-
-            if (!char.IsWhiteSpace(ch))
-            {
-                sawContent = true;
+                best = candidate;
+                bestScore = (consistent, columns);
             }
         }
 
-        return counts.Count == 0
-            ? ','
-            : counts.OrderByDescending(kv => kv.Value).ThenBy(kv => Array.IndexOf(CandidateDelimiters, kv.Key)).First().Key;
+        return best;
     }
 
-    internal static List<List<string>> SplitRecords(string text, char delimiter)
+    internal static List<List<string>> SplitRecords(string text, char delimiter, bool throwOnUnclosedQuote = true)
     {
         var records = new List<List<string>>();
         var current = new List<string>();
@@ -146,8 +149,10 @@ public static class CsvTableReader
                 continue;
             }
 
-            if (ch == '"')
+            if (ch == '"' && field.ToString().Trim().Length == 0)
             {
+                // Anførselstegn åpner bare et sitert felt når det står først i feltet (RFC 4180).
+                field.Clear();
                 inQuotes = true;
                 i++;
             }
@@ -170,6 +175,11 @@ public static class CsvTableReader
                 field.Append(ch);
                 i++;
             }
+        }
+
+        if (inQuotes && throwOnUnclosedQuote)
+        {
+            throw new InvalidDataException("Filen har et anførselstegn som ikke er lukket. Sjekk at riktig fil og format er valgt.");
         }
 
         if (field.Length > 0 || current.Count > 0)

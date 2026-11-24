@@ -73,14 +73,21 @@ public static class ParticipantImportMapper
                 continue;
             }
 
-            if (SummaryRowNames.Contains($"{firstName} {lastName}".Trim()))
+            if (SummaryRowNames.Contains($"{firstName} {lastName}".Trim().TrimEnd(':', '.').Trim()))
             {
                 skipped++;
                 continue;
             }
 
+            var displayName = $"{firstName} {lastName}".Trim();
             var rawCategory = Cell(table, row, col.Category);
-            var amount = ImportValueParser.ParseAmountNok(Cell(table, row, col.Amount));
+            var rawAmount = Cell(table, row, col.Amount);
+            var amount = ImportValueParser.ParseAmountNok(rawAmount);
+            if (rawAmount.Length > 0 && amount is null)
+            {
+                warnings.Add($"Rad {rowNumber} ({displayName}): Klarte ikke å tolke beløpet «{rawAmount}». Kontroller prisen.");
+            }
+
             if (col.Amount < 0 && IsPlainAmount(rawCategory))
             {
                 // Kategorikolonnen inneholder bare et beløp («450»): bruk det som beløp.
@@ -88,15 +95,38 @@ public static class ParticipantImportMapper
                 rawCategory = string.Empty;
             }
 
-            var quantity = ImportValueParser.ParseLong(Cell(table, row, col.Quantity)) ?? 1;
-            if (quantity > MaxQuantityPerRow)
+            var rawQuantity = Cell(table, row, col.Quantity);
+            long quantity = 1;
+            if (rawQuantity.Length > 0)
             {
-                warnings.Add($"Rad {rowNumber}: Antall {quantity} er urimelig høyt og ble satt til 1.");
-                quantity = 1;
+                var parsedQuantity = ImportValueParser.ParseLong(rawQuantity);
+                if (parsedQuantity == 0)
+                {
+                    skipped++;
+                    warnings.Add($"Rad {rowNumber} ({displayName}): Antall er 0, raden ble hoppet over.");
+                    continue;
+                }
+
+                if (parsedQuantity is null or < 0 or > MaxQuantityPerRow)
+                {
+                    warnings.Add($"Rad {rowNumber} ({displayName}): Ugyldig antall «{rawQuantity}», lagt inn som 1 deltaker. Kontroller raden.");
+                }
+                else if (parsedQuantity > 1)
+                {
+                    quantity = parsedQuantity.Value;
+                    warnings.Add($"Rad {rowNumber} ({displayName}): Antall {quantity} – lagt inn som {quantity} deltakere.");
+                }
             }
-            else if (quantity > 1)
+
+            if (amount is { } total && quantity > 1 && profile.AmountIsTotal)
             {
-                warnings.Add($"Rad {rowNumber} ({firstName} {lastName}): Antall {quantity} – lagt inn som {quantity} deltakere.");
+                amount = Math.Round(total / quantity, 2, MidpointRounding.AwayFromZero);
+                warnings.Add($"Rad {rowNumber} ({displayName}): Totalbeløp {total.ToString("N2", NorwegianCulture)} kr er fordelt på {quantity} deltakere.");
+            }
+
+            if (amount < 0)
+            {
+                warnings.Add($"Rad {rowNumber} ({displayName}): Negativt beløp ({amount.Value.ToString("N2", NorwegianCulture)} kr). Kontroller prisen.");
             }
 
             var status = Cell(table, row, col.Status);
@@ -111,20 +141,28 @@ public static class ParticipantImportMapper
                 groupName = string.IsNullOrWhiteSpace(profile.DefaultGroupName) ? UnknownGroupName : profile.DefaultGroupName.Trim();
             }
 
+            var attended = col.Attended >= 0
+                ? ImportValueParser.ParseBool(Cell(table, row, col.Attended))
+                : col.CheckedIn < 0 || ImportValueParser.ParseBool(Cell(table, row, col.CheckedIn));
+            var checkedIn = col.CheckedIn >= 0
+                ? ImportValueParser.ParseBool(Cell(table, row, col.CheckedIn))
+                : attended;
+
             rows.Add(new RowData(
                 FirstName: firstName,
                 LastName: lastName,
-                MemberNo: ImportValueParser.ParseLong(Cell(table, row, col.MemberNo)),
+                MemberNo: PositiveOrNull(ImportValueParser.ParseLong(Cell(table, row, col.MemberNo))),
                 Email: col.Emails.Select(e => Cell(table, row, e)).FirstOrDefault(e => e.Length > 0),
                 GroupName: groupName,
-                GroupId: ImportValueParser.ParseLong(Cell(table, row, col.GroupId)),
+                GroupId: PositiveOrNull(ImportValueParser.ParseLong(Cell(table, row, col.GroupId))),
                 CategoryLabel: rawCategory.Length > 0 ? rawCategory : null,
-                AmountNok: amount ?? (rawCategory.Length > 0 ? MinSpeidingParser.TryExtractPriceNokFromLabel(rawCategory) : null),
+                AmountNok: amount ?? (rawCategory.Length > 0 ? ImportValueParser.ExtractAmountFromLabel(rawCategory) : null),
                 HasAmountColumnValue: amount.HasValue,
                 Quantity: (int)Math.Max(1, quantity),
                 Cancelled: cancelled,
                 Confirmed: col.Confirmed < 0 || ImportValueParser.ParseBool(Cell(table, row, col.Confirmed)),
-                Attended: col.Attended < 0 || ImportValueParser.ParseBool(Cell(table, row, col.Attended)),
+                Attended: attended,
+                CheckedIn: checkedIn,
                 RegistrationDate: NullIfEmpty(Cell(table, row, col.RegistrationDate)),
                 Answers: BuildAnswers(table, row, col.Extras)));
         }
@@ -160,11 +198,13 @@ public static class ParticipantImportMapper
                     Cancelled: data.Cancelled,
                     Confirmed: data.Confirmed,
                     Attended: data.Attended,
-                    CheckedIn: data.Attended,
+                    CheckedIn: data.CheckedIn,
                     RegistrationDate: data.RegistrationDate,
                     Answers: data.Answers,
                     ExtraFields: new Dictionary<string, string>(),
-                    AvailableGroups: [new ParticipantGroupOption(data.GroupName, data.GroupId, SourceLabel)]));
+                    AvailableGroups: string.Equals(data.GroupName, UnknownGroupName, StringComparison.OrdinalIgnoreCase)
+                        ? []
+                        : [new ParticipantGroupOption(data.GroupName, data.GroupId, SourceLabel)]));
             }
         }
 
@@ -193,15 +233,26 @@ public static class ParticipantImportMapper
     }
 
     /// <summary>
-    /// Priskategori per rad. Har samme kategori ulike beløp i beløpskolonnen, deles den opp
-    /// («Speider (450 kr)» / «Speider (300 kr)») slik at prisforslaget per kategori blir riktig.
+    /// Priskategori per rad. Har aktive (ikke avmeldte) deltakere i samme kategori ulike beløp, deles kategorien
+    /// opp («Speider (450 kr)» / «Speider (300 kr)») slik at prisforslaget per kategori blir riktig.
+    /// Nøklene er stabile mellom opplastinger så lagrede priser/navn/ekskluderinger treffer igjen.
     /// </summary>
     private static List<(string Key, string Label)> AssignCategories(List<RowData> rows)
     {
-        var amountsByLabel = rows
-            .Where(r => r.CategoryLabel is not null && r.HasAmountColumnValue)
-            .GroupBy(r => r.CategoryLabel!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Select(r => r.AmountNok).Distinct().Count(), StringComparer.OrdinalIgnoreCase);
+        static string Normalize(string label) => label.Trim().ToLowerInvariant();
+
+        var activeAmountsByLabel = rows
+            .Where(r => r.CategoryLabel is not null && !r.Cancelled && r.AmountNok.HasValue)
+            .GroupBy(r => Normalize(r.CategoryLabel!))
+            .ToDictionary(g => g.Key, g => g.Select(r => r.AmountNok!.Value).ToHashSet());
+
+        // Ulike kategorinavn som gir samme slug («Dag 1 + 2» / «Dag 1 / 2») må ikke slås sammen.
+        var labelsBySlug = rows
+            .Where(r => r.CategoryLabel is not null)
+            .Select(r => Normalize(r.CategoryLabel!))
+            .Distinct()
+            .GroupBy(ImportValueParser.Slugify)
+            .ToDictionary(g => g.Key, g => g.Count());
 
         var result = new List<(string, string)>(rows.Count);
         foreach (var row in rows)
@@ -215,12 +266,21 @@ public static class ParticipantImportMapper
             }
 
             var label = row.CategoryLabel.Trim();
-            var baseKey = $"{ProjectIdPrefix}{ImportValueParser.Slugify(label)}";
-            if (row.HasAmountColumnValue
-                && row.AmountNok is { } rowAmount
-                && amountsByLabel.GetValueOrDefault(label) > 1)
+            var normalized = Normalize(label);
+            var slug = ImportValueParser.Slugify(normalized);
+            var baseKey = labelsBySlug.GetValueOrDefault(slug) > 1
+                ? $"{ProjectIdPrefix}{slug}-{ShortHash(normalized)}"
+                : $"{ProjectIdPrefix}{slug}";
+
+            if (row.AmountNok is { } rowAmount
+                && activeAmountsByLabel.TryGetValue(normalized, out var activeAmounts)
+                && activeAmounts.Count > 1
+                && activeAmounts.Contains(rowAmount))
             {
-                result.Add(($"{baseKey}:{FormatKeyAmount(rowAmount)}", $"{label} ({FormatNok(rowAmount)})"));
+                var splitLabel = ImportValueParser.ExtractAmountFromLabel(label) == rowAmount
+                    ? label
+                    : $"{label} ({FormatNok(rowAmount)})";
+                result.Add(($"{baseKey}:{FormatKeyAmount(rowAmount)}", splitLabel));
             }
             else
             {
@@ -253,7 +313,7 @@ public static class ParticipantImportMapper
             return (full[(comma + 1)..].Trim(), full[..comma].Trim());
         }
 
-        var normalized = string.Join(' ', full.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        var normalized = string.Join(' ', full.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         var lastSpace = normalized.LastIndexOf(' ');
         return lastSpace > 0
             ? (normalized[..lastSpace], normalized[(lastSpace + 1)..])
@@ -267,10 +327,13 @@ public static class ParticipantImportMapper
             return $"m:{memberNo.ToString(CultureInfo.InvariantCulture)}";
         }
 
-        var identity = $"{data.FirstName} {data.LastName}|{data.Email}".ToLowerInvariant();
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-        return $"r:{Convert.ToHexString(hash, 0, 6).ToLowerInvariant()}";
+        return $"r:{ShortHash($"{data.FirstName} {data.LastName}|{data.Email}|{data.GroupName}".ToLowerInvariant(), 6)}";
     }
+
+    private static string ShortHash(string value, int bytes = 3)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)), 0, bytes).ToLowerInvariant();
+
+    private static long? PositiveOrNull(long? value) => value > 0 ? value : null;
 
     private static string UniqueKey(string key, HashSet<string> used)
     {
@@ -298,7 +361,10 @@ public static class ParticipantImportMapper
             // «Generelt - Hva heter patruljen din?» → «Hva heter patruljen din?»
             var dash = header.IndexOf(" - ", StringComparison.Ordinal);
             var key = dash > 0 && dash + 3 < header.Length ? header[(dash + 3)..].Trim() : header;
-            answers.TryAdd(key, value);
+            if (!answers.TryAdd(key, value))
+            {
+                answers.TryAdd(header, value);
+            }
         }
 
         return answers;
@@ -333,6 +399,7 @@ public static class ParticipantImportMapper
         bool Cancelled,
         bool Confirmed,
         bool Attended,
+        bool CheckedIn,
         string? RegistrationDate,
         IReadOnlyDictionary<string, string> Answers);
 
@@ -354,6 +421,7 @@ public static class ParticipantImportMapper
             Status = table.IndexOf(p.StatusColumn);
             Confirmed = table.IndexOf(p.ConfirmedColumn);
             Attended = table.IndexOf(p.AttendedColumn);
+            CheckedIn = table.IndexOf(p.CheckedInColumn);
             RegistrationDate = table.IndexOf(p.RegistrationDateColumn);
             Extras = p.ExtraColumns
                 .Select(h => (Header: h, Index: table.IndexOf(h)))
@@ -375,6 +443,7 @@ public static class ParticipantImportMapper
         public int Status { get; }
         public int Confirmed { get; }
         public int Attended { get; }
+        public int CheckedIn { get; }
         public int RegistrationDate { get; }
         public IReadOnlyList<(string Header, int Index)> Extras { get; }
     }

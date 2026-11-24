@@ -54,16 +54,19 @@ FikenHjelper.slnx
 
 ---
 
-## Fase 2 – Fleksibel CSV/XLSX-import for arrangementer
-**Mål:** Håndtere arrangementer som ikke bruker API-et, eksterne påmeldingssystemer, eller påmeldinger med egne spesialkolonner i eksporten.
+## Fase 2 – Fleksibel CSV/XLSX-import for arrangementer *(Delvis implementert: Core/CSV ferdig, UI og XLSX gjenstår)*
+**Mål:** Håndtere arrangementer som ikke bruker API-et, eller der man heller vil bruke eksportfilen fra Min speiding (Spond o.l. kan komme senere).
 
-- **Opplasting og gjenkjenning:**
-  - Støtte for `.csv` (semikolon/komma, UTF-8/Windows-1252) og `.xlsx` (f.eks. via `ClosedXML` / `CsvHelper`).
-- **Interaktiv kolonnemapping i Blazor UI:**
-  - Brukeren laster opp filen og kobler kolonner til feltene *Navn*, *E-post*, *Speidergruppe*, *Priskategori/Rolle*, *Beløp*, *Status (avmeldt)* og *Valgfri kommentar*.
-  - Støtte for å lagre navngitte **importprofiler** lokalt (f.eks. «Standard Min speiding gruppeliste», «Kurs-eksport med matvalg»).
-- **Gjenbruk av kjerne:**
-  - Parseren produserer samme `MinSpeidingEventLoadResult` / `EventParticipant`-modell, slik at hele prisingen, kundematchingen, forhåndsvisningen og Fiken-utkastopprettelsen gjenbrukes direkte.
+- **Implementert i Core (`FikenHjelper.Core/Import/`, branch `fase2-import`):**
+  - `CsvTableReader`: UTF-8 (med/uten BOM) eller Windows-1252, skilletegn `;`/`,`/tab valgt ut fra konsistent kolonneantall, RFC 4180-anførselstegn, like overskrifter gjøres unike («E-post (2)»).
+  - `ImportProfileSuggester`: automatisk kolonnemapping for begge Min speiding-eksportene (individuell «… Deltaker - deltakere.csv» og gruppe-/fullrapport `projectParticipantsReportFull_*.csv`), valg av beste lagrede profil og forslag til arrangementsnavn fra filnavnet.
+  - `ParticipantImportMapper`: produserer samme `MinSpeidingEventLoadResult` som API-et, så prising, kundematching, forhåndsvisning og utkast gjenbrukes uendret. Stabile deltakernøkler (medlemsnummer eller hash), avmeldt via Avmeldingsdato/statusverdier, Bekreftet/Til stede/Innsjekket, Antall > 1 som flere deltakere (totalbeløp fordeles), oppsplitting av kategorier med ulike beløp, skjemaspørsmål («Generelt - …») som svar – sensitive kolonner tas ikke med.
+  - `JsonImportProfileStore`: navngitte importprofiler (kun kolonnenavn og regler, ingen persondata) i `%LocalAppData%\FikenHjelper\import-profiles.json`.
+  - Tester med kun syntetiske data (`ImportTests.cs`, `ImportTestData.cs`).
+- **Gjenstår (etter at `fase3-budsjett` med MudBlazor/ClosedXML er merget):**
+  - `.xlsx`-leser via ClosedXML, med `RemoveInvalidRelationships` flyttet til en felles `XlsxSanitizer`.
+  - UI på «Arrangementsfakturering»: kildevalg *Min speiding API | Fil (CSV/XLSX)*, opplasting (`MudFileUpload`), kolonnemapping, lagring av profiler, forhåndsvisning med advarsler og «Bruk deltakerne» → `ApplyLoadedEventAsync`. Arbeidsutkast lagres per arrangement med nøkkel `import:<arrangementsnavn>`.
+  - Registrering av `IImportProfileStore` i `Program.cs`.
 
 ---
 

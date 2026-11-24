@@ -65,6 +65,37 @@ public sealed class CsvTableReaderTests
     }
 
     [Fact]
+    public void Parse_QuoteInsideUnquotedField_IsLiteral()
+    {
+        var table = CsvTableReader.Parse("Navn;Gruppe;Kommentar\nOla Test;Molde;Tar med 12\" panne\nKari Test;Aukra;Ingen\nPer Test;Molde;Ingen\n");
+
+        Assert.Equal(3, table.Rows.Count);
+        Assert.Equal("Tar med 12\" panne", table.Rows[0][2]);
+    }
+
+    [Fact]
+    public void Parse_UnclosedQuote_Throws()
+    {
+        Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse("Navn;Gruppe\n\"Ola Test;Molde\nKari;Aukra\n"));
+    }
+
+    [Fact]
+    public void Parse_StripsBomInString()
+    {
+        var table = CsvTableReader.Parse("\uFEFFNavn;Gruppe\nOla;Molde\n");
+        Assert.Equal(0, table.IndexOf("Navn"));
+    }
+
+    [Theory]
+    [InlineData("Navn;Gruppe;Allergi, diett, medisin, annet\nOla;Molde;Ingen\nKari;Aukra;Nøtter\n", ";")]
+    [InlineData("\t\t\nNavn;Gruppe\nOla;Molde\n", ";")]
+    [InlineData("Navn,Gruppe\n\"Test; Ola\",Molde\n", ",")]
+    public void DetectDelimiter_UsesConsistentColumnCount(string csv, string expected)
+    {
+        Assert.Equal(expected, CsvTableReader.Parse(csv).DetectedDelimiter);
+    }
+
+    [Fact]
     public void Parse_EmptyFile_Throws()
     {
         Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse("\r\n \r\n"));
@@ -86,6 +117,18 @@ public sealed class ImportValueParserTests
     [InlineData("Speider (300 kr)", 300)]
     [InlineData("Gratis", 0)]
     [InlineData("0", 0)]
+    [InlineData("1.250 kr", 1250)]
+    [InlineData("1.250,50 kr", 1250.50)]
+    [InlineData("1.250,-", 1250)]
+    [InlineData("kr 1.250", 1250)]
+    [InlineData("kr 1.250,50", 1250.50)]
+    [InlineData("NOK 1,250.50", 1250.50)]
+    [InlineData("-450 kr", -450)]
+    [InlineData("-450", -450)]
+    [InlineData("0.500", 0.5)]
+    [InlineData("1\u00A0250 kr", 1250)]
+    [InlineData("Speider (1\u00A0250 kr)", 1250)]
+    [InlineData("Speider (1.250 kr)", 1250)]
     public void ParseAmountNok_ParsesNorwegianFormats(string input, double expected)
     {
         Assert.Equal((decimal)expected, ImportValueParser.ParseAmountNok(input));
@@ -95,6 +138,9 @@ public sealed class ImportValueParserTests
     [InlineData("")]
     [InlineData("Speider")]
     [InlineData("ikke betalt")]
+    [InlineData("Betalt 2026")]
+    [InlineData("Del 1 av 2")]
+    [InlineData("450 + 50")]
     public void ParseAmountNok_ReturnsNullForNonAmounts(string input)
     {
         Assert.Null(ImportValueParser.ParseAmountNok(input));
@@ -107,6 +153,14 @@ public sealed class ImportValueParserTests
     [InlineData("Nei", false)]
     [InlineData("", false)]
     public void ParseBool(string input, bool expected) => Assert.Equal(expected, ImportValueParser.ParseBool(input));
+
+    [Theory]
+    [InlineData("12345", 12345L)]
+    [InlineData("12345.0", 12345L)]
+    [InlineData("12345678901234567890", null)]
+    [InlineData("abc", null)]
+    public void ParseLong_HandlesExcelFormatAndOverflow(string input, long? expected)
+        => Assert.Equal(expected, ImportValueParser.ParseLong(input));
 
     [Fact]
     public void Slugify_HandlesNorwegianLetters()
@@ -131,6 +185,7 @@ public sealed class ImportProfileSuggesterTests
         Assert.Equal("Gruppe", profile.GroupColumn);
         Assert.Equal("Deltakeravgift", profile.CategoryColumn);
         Assert.Equal("Totalbeløp", profile.AmountColumn);
+        Assert.True(profile.AmountIsTotal);
         Assert.Equal("Avmeldingsdato", profile.CancelledDateColumn);
         Assert.Equal("Påmeldtdato", profile.RegistrationDateColumn);
         Assert.Null(profile.QuantityColumn);
@@ -141,6 +196,7 @@ public sealed class ImportProfileSuggesterTests
         Assert.Contains("Generelt - Har deltakeren allergier eller diettbehov vi må ta hensyn til?", profile.ExtraColumns);
         Assert.DoesNotContain("Generelt - E-postadresse", profile.ExtraColumns);
         Assert.DoesNotContain("Fødselsdato", profile.ExtraColumns);
+        Assert.DoesNotContain("Generelt - Mobilnummer", profile.ExtraColumns);
         Assert.DoesNotContain("Adresse", profile.ExtraColumns);
         Assert.DoesNotContain("Foresatt 1 e-post", profile.EmailColumns);
     }
@@ -160,6 +216,7 @@ public sealed class ImportProfileSuggesterTests
         Assert.Equal("Antall", profile.QuantityColumn);
         Assert.Equal("Bekreftet", profile.ConfirmedColumn);
         Assert.Equal("Til stede", profile.AttendedColumn);
+        Assert.Equal("Innsjekket", profile.CheckedInColumn);
         Assert.Equal("Avmeldingsdato", profile.CancelledDateColumn);
         Assert.Equal(["E-post"], profile.EmailColumns);
         Assert.Empty(profile.ExtraColumns);
@@ -177,7 +234,31 @@ public sealed class ImportProfileSuggesterTests
         Assert.Equal("Avmeldt", profile.StatusColumn);
         Assert.Contains("ja", profile.CancelledValues);
         Assert.Equal("Pris", profile.AmountColumn);
+        Assert.False(profile.AmountIsTotal);
         Assert.Equal(["Kommentar"], profile.ExtraColumns);
+    }
+
+    [Fact]
+    public void Suggest_KeepsSingleFirstNameColumn()
+    {
+        var profile = ImportProfileSuggester.Suggest(["Fornavn", "Gruppe"]);
+        Assert.Equal("Fornavn", profile.FirstNameColumn);
+        Assert.True(ImportProfileSuggester.HasName(profile));
+    }
+
+    [Fact]
+    public void ChooseProfile_AcceptsSavedProfileWhenOnlySomeEmailColumnsExist()
+    {
+        var individualHeaders = CsvTableReader.Parse(ImportTestData.IndividualHeader).Headers;
+        var saved = ImportProfileSuggester.Suggest(individualHeaders);
+        saved.Name = "Min speiding individuell";
+
+        // Neste arrangement har ikke skjemaspørsmålet «Generelt - E-postadresse».
+        var otherHeaders = individualHeaders.Where(h => h != "Generelt - E-postadresse").ToList();
+        var (chosen, isSaved) = ImportProfileSuggester.ChooseProfile(otherHeaders, [saved]);
+
+        Assert.True(isSaved);
+        Assert.Equal("Min speiding individuell", chosen.Name);
     }
 
     [Fact]
@@ -312,6 +393,143 @@ public sealed class ParticipantImportMapperTests
         Assert.Contains(result.Warnings, w => w.Contains("Antall 3"));
 
         Assert.Contains(ev.FeeCategories, c => c.Label == "Leder (250 kr)" && c.SuggestedPriceNok == 250m && c.ParticipantCount == 3);
+    }
+
+    [Fact]
+    public void Map_QuantityZeroIsSkippedAndInvalidQuantityWarns()
+    {
+        var table = GroupReport(
+            ImportTestData.GroupReportRow("1501", "Molde", "900020", "Ola Null", "Speider (450 kr)", quantity: "0"),
+            ImportTestData.GroupReportRow("1501", "Molde", "900021", "Kari Minus", "Speider (450 kr)", quantity: "-1"),
+            ImportTestData.GroupReportRow("1501", "Molde", "900022", "Per Tekst", "Speider (450 kr)", quantity: "2 stk"));
+
+        var result = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test");
+
+        Assert.Equal(2, result.Event.Participants.Count);
+        Assert.Equal(1, result.SkippedRowCount);
+        Assert.DoesNotContain(result.Event.Participants, p => p.MemberNo == 900020);
+        Assert.Contains(result.Warnings, w => w.Contains("Antall er 0"));
+        Assert.Equal(2, result.Warnings.Count(w => w.Contains("Ugyldig antall")));
+    }
+
+    [Fact]
+    public void Map_TotalAmountIsDividedByQuantity()
+    {
+        var table = CsvTableReader.Parse("Navn;Gruppe;Deltakeravgift;Antall;Totalbeløp\nOla Test;Molde;Deltaker;3;1350\n");
+        var profile = ImportProfileSuggester.Suggest(table.Headers);
+        Assert.True(profile.AmountIsTotal);
+
+        var ev = ParticipantImportMapper.Map(table, profile, "Test").Event;
+
+        Assert.Equal(3, ev.Participants.Count);
+        Assert.All(ev.Participants, p => Assert.Equal(450m, p.DetectedPriceNok));
+        Assert.Equal(450m, Assert.Single(ev.FeeCategories).SuggestedPriceNok);
+    }
+
+    [Fact]
+    public void Map_CategoriesWithSameSlugAreNotMerged()
+    {
+        var table = CsvTableReader.Parse("Navn;Deltakeravgift;Pris\nA Test;Dag 1 + 2;500\nB Test;Dag 1 / 2;250\n");
+
+        var ev = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test").Event;
+
+        Assert.Equal(2, ev.FeeCategories.Count);
+        Assert.Contains(ev.FeeCategories, c => c.Label == "Dag 1 + 2" && c.SuggestedPriceNok == 500m);
+        Assert.Contains(ev.FeeCategories, c => c.Label == "Dag 1 / 2" && c.SuggestedPriceNok == 250m);
+    }
+
+    [Fact]
+    public void Map_CancelledRowWithZeroAmountDoesNotSplitCategory()
+    {
+        var table = Individual(
+            ImportTestData.IndividualRow("1", "A Test", "Molde", "", "Deltaker (450 kr)", "450"),
+            ImportTestData.IndividualRow("2", "B Test", "Molde", "", "Deltaker (450 kr)", "450"),
+            ImportTestData.IndividualRow("3", "C Avmeldt", "Molde", "", "Deltaker (450 kr)", "0", cancelledDate: "2026-10-20"));
+
+        var ev = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test").Event;
+
+        var category = Assert.Single(ev.FeeCategories);
+        Assert.Equal("Deltaker (450 kr)", category.Label);
+        Assert.Equal("import:deltaker-450-kr", category.Key);
+        Assert.Equal(450m, category.SuggestedPriceNok);
+    }
+
+    [Fact]
+    public void Map_MixedBlankAndFilledAmountsSplitByEffectivePrice()
+    {
+        var table = Individual(
+            ImportTestData.IndividualRow("1", "A Test", "Molde", "", "Speider (450 kr)", ""),
+            ImportTestData.IndividualRow("2", "B Test", "Molde", "", "Speider (450 kr)", "300"));
+
+        var ev = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test").Event;
+
+        Assert.Equal(2, ev.FeeCategories.Count);
+        Assert.Contains(ev.FeeCategories, c => c.Label == "Speider (450 kr)" && c.SuggestedPriceNok == 450m);
+        Assert.Contains(ev.FeeCategories, c => c.Label == "Speider (450 kr) (300 kr)" && c.SuggestedPriceNok == 300m);
+    }
+
+    [Fact]
+    public void Map_MemberNoZeroUsesHashKey_AndUnknownGroupHasNoGroupOptions()
+    {
+        var table = CsvTableReader.Parse("Medlemsnummer;Navn\n0;Anne Ekstern\n0;Bjørn Ekstern\n");
+
+        var ev = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test").Event;
+
+        Assert.All(ev.Participants, p =>
+        {
+            Assert.Null(p.MemberNo);
+            Assert.StartsWith("r:", p.ParticipantKey);
+            Assert.Equal("Uten gruppe", p.GroupName);
+            Assert.Empty(p.AvailableGroups);
+        });
+    }
+
+    [Fact]
+    public void Map_CheckedInCountsAsAttendedForFilter()
+    {
+        var header = "Navn;Gruppe;Innsjekket;Til stede\n";
+        var table = CsvTableReader.Parse(header + "Ola Test;Molde;Ja;Nei\nKari Test;Molde;Nei;Nei\n");
+        var profile = ImportProfileSuggester.Suggest(table.Headers);
+
+        var ev = ParticipantImportMapper.Map(table, profile, "Test").Event;
+        var ola = ev.Participants.Single(p => p.FirstName == "Ola");
+        var kari = ev.Participants.Single(p => p.FirstName == "Kari");
+
+        var filters = new ParticipantFilterOptions(RequireAttended: true);
+        Assert.True(ola.CheckedIn);
+        Assert.False(ola.Attended);
+        Assert.True(InvoicePlanBuilder.IsParticipantIncluded(ola, filters, new Dictionary<string, ParticipantOverride>()));
+        Assert.False(InvoicePlanBuilder.IsParticipantIncluded(kari, filters, new Dictionary<string, ParticipantOverride>()));
+
+        // Bare «Innsjekket»: oppmøtt følger innsjekket i stedet for å være sann for alle.
+        var onlyCheckedIn = CsvTableReader.Parse("Navn;Innsjekket\nOla Test;Nei\n");
+        var p = ParticipantImportMapper.Map(onlyCheckedIn, ImportProfileSuggester.Suggest(onlyCheckedIn.Headers), "Test").Event.Participants.Single();
+        Assert.False(p.Attended);
+        Assert.False(p.CheckedIn);
+    }
+
+    [Fact]
+    public void Map_WarnsAboutUnparseableAndNegativeAmounts()
+    {
+        var table = CsvTableReader.Parse("Navn;Pris\nOla Test;se kommentar\nKari Test;-450\nSum:;\n");
+
+        var result = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test");
+
+        Assert.Equal(2, result.Event.Participants.Count);
+        Assert.Contains(result.Warnings, w => w.Contains("se kommentar"));
+        Assert.Contains(result.Warnings, w => w.Contains("Negativt beløp"));
+    }
+
+    [Theory]
+    [InlineData("Testesen, Ola", "Ola", "Testesen")]
+    [InlineData("Ola\u00A0Mellom Testesen", "Ola Mellom", "Testesen")]
+    [InlineData("Cher", "Cher", "")]
+    public void Map_SplitsFullName(string fullName, string first, string last)
+    {
+        var table = new TabularData(["Navn"], [[fullName]]);
+        var p = ParticipantImportMapper.Map(table, new ImportProfile { FullNameColumn = "Navn" }, "Test").Event.Participants.Single();
+        Assert.Equal(first, p.FirstName);
+        Assert.Equal(last, p.LastName);
     }
 
     [Fact]

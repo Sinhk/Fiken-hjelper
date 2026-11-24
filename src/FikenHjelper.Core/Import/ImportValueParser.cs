@@ -1,11 +1,11 @@
 using System.Globalization;
 using System.Text;
-using FikenHjelper.Core.MinSpeiding;
+using System.Text.RegularExpressions;
 
 namespace FikenHjelper.Core.Import;
 
 /// <summary>Tolking av celleverdier fra eksportfiler (ja/nei, beløp, heltall, nøkler).</summary>
-public static class ImportValueParser
+public static partial class ImportValueParser
 {
     private static readonly HashSet<string> TrueValues = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -16,7 +16,9 @@ public static class ImportValueParser
         => !string.IsNullOrWhiteSpace(value) && TrueValues.Contains(value.Trim());
 
     /// <summary>
-    /// Tolker beløp som «450», «450,00», «1 250,50», «1.250,50», «kr 450» eller «450 kr».
+    /// Tolker beløpsceller som «450», «450,00», «1 250,50», «1.250,50», «kr 450», «450 kr», «450,-» eller «-450».
+    /// Inneholder cellen annen tekst (f.eks. «Speider (450 kr)»), hentes beløpet som står inntil «kr»/«,-».
+    /// Tekst uten slikt beløp (f.eks. «Betalt 2026») gir null.
     /// </summary>
     public static decimal? ParseAmountNok(string? value)
     {
@@ -25,28 +27,53 @@ public static class ImportValueParser
             return null;
         }
 
-        var text = value.Trim();
-        var fromLabel = MinSpeidingParser.TryExtractPriceNokFromLabel(text);
-        if (fromLabel.HasValue)
+        var text = NormalizeSpaces(value).Trim();
+        var bare = CurrencyTokens().Replace(text, " ").Trim();
+        if (bare.Length > 0 && !bare.Any(char.IsLetter))
         {
-            return fromLabel.Value;
+            return ParseNumber(bare);
         }
 
-        var cleaned = new StringBuilder();
-        foreach (var ch in text)
+        return ExtractAmountFromLabel(text);
+    }
+
+    /// <summary>Henter beløp fra en tekst som «Speider (1.250 kr)», «kr 450 for ledere» eller «Gratis».</summary>
+    public static decimal? ExtractAmountFromLabel(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label))
         {
-            if (char.IsDigit(ch) || ch is ',' or '.' or '-')
-            {
-                cleaned.Append(ch);
-            }
-            else if (!char.IsWhiteSpace(ch) && ch != ' ' && !char.IsLetter(ch))
-            {
-                return null;
-            }
+            return null;
         }
 
-        var s = cleaned.ToString().TrimEnd('-');
-        if (s.Length == 0 || s.Count(char.IsDigit) == 0)
+        var text = NormalizeSpaces(label);
+        var suffix = SuffixAmount().Match(text);
+        if (suffix.Success && ParseNumber(suffix.Groups["n"].Value) is { } s)
+        {
+            return s;
+        }
+
+        var prefix = PrefixAmount().Match(text);
+        if (prefix.Success && ParseNumber(prefix.Groups["n"].Value) is { } p)
+        {
+            return p;
+        }
+
+        return text.Contains("gratis", StringComparison.OrdinalIgnoreCase)
+            || FreeWord().IsMatch(text)
+                ? 0m
+                : null;
+    }
+
+    /// <summary>Tolker et rent tall med norsk eller engelsk desimal-/tusenskille.</summary>
+    public static decimal? ParseNumber(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var s = new string(NormalizeSpaces(value).Where(c => !char.IsWhiteSpace(c)).ToArray());
+        if (s.Length == 0 || !s.All(c => char.IsDigit(c) || c is ',' or '.' or '-') || s.LastIndexOf('-') > 0)
         {
             return null;
         }
@@ -93,6 +120,8 @@ public static class ImportValueParser
         // Excel kan gi «12345.0».
         return decimal.TryParse(digits.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var d)
                && d == decimal.Truncate(d)
+               && d >= long.MinValue
+               && d <= long.MaxValue
             ? (long)d
             : null;
     }
@@ -172,12 +201,32 @@ public static class ImportValueParser
         return slug.Length == 0 ? "uten-navn" : slug;
     }
 
+    private static string NormalizeSpaces(string value)
+        => value.Replace('\u00A0', ' ').Replace('\u202F', ' ');
+
+    // Valutamarkører som fjernes før et beløp tolkes som rent tall.
+    [GeneratedRegex(@"(?i)\bkr\.?|\bnok\b|,-|:-|\.-")]
+    private static partial Regex CurrencyTokens();
+
+    // «450 kr», «1.250,50 kr», «1 250,-», «-450 kr». Tallet kan ikke starte midt i et annet tall.
+    [GeneratedRegex(@"(?i)(?<![\d.,])(?<n>-?\d{1,3}(?:[ .]\d{3})+(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*(?:kr\b|nok\b|,-)")]
+    private static partial Regex SuffixAmount();
+
+    // «kr 450», «kr 1.250,50», «NOK 1 250».
+    [GeneratedRegex(@"(?i)(?:\bkr\.?|\bnok)\s*(?<n>-?\d{1,3}(?:[ .]\d{3})+(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)(?![\d])")]
+    private static partial Regex PrefixAmount();
+
+    [GeneratedRegex(@"(?i)\bfree\b")]
+    private static partial Regex FreeWord();
+
     private static bool IsThousandsSeparated(string s, char separator)
     {
         // «1,250» / «12.500.000»: hver gruppe etter skilletegnet har nøyaktig tre sifre.
         var parts = s.TrimStart('-').Split(separator);
         return parts.Length > 1
             && parts[0].Length is >= 1 and <= 3
+            && parts[0][0] != '0'
+            && parts[0].All(char.IsDigit)
             && parts.Skip(1).All(p => p.Length == 3 && p.All(char.IsDigit));
     }
 }
