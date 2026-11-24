@@ -99,65 +99,129 @@ public sealed class InvoicePlanBuilderTests
         Assert.Equal(22525 + 45050 + 25000, molde.TotalOre);
     }
 
-    [Fact]
-    public void Build_DetectsDuplicateOrderReferenceAndTruncatesLongDescriptionsTo200Chars()
-    {
-        var longEventName = new string('A', 240);
-        var eventData = DemoEventFactory.CreateDemoEvent() with { EventTitle = longEventName };
-
-        // Blank OrderReferencePrefix omits orderReference from drafts and Fiken requests
-        var noPrefixOptions = new InvoiceDraftPlanOptions(
+    private static InvoiceDraftPlanOptions GroupOptions(long? fikenProjectId = null, string? invoiceText = null, string orderReferencePrefix = "")
+        => new(
             BillingMode: BillingMode.PerScoutGroup,
             GroupLineMode: GroupLineMode.OneLinePerParticipant,
             Filters: new ParticipantFilterOptions(ExcludeCancelled: true),
-            CategoryPricesNok: new Dictionary<string, decimal> { ["fee:101"] = 450m, ["fee:102"] = 250m },
+            CategoryPricesNok: new Dictionary<string, decimal> { ["fee:101"] = 450m, ["fee:102"] = 250m, ["fee:103"] = 0m },
             ParticipantOverrides: new Dictionary<string, ParticipantOverride>(),
             ManualRecipientContactIds: new Dictionary<string, long>(),
             IncomeAccount: "3200",
             IssueDate: new DateOnly(2026, 11, 23),
             DaysUntilDueDate: 14,
-            FikenProjectId: null,
+            FikenProjectId: fikenProjectId,
             BankAccountNumber: null,
-            InvoiceText: null,
+            InvoiceText: invoiceText,
             OurReference: null,
-            OrderReferencePrefix: string.Empty);
+            OrderReferencePrefix: orderReferencePrefix);
 
-        var existingRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "KBK26" };
-        var noPrefixPlan = InvoicePlanBuilder.Build(
-            eventData,
-            noPrefixOptions,
-            Customers,
-            new Dictionary<string, long>(),
-            existingRefs);
+    private static FikenInvoiceDraftSummary ExistingDraft(long customerId, long? projectId, string? invoiceText, string? orderReference = null)
+        => new(
+            DraftId: 1,
+            Uuid: null,
+            Type: "invoice",
+            IssueDate: "2026-11-20",
+            DaysUntilDueDate: 14,
+            InvoiceText: invoiceText,
+            OrderReference: orderReference,
+            Net: 0,
+            Gross: 0,
+            ProjectId: projectId,
+            Customers: [Customers.Single(c => c.ContactId == customerId)]);
 
+    [Fact]
+    public void Build_OrderReferenceIsOptionalAndLongDescriptionsAreTruncatedTo200Chars()
+    {
+        var eventData = DemoEventFactory.CreateDemoEvent() with { EventTitle = new string('A', 240) };
+
+        var noPrefixOptions = GroupOptions();
+        var noPrefixPlan = InvoicePlanBuilder.Build(eventData, noPrefixOptions, Customers, new Dictionary<string, long>());
         Assert.All(noPrefixPlan.Drafts, d =>
         {
             Assert.Equal(string.Empty, d.OrderReference);
-            Assert.False(d.DuplicateOrderReferenceExists);
             Assert.All(d.Lines, l => Assert.True(l.Description.Length <= 200));
         });
-        Assert.Equal(0, noPrefixPlan.DuplicateWarningCount);
-
         var moldeNoPrefix = noPrefixPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
         Assert.Null(InvoicePlanBuilder.ToFikenRequest(moldeNoPrefix, noPrefixOptions).OrderReference);
 
-        // When explicitly provided, OrderReferencePrefix is used directly and checked against existing drafts
-        var expectedOrderRef = InvoicePlanBuilder.BuildOrderReference("KBK26", eventData.ProjectId, "Molde speidergruppe");
-        Assert.Equal("KBK26", expectedOrderRef);
+        var withPrefixOptions = GroupOptions(orderReferencePrefix: "KBK26");
+        var molde = InvoicePlanBuilder.Build(eventData, withPrefixOptions, Customers, new Dictionary<string, long>())
+            .Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
+        Assert.Equal("KBK26", molde.OrderReference);
+        Assert.Equal("KBK26", InvoicePlanBuilder.ToFikenRequest(molde, withPrefixOptions).OrderReference);
+    }
 
-        var withPrefixOptions = noPrefixOptions with { OrderReferencePrefix = "KBK26" };
-        var groupPlan = InvoicePlanBuilder.Build(
-            eventData,
-            withPrefixOptions,
+    [Fact]
+    public void Build_FlagsDuplicateOnlyForSameCustomerAndSameEvent_RegardlessOfOrderReference()
+    {
+        var demo = DemoEventFactory.CreateDemoEvent();
+
+        // With a Fiken project: same customer + same project is a duplicate, even with no order reference.
+        var projectOptions = GroupOptions(fikenProjectId: 555, invoiceText: "Kretsleir");
+        var existing = new List<FikenInvoiceDraftSummary>
+        {
+            ExistingDraft(1001, projectId: 555, invoiceText: "Noe annet"),
+            ExistingDraft(1002, projectId: 999, invoiceText: "Kretsleir")
+        };
+
+        var plan = InvoicePlanBuilder.Build(demo, projectOptions, Customers, new Dictionary<string, long>(), existing);
+        Assert.True(plan.Drafts.Single(d => d.SelectedContactId == 1001).DuplicateDraftExists);
+        Assert.False(plan.Drafts.Single(d => d.SelectedContactId == 1002).DuplicateDraftExists);
+        Assert.Equal(1, plan.DuplicateWarningCount);
+
+        // A shared order reference no longer marks every draft as a duplicate.
+        var sharedPrefixPlan = InvoicePlanBuilder.Build(
+            demo,
+            projectOptions with { OrderReferencePrefix = "KBK26" },
             Customers,
             new Dictionary<string, long>(),
-            existingRefs);
+            [ExistingDraft(1003, projectId: 999, invoiceText: null, orderReference: "KBK26")]);
+        Assert.Equal(0, sharedPrefixPlan.DuplicateWarningCount);
 
-        var molde = groupPlan.Drafts.Single(d => d.RecipientName == "Molde speidergruppe");
-        Assert.Equal("KBK26", molde.OrderReference);
-        Assert.True(molde.DuplicateOrderReferenceExists);
-        Assert.Equal("KBK26", InvoicePlanBuilder.ToFikenRequest(molde, withPrefixOptions).OrderReference);
-        Assert.Equal(groupPlan.Drafts.Count, groupPlan.DuplicateWarningCount);
+        // Without a project: same customer + same invoice text is a duplicate.
+        var noProjectPlan = InvoicePlanBuilder.Build(
+            demo,
+            GroupOptions(invoiceText: "Kretsleir"),
+            Customers,
+            new Dictionary<string, long>(),
+            [ExistingDraft(1001, projectId: null, invoiceText: " kretsleir "), ExistingDraft(1002, projectId: null, invoiceText: "Vårleir")]);
+        Assert.True(noProjectPlan.Drafts.Single(d => d.SelectedContactId == 1001).DuplicateDraftExists);
+        Assert.False(noProjectPlan.Drafts.Single(d => d.SelectedContactId == 1002).DuplicateDraftExists);
+    }
+
+    [Fact]
+    public void Build_ExcludeZeroPrice_KeepsParticipantsWithUnknownPriceAndWarns()
+    {
+        var demo = DemoEventFactory.CreateDemoEvent();
+        var participantsInFee101 = demo.Participants.Count(p => p.FeeCategoryKey == "fee:101" && !p.Cancelled);
+        Assert.True(participantsInFee101 > 0);
+
+        // fee:101 has no known price: not in the category prices, and nothing detected.
+        var unknownPriceEvent = demo with
+        {
+            Participants = demo.Participants
+                .Select(p => p.FeeCategoryKey == "fee:101" ? p with { DetectedPriceNok = null } : p)
+                .ToList()
+        };
+        var options = GroupOptions() with
+        {
+            CategoryPricesNok = new Dictionary<string, decimal> { ["fee:102"] = 250m, ["fee:103"] = 0m },
+            Filters = new ParticipantFilterOptions(ExcludeCancelled: true, ExcludeZeroPrice: true)
+        };
+
+        var plan = InvoicePlanBuilder.Build(unknownPriceEvent, options, Customers, new Dictionary<string, long>());
+
+        var includedKeys = plan.Drafts.SelectMany(d => d.ParticipantKeys).ToHashSet();
+        Assert.All(
+            unknownPriceEvent.Participants.Where(p => p.FeeCategoryKey == "fee:101" && !p.Cancelled),
+            p => Assert.Contains(p.ParticipantKey, includedKeys));
+        Assert.Contains(plan.GlobalWarnings, w => w.Contains("mangler pris"));
+
+        // Known 0 kr (fee:103) is still excluded.
+        Assert.All(
+            unknownPriceEvent.Participants.Where(p => p.FeeCategoryKey == "fee:103"),
+            p => Assert.DoesNotContain(p.ParticipantKey, includedKeys));
     }
 
     [Fact]

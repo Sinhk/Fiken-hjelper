@@ -23,7 +23,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     private List<FikenProject> projects = [];
     private List<FikenAccount> incomeAccounts = [];
     private List<FikenBankAccount> bankAccounts = [];
-    private HashSet<string> existingDraftOrderReferences = new(StringComparer.OrdinalIgnoreCase);
+    private List<FikenInvoiceDraftSummary> existingDrafts = [];
 
     private string selectedCompanySlug = string.Empty;
     private long? selectedProjectId;
@@ -142,11 +142,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         incomeAccounts = (await FikenClient.GetIncomeAccountsAsync(companySlug, token)).ToList();
         bankAccounts = (await FikenClient.GetBankAccountsAsync(companySlug, token)).ToList();
 
-        var existingDrafts = await FikenClient.GetInvoiceDraftsAsync(companySlug, token);
-        existingDraftOrderReferences = existingDrafts
-            .Where(d => !string.IsNullOrWhiteSpace(d.OrderReference))
-            .Select(d => d.OrderReference!.Trim())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        existingDrafts = (await FikenClient.GetInvoiceDraftsAsync(companySlug, token)).ToList();
 
         if (incomeAccounts.Count > 0 && !incomeAccounts.Any(a => a.Code == incomeAccount))
         {
@@ -161,6 +157,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private async Task HandleCompanyChangedAsync(string newSlug)
     {
+        // Drafts and customers being created belong to the previous company: stop that work first.
+        submitCts?.Cancel();
         selectedCompanySlug = newSlug;
         selectedProjectId = null;
         projectEditedBeforeLoad = false;
@@ -168,7 +166,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         projects = [];
         incomeAccounts = [];
         bankAccounts = [];
-        existingDraftOrderReferences.Clear();
+        existingDrafts = [];
 
         if (!string.IsNullOrWhiteSpace(selectedCompanySlug) && fikenTokenConfigured)
         {
@@ -213,6 +211,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 if (existing is not null)
                 {
                     existing.FikenProjectId = projectId;
+                    existing.FikenCompanySlug = NullIfEmpty(selectedCompanySlug);
                     await ConfigStore.SaveEventDraftStateAsync(existing);
                     lastDraftSavedAtLocal = DateTimeOffset.Now;
                 }
@@ -287,34 +286,17 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         if (eventData is null && !string.IsNullOrWhiteSpace(projectId) && !projectEditedBeforeLoad)
         {
+            // Picking another event starts from the defaults, so choices from a previously
+            // picked event never carry over.
+            ResetPerEventDefaults(eventTitle: null);
             var saved = await ConfigStore.LoadEventDraftStateAsync(projectId);
             if (saved is not null)
             {
-                selectedProjectId = saved.FikenProjectId;
-                if (!string.IsNullOrWhiteSpace(saved.IncomeAccount))
-                {
-                    incomeAccount = saved.IncomeAccount;
-                }
-
-                bankAccountNumber = saved.BankAccountNumber ?? string.Empty;
-                if (saved.IssueDate.HasValue)
-                {
-                    issueDate = saved.IssueDate.Value;
-                }
-
-                if (saved.DaysUntilDueDate.HasValue)
-                {
-                    daysUntilDueDate = saved.DaysUntilDueDate.Value;
-                }
-
-                invoiceText = saved.InvoiceText ?? string.Empty;
-                ourReference = saved.OurReference ?? string.Empty;
-                orderReferencePrefix = saved.OrderReferencePrefix ?? string.Empty;
+                ApplySavedInvoiceFields(saved);
                 lastDraftSavedAtLocal = saved.SavedAtUtc.ToLocalTime();
             }
             else
             {
-                selectedProjectId = null;
                 lastDraftSavedAtLocal = null;
             }
         }
@@ -405,6 +387,14 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         var preSelectedProjectId = selectedProjectId;
         var keepPreSelectedProject = projectEditedBeforeLoad;
 
+        // Switching to a different event: start from the defaults so the previous event's
+        // project, accounts, texts and filters are not reused (and saved) for this one.
+        if (eventData is not null
+            && !string.Equals(eventData.ProjectId, loaded.ProjectId, StringComparison.OrdinalIgnoreCase))
+        {
+            ResetPerEventDefaults(loaded.EventTitle);
+        }
+
         eventData = loaded;
         categoryPrices.Clear();
         manualCategoryPrices.Clear();
@@ -415,9 +405,14 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         creationResults.Clear();
         lastDraftSavedAtLocal = null;
 
+        // Categories without a detected price stay unset, so they are shown and warned about as
+        // missing a price instead of being treated as free.
         foreach (var cat in loaded.FeeCategories)
         {
-            categoryPrices[cat.Key] = cat.SuggestedPriceNok ?? 0m;
+            if (cat.SuggestedPriceNok is { } suggestedPrice)
+            {
+                categoryPrices[cat.Key] = suggestedPrice;
+            }
         }
 
         orderReferencePrefix = string.Empty;
@@ -429,26 +424,12 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             saved = await ConfigStore.LoadEventDraftStateAsync(loaded.ProjectId, ct);
             if (saved is not null)
             {
-                selectedProjectId = keepPreSelectedProject ? preSelectedProjectId : saved.FikenProjectId;
-                if (!string.IsNullOrWhiteSpace(saved.IncomeAccount))
+                var companyMatches = ApplySavedInvoiceFields(saved);
+                if (keepPreSelectedProject)
                 {
-                    incomeAccount = saved.IncomeAccount;
+                    selectedProjectId = preSelectedProjectId;
                 }
 
-                bankAccountNumber = saved.BankAccountNumber ?? string.Empty;
-                if (saved.IssueDate.HasValue)
-                {
-                    issueDate = saved.IssueDate.Value;
-                }
-
-                if (saved.DaysUntilDueDate.HasValue)
-                {
-                    daysUntilDueDate = saved.DaysUntilDueDate.Value;
-                }
-
-                invoiceText = saved.InvoiceText ?? string.Empty;
-                ourReference = saved.OurReference ?? string.Empty;
-                orderReferencePrefix = saved.OrderReferencePrefix ?? string.Empty;
                 billingMode = saved.BillingMode;
                 groupLineMode = saved.GroupLineMode;
                 filters = saved.Filters;
@@ -456,11 +437,15 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 var suggestedByKey = loaded.FeeCategories
                     .ToDictionary(c => c.Key, c => c.SuggestedPriceNok, StringComparer.OrdinalIgnoreCase);
 
+                // Older files stored every category price, detected or typed. For those, a category
+                // with a detected price uses the fresh detection, since the stored value may be stale.
+                var isLegacyPriceFormat = saved.FormatVersion < SavedEventDraftState.CurrentFormatVersion;
+
                 foreach (var (key, value) in saved.CategoryPricesNok)
                 {
                     if (suggestedByKey.TryGetValue(key, out var suggested)
                         && suggested.HasValue
-                        && suggested.Value == value)
+                        && (isLegacyPriceFormat || suggested.Value == value))
                     {
                         continue;
                     }
@@ -499,9 +484,13 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                     participantOverrides[key] = ov;
                 }
 
-                foreach (var (key, contactId) in saved.ManualRecipientContactIds)
+                // Customer IDs belong to the Fiken company they were chosen in.
+                if (companyMatches)
                 {
-                    manualRecipientContactIds[key] = contactId;
+                    foreach (var (key, contactId) in saved.ManualRecipientContactIds)
+                    {
+                        manualRecipientContactIds[key] = contactId;
+                    }
                 }
 
                 lastDraftSavedAtLocal = saved.SavedAtUtc.ToLocalTime();
@@ -518,8 +507,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         RebuildPlan();
 
-        if (loadSavedDraft && ((keepPreSelectedProject && saved?.FikenProjectId != selectedProjectId)
-            || (saved is null && selectedProjectId.HasValue)))
+        if (loadSavedDraft && keepPreSelectedProject && saved?.FikenProjectId != selectedProjectId)
         {
             await PersistCurrentDraftStateAsync();
         }
@@ -535,6 +523,17 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         }
 
         await ConfigStore.DeleteEventDraftStateAsync(eventData.ProjectId);
+        ResetPerEventDefaults(eventData.EventTitle);
+
+        await ApplyLoadedEventAsync(eventData, loadSavedDraft: false);
+        SetBanner("Nullstilte lagrede valg for dette arrangementet.", isError: false);
+    }
+
+    /// <summary>
+    /// Resets every per-event choice to the defaults from Settings.
+    /// </summary>
+    private void ResetPerEventDefaults(string? eventTitle)
+    {
         selectedProjectId = null;
         projectEditedBeforeLoad = false;
         incomeAccount = settings.DefaultIncomeAccount;
@@ -543,14 +542,66 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         daysUntilDueDate = settings.DefaultDaysUntilDueDate;
         ourReference = settings.DefaultOurReference;
         orderReferencePrefix = string.Empty;
-        invoiceText = $"Deltakeravgift – {eventData.EventTitle}";
+        invoiceText = eventTitle is null ? string.Empty : $"Deltakeravgift – {eventTitle}";
         billingMode = BillingMode.PerScoutGroup;
         groupLineMode = GroupLineMode.OneLinePerParticipant;
         filters = new ParticipantFilterOptions();
-
-        await ApplyLoadedEventAsync(eventData, loadSavedDraft: false);
-        SetBanner("Nullstilte lagrede valg for dette arrangementet.", isError: false);
     }
+
+    /// <summary>
+    /// Applies the saved invoice fields. Fiken-specific choices (project, income account, bank account)
+    /// are only restored when they were saved for the current Fiken company and still exist there.
+    /// Returns whether the saved state belongs to the current company.
+    /// </summary>
+    private bool ApplySavedInvoiceFields(SavedEventDraftState saved)
+    {
+        var companyMatches = string.IsNullOrWhiteSpace(saved.FikenCompanySlug)
+            || string.Equals(saved.FikenCompanySlug, selectedCompanySlug, StringComparison.OrdinalIgnoreCase);
+
+        if (companyMatches)
+        {
+            selectedProjectId = saved.FikenProjectId is { } savedProjectId
+                && (projects.Count == 0 || projects.Any(p => p.ProjectId == savedProjectId))
+                    ? savedProjectId
+                    : null;
+
+            if (!string.IsNullOrWhiteSpace(saved.IncomeAccount)
+                && (incomeAccounts.Count == 0 || incomeAccounts.Any(a => a.Code == saved.IncomeAccount)))
+            {
+                incomeAccount = saved.IncomeAccount;
+            }
+
+            if (!string.IsNullOrWhiteSpace(saved.BankAccountNumber)
+                && (bankAccounts.Count == 0 || bankAccounts.Any(b => b.BankAccountNumber == saved.BankAccountNumber)))
+            {
+                bankAccountNumber = saved.BankAccountNumber;
+            }
+        }
+        else
+        {
+            selectedProjectId = null;
+        }
+
+        // An issue date in the past is almost always stale: keep today's date instead.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (saved.IssueDate is { } savedIssueDate && savedIssueDate >= today)
+        {
+            issueDate = savedIssueDate;
+        }
+
+        if (saved.DaysUntilDueDate.HasValue)
+        {
+            daysUntilDueDate = saved.DaysUntilDueDate.Value;
+        }
+
+        invoiceText = saved.InvoiceText ?? string.Empty;
+        ourReference = saved.OurReference ?? string.Empty;
+        orderReferencePrefix = saved.OrderReferencePrefix ?? string.Empty;
+        return companyMatches;
+    }
+
+    private static string? NullIfEmpty(string value)
+        => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private Task HandleBillingModeChanged(BillingMode mode)
     {
@@ -742,6 +793,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             {
                 ProjectId = eventData.ProjectId,
                 SavedAtUtc = DateTimeOffset.UtcNow,
+                FormatVersion = SavedEventDraftState.CurrentFormatVersion,
+                FikenCompanySlug = NullIfEmpty(selectedCompanySlug),
                 FikenProjectId = selectedProjectId,
                 IncomeAccount = incomeAccount,
                 BankAccountNumber = bankAccountNumber,
@@ -779,15 +832,16 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
         isSubmittingDrafts = true;
         var token = ResetSubmitToken();
+        var companySlug = selectedCompanySlug;
 
         try
         {
             var created = await FikenClient.CreateCustomerAsync(
-                selectedCompanySlug,
+                companySlug,
                 new FikenCreateContactRequest(args.Name, args.Email, Customer: true),
                 token);
 
-            customers = (await FikenClient.GetCustomersAsync(selectedCompanySlug, token)).ToList();
+            customers = (await FikenClient.GetCustomersAsync(companySlug, token)).ToList();
             if (created.Id.HasValue)
             {
                 manualRecipientContactIds[args.DraftKey] = created.Id.Value;
@@ -835,6 +889,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         bannerMessage = null;
         var token = ResetSubmitToken();
         var options = BuildPlanOptions();
+        // Capture the company once: every draft in this run must go to the company the plan was built for.
+        var companySlug = selectedCompanySlug;
 
         try
         {
@@ -844,7 +900,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 try
                 {
                     var request = InvoicePlanBuilder.ToFikenRequest(draft, options);
-                    var created = await FikenClient.CreateInvoiceDraftAsync(selectedCompanySlug, request, token);
+                    var created = await FikenClient.CreateInvoiceDraftAsync(companySlug, request, token);
                     creationResults.Add(new DraftCreationItemResult(
                         draft.DraftKey,
                         draft.RecipientName,
@@ -864,11 +920,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 }
             }
 
-            var draftsInFiken = await FikenClient.GetInvoiceDraftsAsync(selectedCompanySlug, token);
-            existingDraftOrderReferences = draftsInFiken
-                .Where(d => !string.IsNullOrWhiteSpace(d.OrderReference))
-                .Select(d => d.OrderReference!.Trim())
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            existingDrafts = (await FikenClient.GetInvoiceDraftsAsync(companySlug, token)).ToList();
 
             var okCount = creationResults.Count(r => r.Success);
             var errCount = creationResults.Count - okCount;
@@ -920,7 +972,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             BuildPlanOptions(),
             customers,
             mappings.GroupNameToContactId,
-            existingDraftOrderReferences);
+            existingDrafts);
     }
 
     private void SetBanner(string message, bool isError)

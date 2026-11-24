@@ -67,8 +67,21 @@ public sealed class MappingsData
 
 public sealed class SavedEventDraftState
 {
+    /// <summary>
+    /// Version 2 and later save only category prices the user typed in. Older files also hold the
+    /// prices that were detected automatically. A file without this field reads as 0.
+    /// </summary>
+    public const int CurrentFormatVersion = 2;
+
+    public int FormatVersion { get; set; }
     public string ProjectId { get; set; } = string.Empty;
     public DateTimeOffset SavedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// The Fiken company the Fiken-specific choices (project, accounts, customers) were made in.
+    /// Null for drafts saved before this was tracked.
+    /// </summary>
+    public string? FikenCompanySlug { get; set; }
     public long? FikenProjectId { get; set; }
     public string? IncomeAccount { get; set; }
     public string? BankAccountNumber { get; set; }
@@ -390,7 +403,20 @@ public sealed class LocalConfigStore : ILocalConfigStore
         await _gate.WaitAsync(ct);
         try
         {
-            var raw = await ReadJsonAsync<SavedEventDraftState>(GetDraftPath(projectId), ct);
+            var path = GetDraftPath(projectId);
+            SavedEventDraftState? raw;
+            try
+            {
+                raw = await ReadJsonAsync<SavedEventDraftState>(path, ct);
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                // A damaged or incompatible draft file must not break loading the event. Move it aside
+                // so it can be inspected, and treat the event as having no saved choices.
+                QuarantineUnreadableFile(path);
+                return null;
+            }
+
             return raw is null ? null : NormalizeDraftState(raw, projectId.Trim());
         }
         finally
@@ -517,8 +543,10 @@ public sealed class LocalConfigStore : ILocalConfigStore
 
         return new SavedEventDraftState
         {
+            FormatVersion = source.FormatVersion,
             ProjectId = projectId,
             SavedAtUtc = source.SavedAtUtc,
+            FikenCompanySlug = string.IsNullOrWhiteSpace(source.FikenCompanySlug) ? null : source.FikenCompanySlug.Trim(),
             FikenProjectId = source.FikenProjectId,
             IncomeAccount = string.IsNullOrWhiteSpace(source.IncomeAccount) ? null : source.IncomeAccount.Trim(),
             BankAccountNumber = string.IsNullOrWhiteSpace(source.BankAccountNumber) ? null : source.BankAccountNumber.Trim(),
@@ -609,6 +637,22 @@ public sealed class LocalConfigStore : ILocalConfigStore
             GroupNameToContactId = dict,
             SavedEvents = events
         };
+    }
+
+    private static void QuarantineUnreadableFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+                File.Move(path, $"{path}.corrupt-{stamp}", overwrite: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best effort only: the file may be locked. It will be overwritten on the next save.
+        }
     }
 
     private static async Task<T?> ReadJsonAsync<T>(string path, CancellationToken ct)

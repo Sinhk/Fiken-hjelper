@@ -98,7 +98,7 @@
 
     @foreach (var draft in Plan.Drafts)
     {
-        var cardStatus = draft.DuplicateOrderReferenceExists
+        var cardStatus = draft.DuplicateDraftExists
             ? "duplicate"
             : (!draft.SelectedContactId.HasValue ? "unmatched" : "ok");
         var customerSelectId = $"cust-{draft.DraftKey}";
@@ -118,7 +118,7 @@
                                 Ordrenr: @draft.OrderReference
                             </span>
                         }
-                        @if (draft.DuplicateOrderReferenceExists)
+                        @if (draft.DuplicateDraftExists)
                         {
                             <span class="fh-badge fh-badge-danger">Finnes allerede i Fiken-utkast</span>
                         }

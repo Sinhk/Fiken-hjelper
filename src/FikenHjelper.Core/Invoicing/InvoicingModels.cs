@@ -75,7 +75,7 @@ public sealed record PlannedInvoiceDraft(
     IReadOnlyList<PlannedInvoiceLine> Lines,
     IReadOnlyList<string> ParticipantKeys,
     long TotalOre,
-    bool DuplicateOrderReferenceExists,
+    bool DuplicateDraftExists,
     IReadOnlyList<string> Warnings)
 {
     public decimal TotalNok => TotalOre / 100m;
