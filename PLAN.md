@@ -83,12 +83,13 @@ FikenHjelper.slnx
   - Eksport til ferdig formatert **Excel-fil (`.xlsx`)** med tre faner: *Budsjettoversikt*, *Kontroll (ufordelte/ukoblede)* og *Bilagsdetaljer*.
 
 **Status for første versjon:**
-- Fiken: `journalEntries` hentes per år (dato fra/til). Hver posteringslinje har `account` og `projectId`. Regnskap per prosjekt = −(sum av linjer på konto 3000–8799). 88xx/89xx holdes utenfor så årsavslutningen ikke nuller resultatet. *Fortegn og summer må verifiseres mot ekte data: 2025 skal gi 50 254,29.*
+- Fiken: `journalEntries` hentes per år (dato fra/til). Hver posteringslinje har `account` og `projectId`. Regnskap per prosjekt = −(sum av linjer på konto 3000–8799). 88xx/89xx holdes utenfor så årsavslutningen ikke nuller resultatet. *Verifisert mot ekte Fiken-data (24.11.2026): fortegnet stemmer, 2025 gir 50 254,29 på øret, og alle prosjektsummer stemmer med regnearket. Regelen ligger i `BudgetReportBuilder.TryGetResultAmount`/`PrimaryProjectId` og gjenbrukes av Fase 4.*
 - Budsjett lagres i `budgets.json` i datamappen. En post har ett felt for beløp (inntekt positiv, kostnad negativ), Fiken-prosjekter per år og eventuelt manuelt regnskapstall (for år før prosjekter ble brukt i Fiken, f.eks. 2024).
 - Import fra Google Sheets-arket «Sammenstilling av budsjett og regnskap» (.xlsx): oversiktsarket gir poster og beløp, arkene «Regnskap ÅÅÅÅ» gir prosjektkoblinger (navn matches mot Fiken-prosjekter). Pivotene fra Google Sheets har ugyldige relasjoner som ryddes bort før lesing.
 - Sider: `/budsjett` (flere år side om side, utvidbare rader per prosjekt, kontroll per år) og `/budsjett/oppsett` (redigering, kopier fra forrige år, import).
 - Eksport: `/budsjett/eksport?year=ÅÅÅÅ&years=N` med fanene *Budsjettoversikt*, *Prosjekter* og *Kontroll*.
-- Gjenstår: verifisering mot ekte Fiken-data, drill-down til enkeltbilag, eventuelt kopiering av tabellen til Word/Docs, og på sikt direkte kobling mot Google Sheets-arket.
+- Kjent: importen matcher prosjekter på navn, så omdøpte prosjekter (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse» i Fiken) må kobles manuelt. Importen varsler om dette.
+- Gjenstår: drill-down til enkeltbilag, eventuelt kopiering av tabellen til Word/Docs, og på sikt direkte kobling mot Google Sheets-arket.
 
 ---
 
