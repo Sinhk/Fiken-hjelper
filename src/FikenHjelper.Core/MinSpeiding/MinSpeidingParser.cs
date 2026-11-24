@@ -15,6 +15,8 @@ public static partial class MinSpeidingParser
 
     private static readonly string[] PriceExtensionKeys =
     [
+        "fee_amount",
+        "total_amount",
         "fee",
         "total_fee",
         "price",
@@ -118,7 +120,9 @@ public static partial class MinSpeidingParser
             .Select(g =>
             {
                 var first = g.First();
-                var suggested = g.Select(p => p.DetectedPriceNok).FirstOrDefault(p => p.HasValue);
+                var suggested = g.Where(p => !p.Cancelled).Select(p => p.DetectedPriceNok).FirstOrDefault(p => p > 0m)
+                    ?? g.Select(p => p.DetectedPriceNok).FirstOrDefault(p => p > 0m)
+                    ?? g.Select(p => p.DetectedPriceNok).FirstOrDefault(p => p.HasValue);
                 return new FeeCategorySummary(
                     Key: g.Key,
                     FeeId: first.FeeId,
@@ -205,7 +209,7 @@ public static partial class MinSpeidingParser
             }
 
             var trimmed = rawName.Trim();
-            if (string.Equals(trimmed, UnknownGroupName, StringComparison.OrdinalIgnoreCase))
+            if (IsIgnoredGroupName(trimmed))
             {
                 return;
             }
@@ -491,6 +495,13 @@ public static partial class MinSpeidingParser
         return decimal.TryParse(value.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out _);
     }
 
+    private static bool IsIgnoredGroupName(string value)
+        => string.Equals(value, UnknownGroupName, StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("deprecated", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("deprecated - use", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("use group_registration_info", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("use primary_membership_info", StringComparison.OrdinalIgnoreCase);
+
     private static readonly string[] GroupLabelKeys = ["groups", "group"];
 
     private static readonly HashSet<string> SkippedExtensionGroupKeys = new(PriceExtensionKeys, StringComparer.OrdinalIgnoreCase)
@@ -498,7 +509,18 @@ public static partial class MinSpeidingParser
         "pc_details",
         "pc_courses",
         "ssno",
-        "sex"
+        "sex",
+        "date_of_birth",
+        "district_id",
+        "district_name",
+        "group_id",
+        "group_name",
+        "org_id",
+        "org_name",
+        "patrol_id",
+        "patrol_name",
+        "extra_purchases",
+        "purchase_amount"
     };
 
     private static readonly HashSet<string> PureIdGroupKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -554,30 +576,51 @@ public static partial class MinSpeidingParser
         string feeLabel,
         Dictionary<string, JsonElement>? extensionData)
     {
+        var sawZero = false;
         if (extensionData is not null)
         {
             foreach (var priceKey in PriceExtensionKeys)
             {
                 var entry = extensionData.FirstOrDefault(kv =>
                     kv.Key.Equals(priceKey, StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrEmpty(entry.Key))
+                if (!string.IsNullOrEmpty(entry.Key)
+                    && TryExtractDecimalElement(entry.Value, out var parsed)
+                    && parsed >= 0m)
                 {
-                    if (entry.Value.ValueKind == JsonValueKind.Number && entry.Value.TryGetDecimal(out var dec) && dec >= 0)
+                    if (parsed > 0m)
                     {
-                        return dec;
+                        return parsed;
                     }
 
-                    if (entry.Value.ValueKind == JsonValueKind.String
-                        && TryParseNorwegianDecimal(entry.Value.GetString(), out var strDec)
-                        && strDec >= 0)
-                    {
-                        return strDec;
-                    }
+                    sawZero = true;
                 }
             }
         }
 
-        return TryExtractPriceNokFromLabel(feeLabel);
+        var fromLabel = TryExtractPriceNokFromLabel(feeLabel);
+        if (fromLabel.HasValue)
+        {
+            return fromLabel.Value;
+        }
+
+        return sawZero ? 0m : null;
+    }
+
+    private static bool TryExtractDecimalElement(JsonElement element, out decimal value)
+    {
+        value = 0m;
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetDecimal(out value))
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String
+            && TryParseNorwegianDecimal(element.GetString(), out value))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static Dictionary<string, string> ExtractExtraFields(
@@ -680,9 +723,9 @@ public static partial class MinSpeidingParser
     private static string? TrimOrNull(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    [GeneratedRegex(@"(\d+(?:[.,]\d{1,2})?)\s*(?:,-|kr\b|nok\b)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b((?:\d{1,3}(?:\s\d{3})+|\d+)(?:[.,]\d{1,2})?)\s*(?:,-|kr\b|nok\b)", RegexOptions.IgnoreCase)]
     private static partial Regex SuffixCurrencyRegex();
 
-    [GeneratedRegex(@"(?:kr\.?|nok)\s*(\d+(?:[.,]\d{1,2})?)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:kr\.?|nok)\s*((?:\d{1,3}(?:\s\d{3})+|\d+)(?:[.,]\d{1,2})?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex PrefixCurrencyRegex();
 }

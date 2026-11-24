@@ -7,7 +7,7 @@
             <caption id="fee-table-caption">3. Priser og inkludering per deltakerkategori</caption>
             <thead>
                 <tr>
-                    <th>Kategori i Min speiding</th>
+                    <th>Kategori / navn på faktura</th>
                     <th>Inkluder</th>
                     <th class="fh-num-col">Aktive deltakere</th>
                     <th class="fh-num-col">Oppdaget sats</th>
@@ -20,31 +20,75 @@
                     var currentPrice = CategoryPrices.TryGetValue(category.Key, out var configured)
                         ? configured
                         : (category.SuggestedPriceNok ?? 0m);
+                    var currentLabel = CategoryLabels is not null
+                        && CategoryLabels.TryGetValue(category.Key, out var customLabel)
+                        && !string.IsNullOrWhiteSpace(customLabel)
+                        ? customLabel
+                        : category.Label;
+                    var isRenamed = !string.Equals(currentLabel.Trim(), category.Label.Trim(), StringComparison.Ordinal);
+                    var differsFromSuggested = category.SuggestedPriceNok is { } suggestedPrice
+                        && currentPrice != suggestedPrice;
                     var isIncluded = !ExcludedCategoryKeys.Contains(category.Key);
+                    var labelInputId = $"cat-label-{category.Key.Replace(':', '-')}";
                     var inputId = $"cat-price-{category.Key.Replace(':', '-')}";
                     var includeId = $"cat-inc-{category.Key.Replace(':', '-')}";
 
                     <tr @key="category.Key">
                         <th scope="row">
-                            @category.Label
-                            @if (currentPrice <= 0m)
-                            {
-                                <span class="fh-badge fh-badge-neutral ms-1">Gratis</span>
-                            }
+                            <div class="fh-category-cell">
+                                <label for="@labelInputId" class="visually-hidden">Navn på faktura for @category.Label</label>
+                                <input id="@labelInputId"
+                                       type="text"
+                                       class="fh-category-name-input"
+                                       value="@currentLabel"
+                                       placeholder="@category.Label"
+                                       maxlength="120"
+                                       @onchange="(e) => HandleLabelChanged(category.Key, category.Label, e)" />
+                                @if (isRenamed || currentPrice <= 0m)
+                                {
+                                    <div class="fh-group-badges">
+                                        @if (isRenamed)
+                                        {
+                                            <span class="fh-hint">Fra Min speiding: @category.Label</span>
+                                        }
+                                        @if (currentPrice <= 0m)
+                                        {
+                                            <span class="fh-badge fh-badge-neutral">Gratis</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
                         </th>
                         <td>
                             <input id="@includeId"
                                    type="checkbox"
-                                   aria-label="Inkluder kategori @category.Label"
+                                   aria-label="Inkluder kategori @currentLabel"
                                    checked="@isIncluded"
                                    @onchange="(e) => HandleIncludeChanged(category.Key, e)" />
                         </td>
                         <td class="fh-num-col">@category.ParticipantCount</td>
                         <td class="fh-num-col">
-                            @(category.SuggestedPriceNok.HasValue ? $"{category.SuggestedPriceNok.Value:N2} kr" : "Ikke funnet")
+                            @if (category.SuggestedPriceNok is { } detectedRate)
+                            {
+                                <div class="fh-rate-cell">
+                                    <span>@($"{detectedRate:N2} kr")</span>
+                                    @if (differsFromSuggested)
+                                    {
+                                        <button type="button"
+                                                class="btn btn-outline-secondary btn-sm"
+                                                @onclick="() => UseSuggestedPriceAsync(category.Key, detectedRate)">
+                                            Bruk oppdaget
+                                        </button>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <span>Ikke funnet</span>
+                            }
                         </td>
                         <td class="fh-num-col">
-                            <label for="@inputId" class="visually-hidden">Pris i kroner for @category.Label</label>
+                            <label for="@inputId" class="visually-hidden">Pris i kroner for @currentLabel</label>
                             <input id="@inputId"
                                    type="number"
                                    step="0.01"
@@ -62,9 +106,11 @@
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<FeeCategorySummary> Categories { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, decimal> CategoryPrices { get; set; } = new Dictionary<string, decimal>();
+    [Parameter] public IReadOnlyDictionary<string, string>? CategoryLabels { get; set; }
     [Parameter, EditorRequired] public IReadOnlySet<string> ExcludedCategoryKeys { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     [Parameter] public EventCallback<(string CategoryKey, decimal PriceNok)> OnCategoryPriceChanged { get; set; }
+    [Parameter] public EventCallback<(string CategoryKey, string? Label)> OnCategoryLabelChanged { get; set; }
     [Parameter] public EventCallback<(string CategoryKey, bool Included)> OnCategoryIncludeChanged { get; set; }
 
     private Task HandlePriceChanged(string categoryKey, ChangeEventArgs e)
@@ -76,6 +122,20 @@
         }
 
         return Task.CompletedTask;
+    }
+
+    private Task UseSuggestedPriceAsync(string categoryKey, decimal suggestedPriceNok)
+        => OnCategoryPriceChanged.InvokeAsync((categoryKey, suggestedPriceNok));
+
+    private Task HandleLabelChanged(string categoryKey, string originalLabel, ChangeEventArgs e)
+    {
+        var trimmed = (e.Value?.ToString() ?? string.Empty).Trim();
+        var nextLabel = string.IsNullOrWhiteSpace(trimmed)
+            || string.Equals(trimmed, originalLabel.Trim(), StringComparison.Ordinal)
+            ? null
+            : trimmed;
+
+        return OnCategoryLabelChanged.InvokeAsync((categoryKey, nextLabel));
     }
 
     private Task HandleIncludeChanged(string categoryKey, ChangeEventArgs e)

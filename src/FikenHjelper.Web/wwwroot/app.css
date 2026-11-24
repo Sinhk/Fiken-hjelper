@@ -552,6 +552,34 @@ h1:focus {
     gap: 0.3rem;
 }
 
+.fh-category-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-inline-size: 13.5rem;
+}
+
+.fh-category-name-input {
+    inline-size: 100%;
+    font-weight: 600;
+    color: var(--fh-text);
+    background-color: #fff;
+}
+
+.fh-rate-cell {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.45rem;
+}
+
+@container (width < 600px) {
+    .fh-rate-cell {
+        justify-content: flex-start;
+    }
+}
+
 .validation-message {
     color: #b91c1c;
     font-size: 0.86rem;

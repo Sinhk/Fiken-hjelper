@@ -1,4 +1,5 @@
 using FikenHjelper.Core.Config;
+using FikenHjelper.Core.Invoicing;
 
 namespace FikenHjelper.Tests;
 
@@ -63,5 +64,86 @@ public sealed class LocalConfigStoreTests : IDisposable
         {
             Directory.Delete(_tempDir, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task SaveLoadAndDeleteEventDraftState_RoundTripsOverridesAndFilters()
+    {
+        var store = new LocalConfigStore(dataDirectory: _tempDir);
+
+        Assert.Null(await store.LoadEventDraftStateAsync("12345"));
+
+        var state = new SavedEventDraftState
+        {
+            ProjectId = "12345",
+            FikenProjectId = 777,
+            IncomeAccount = "3210",
+            BankAccountNumber = "12345678903",
+            IssueDate = new DateOnly(2026, 11, 24),
+            DaysUntilDueDate = 21,
+            InvoiceText = "Kretsleir 2026",
+            OurReference = "Kasserer",
+            OrderReferencePrefix = "KL26",
+            BillingMode = BillingMode.PerParticipant,
+            GroupLineMode = GroupLineMode.SummaryPerFeeCategory,
+            Filters = new ParticipantFilterOptions(
+                ExcludeCancelled: false,
+                RequireConfirmed: true,
+                RequireAttended: true,
+                ExcludeZeroPrice: true),
+            CategoryPricesNok = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["fee:101"] = 490.50m
+            },
+            CategoryLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["fee:101"] = "  Deltakeravgift speider  "
+            },
+            ExcludedCategoryKeys = ["fee:103"],
+            ParticipantOverrides = new Dictionary<string, ParticipantOverride>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["90003"] = new ParticipantOverride(
+                    Included: true,
+                    CustomPriceNok: 199.75m,
+                    CoveredByDistrict: true,
+                    CustomGroupName: "Aukra speidergruppe")
+            },
+            ManualRecipientContactIds = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["group:Molde speidergruppe"] = 5001
+            }
+        };
+
+        await store.SaveEventDraftStateAsync(state);
+
+        var loaded = await store.LoadEventDraftStateAsync("12345");
+        Assert.NotNull(loaded);
+        Assert.Equal("12345", loaded.ProjectId);
+        Assert.Equal(777, loaded.FikenProjectId);
+        Assert.Equal("3210", loaded.IncomeAccount);
+        Assert.Equal("12345678903", loaded.BankAccountNumber);
+        Assert.Equal(new DateOnly(2026, 11, 24), loaded.IssueDate);
+        Assert.Equal(21, loaded.DaysUntilDueDate);
+        Assert.Equal("Kretsleir 2026", loaded.InvoiceText);
+        Assert.Equal("Kasserer", loaded.OurReference);
+        Assert.Equal("KL26", loaded.OrderReferencePrefix);
+        Assert.Equal(BillingMode.PerParticipant, loaded.BillingMode);
+        Assert.Equal(GroupLineMode.SummaryPerFeeCategory, loaded.GroupLineMode);
+        Assert.False(loaded.Filters.ExcludeCancelled);
+        Assert.True(loaded.Filters.RequireConfirmed);
+        Assert.True(loaded.Filters.RequireAttended);
+        Assert.True(loaded.Filters.ExcludeZeroPrice);
+        Assert.Equal(490.50m, loaded.CategoryPricesNok["FEE:101"]);
+        Assert.Equal("Deltakeravgift speider", loaded.CategoryLabels["FEE:101"]);
+        Assert.Single(loaded.ExcludedCategoryKeys, "fee:103");
+        Assert.True(loaded.ParticipantOverrides.TryGetValue("90003", out var ov));
+        Assert.Equal(true, ov!.Included);
+        Assert.Equal(199.75m, ov.CustomPriceNok);
+        Assert.True(ov.CoveredByDistrict);
+        Assert.Equal("Aukra speidergruppe", ov.CustomGroupName);
+        Assert.Equal(5001, loaded.ManualRecipientContactIds["GROUP:MOLDE SPEIDERGRUPPE"]);
+
+        await store.DeleteEventDraftStateAsync("12345");
+        Assert.Null(await store.LoadEventDraftStateAsync("12345"));
     }
 }

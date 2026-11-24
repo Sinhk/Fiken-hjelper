@@ -42,7 +42,8 @@ public sealed record InvoiceDraftPlanOptions(
     string? InvoiceText,
     string? OurReference,
     string? OrderReferencePrefix,
-    IReadOnlySet<string>? ExcludedCategoryKeys = null);
+    IReadOnlySet<string>? ExcludedCategoryKeys = null,
+    IReadOnlyDictionary<string, string>? CategoryLabels = null);
 
 public sealed record DistrictCoveredParticipant(
     string ParticipantKey,

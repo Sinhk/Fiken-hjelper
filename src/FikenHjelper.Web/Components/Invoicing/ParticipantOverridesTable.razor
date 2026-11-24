@@ -138,7 +138,7 @@
                                 }
                             </div>
                         </td>
-                        <td>@participant.FeeLabel</td>
+                        <td>@InvoicePlanBuilder.ResolveEffectiveFeeLabel(participant, CategoryLabels)</td>
                         <td>
                             @if (participant.Cancelled)
                             {
@@ -237,6 +237,7 @@
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, decimal> CategoryPrices { get; set; } = new Dictionary<string, decimal>();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, ParticipantOverride> Overrides { get; set; } = new Dictionary<string, ParticipantOverride>();
     [Parameter, EditorRequired] public IReadOnlySet<string> ExcludedCategoryKeys { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    [Parameter] public IReadOnlyDictionary<string, string>? CategoryLabels { get; set; }
     [Parameter] public IReadOnlyList<string> KnownGroupNames { get; set; } = [];
 
     [Parameter] public EventCallback<(string ParticipantKey, bool? Included)> OnIncludeChanged { get; set; }
@@ -264,6 +265,7 @@
                 || InvoicePlanBuilder.ResolveEffectiveGroupName(p, Overrides).Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
                 || p.GroupName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
                 || p.AvailableGroups.Any(g => g.GroupName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
+                || InvoicePlanBuilder.ResolveEffectiveFeeLabel(p, CategoryLabels).Contains(searchQuery, StringComparison.OrdinalIgnoreCase)
                 || p.FeeLabel.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
@@ -309,9 +311,14 @@
                 continue;
             }
 
-            var sample = EventData.Participants
-                .Select(p => p.ExtraFields.TryGetValue(fieldName, out var val) ? val : null)
-                .FirstOrDefault(val => !string.IsNullOrWhiteSpace(val));
+            var nonEmptyValues = EventData.Participants
+                .Select(p => p.ExtraFields.TryGetValue(fieldName, out var val) ? val?.Trim() : null)
+                .Where(val => !string.IsNullOrWhiteSpace(val))
+                .Cast<string>()
+                .ToList();
+
+            var sample = nonEmptyValues.FirstOrDefault(v => !TrivialDiagnosticValues.Contains(v))
+                ?? nonEmptyValues.FirstOrDefault();
 
             if (string.IsNullOrWhiteSpace(sample))
             {
@@ -319,7 +326,7 @@
             }
             else
             {
-                var compact = sample.Trim();
+                var compact = sample;
                 if (compact.Length > 120)
                 {
                     compact = compact[..119] + "…";
@@ -331,6 +338,17 @@
 
         return string.Join(", ", parts);
     }
+
+    private static readonly HashSet<string> TrivialDiagnosticValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "0",
+        "0.0",
+        "0.00",
+        "[]",
+        "{}",
+        "false",
+        "null"
+    };
 
     private static bool IsSensitiveDiagnosticKey(string key)
         => SensitiveDiagnosticFragments.Any(f => key.Contains(f, StringComparison.OrdinalIgnoreCase));

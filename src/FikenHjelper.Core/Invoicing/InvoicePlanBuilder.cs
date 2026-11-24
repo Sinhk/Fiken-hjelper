@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.MinSpeiding;
 
@@ -81,6 +80,20 @@ public static partial class InvoicePlanBuilder
         return participant.GroupName;
     }
 
+    public static string ResolveEffectiveFeeLabel(
+        EventParticipant participant,
+        IReadOnlyDictionary<string, string>? categoryLabels)
+    {
+        if (categoryLabels is not null
+            && categoryLabels.TryGetValue(participant.FeeCategoryKey, out var customLabel)
+            && !string.IsNullOrWhiteSpace(customLabel))
+        {
+            return customLabel.Trim();
+        }
+
+        return participant.FeeLabel;
+    }
+
     public static decimal ResolveEffectivePriceNok(
         EventParticipant participant,
         IReadOnlyDictionary<string, decimal> categoryPricesNok,
@@ -144,7 +157,7 @@ public static partial class InvoicePlanBuilder
                     FullName: displayName,
                     MemberNo: participant.MemberNo,
                     GroupName: ResolveEffectiveGroupName(participant, options.ParticipantOverrides),
-                    FeeLabel: participant.FeeLabel,
+                    FeeLabel: ResolveEffectiveFeeLabel(participant, options.CategoryLabels),
                     AmountNok: amountNok,
                     AmountOre: amountOre));
                 continue;
@@ -259,13 +272,12 @@ public static partial class InvoicePlanBuilder
 
     public static string BuildOrderReference(string? prefix, string projectId, string key)
     {
-        var basePrefix = string.IsNullOrWhiteSpace(prefix)
-            ? $"MS-{projectId}"
-            : prefix.Trim();
+        if (string.IsNullOrWhiteSpace(prefix))
+        {
+            return string.Empty;
+        }
 
-        var sanitizedKey = SanitizeReferenceSlug(key);
-        var combined = $"{basePrefix}-{sanitizedKey}";
-        return Truncate(combined, MaxOrderReferenceLength);
+        return Truncate(prefix.Trim(), MaxOrderReferenceLength);
     }
 
     private static List<PlannedInvoiceDraft> BuildPerGroupDrafts(
@@ -326,7 +338,7 @@ public static partial class InvoicePlanBuilder
             var recipientKey = $"participant:{participant.ParticipantKey}";
             var priceNok = ResolveEffectivePriceNok(participant, options.CategoryPricesNok, options.ParticipantOverrides);
             var priceOre = CurrencyHelper.ToOre(priceNok);
-            var description = Truncate($"{eventData.EventTitle} – {participant.FeeLabel}", MaxFikenLineFieldLength);
+            var description = Truncate($"{eventData.EventTitle} – {ResolveEffectiveFeeLabel(participant, options.CategoryLabels)}", MaxFikenLineFieldLength);
             var effectiveGroupName = ResolveEffectiveGroupName(participant, options.ParticipantOverrides);
             var comment = string.Equals(effectiveGroupName, "Uten gruppe", StringComparison.OrdinalIgnoreCase)
                 ? null
@@ -377,7 +389,7 @@ public static partial class InvoicePlanBuilder
             var priceNok = ResolveEffectivePriceNok(member, options.CategoryPricesNok, options.ParticipantOverrides);
             var priceOre = CurrencyHelper.ToOre(priceNok);
             var name = string.IsNullOrWhiteSpace(member.FullName) ? $"Medlem {member.MemberNo}" : member.FullName;
-            var description = Truncate($"{name} ({member.FeeLabel})", MaxFikenLineFieldLength);
+            var description = Truncate($"{name} ({ResolveEffectiveFeeLabel(member, options.CategoryLabels)})", MaxFikenLineFieldLength);
             var comment = TruncateOrNull(
                 member.MemberNo.HasValue ? $"{eventTitle} – Medl.nr {member.MemberNo.Value}" : eventTitle,
                 MaxFikenLineFieldLength);
@@ -417,7 +429,7 @@ public static partial class InvoicePlanBuilder
             var unitPriceOre = CurrencyHelper.ToOre(first.PriceNok);
             var totalOre = unitPriceOre * count;
             var names = string.Join(", ", bucket.Select(x => x.Member.FullName).Where(n => !string.IsNullOrWhiteSpace(n)));
-            var description = Truncate($"{first.Member.FeeLabel} – {eventTitle}", MaxFikenLineFieldLength);
+            var description = Truncate($"{ResolveEffectiveFeeLabel(first.Member, options.CategoryLabels)} – {eventTitle}", MaxFikenLineFieldLength);
             var comment = TruncateOrNull(string.IsNullOrWhiteSpace(names) ? null : $"Deltakere: {names}", MaxFikenLineFieldLength);
 
             lines.Add(new PlannedInvoiceLine(
@@ -468,12 +480,9 @@ public static partial class InvoicePlanBuilder
             matchReason = match.MatchReason;
         }
 
-        var slugSeed = options.BillingMode == BillingMode.PerScoutGroup
-            ? recipientName
-            : participants[0].ParticipantKey;
-
-        var orderReference = BuildOrderReference(options.OrderReferencePrefix, eventData.ProjectId, slugSeed);
-        var duplicateExists = existingDraftOrderReferences is not null
+        var orderReference = BuildOrderReference(options.OrderReferencePrefix, eventData.ProjectId, string.Empty);
+        var duplicateExists = !string.IsNullOrWhiteSpace(orderReference)
+            && existingDraftOrderReferences is not null
             && existingDraftOrderReferences.Contains(orderReference);
 
         var totalOre = lines.Sum(l => l.LineTotalOre);
@@ -516,33 +525,6 @@ public static partial class InvoicePlanBuilder
             Warnings: warnings);
     }
 
-    private static string SanitizeReferenceSlug(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return "ukjent";
-        }
-
-        var lower = input.Trim().ToLowerInvariant()
-            .Replace("æ", "ae")
-            .Replace("ø", "o")
-            .Replace("å", "a");
-
-        var normalized = lower.Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder(normalized.Length);
-        foreach (var ch in normalized)
-        {
-            var cat = CharUnicodeInfo.GetUnicodeCategory(ch);
-            if (cat != UnicodeCategory.NonSpacingMark)
-            {
-                sb.Append(ch);
-            }
-        }
-
-        var ascii = NonAlnumRegex().Replace(sb.ToString(), "-").Trim('-');
-        return string.IsNullOrEmpty(ascii) ? "ukjent" : ascii;
-    }
-
     private static string Truncate(string? value, int maxLength)
     {
         if (string.IsNullOrEmpty(value))
@@ -571,7 +553,4 @@ public static partial class InvoicePlanBuilder
 
     private static string? NullIfWhiteSpace(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
-    [GeneratedRegex(@"[^a-z0-9]+")]
-    private static partial Regex NonAlnumRegex();
 }
