@@ -91,6 +91,11 @@ FikenHjelper.slnx
 - Kjent: importen matcher prosjekter på navn, så omdøpte prosjekter (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse» i Fiken) må kobles manuelt. Importen varsler om dette.
 - Gjenstår: drill-down til enkeltbilag, eventuelt kopiering av tabellen til Word/Docs, og på sikt direkte kobling mot Google Sheets-arket.
 
+**Neste forbedringer (fra brukertest og verifisering 24.11.2026):**
+- **Prosjekt fordelt på flere budsjettposter:** Et prosjekt skal kunne kobles til flere poster, med en fordelingsnøkkel (f.eks. prosent eller faste beløp) som deler prosjektets resultat mellom postene. Summen av fordelingen må gå opp i 100 %. Kontrollen for «prosjekt koblet til flere poster» blir da en kontroll av at nøkkelen er satt og går opp. Gjelder rapport, eksport og import.
+- **Mer oversiktlig kobling i «Rediger budsjett»:** Med mange prosjekter er nedtrekkslisten tung å bruke. Vurder f.eks. søk/filter, skjule avsluttede og allerede koblede prosjekter, eller en egen visning med prosjekter i én kolonne og budsjettpost i en annen.
+- **Foreslå prosjekter etter navn:** Prosjekter som matcher eller nesten matcher budsjettpostens navn, og som ikke er koblet ennå, legges øverst i listen. Samme likhetsmatching brukes i importen: når et navn ikke finnes eksakt (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse»), foreslås nærmeste prosjekt i stedet for bare en advarsel.
+
 ---
 
 ## Fase 4 – MCP-server for AI-chat (`FikenHjelper.Mcp`)
