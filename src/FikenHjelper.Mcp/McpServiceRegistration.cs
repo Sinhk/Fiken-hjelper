@@ -1,6 +1,7 @@
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
+using FikenHjelper.Core.Purchasing;
 using FikenHjelper.Mcp.Safety;
 using FikenHjelper.Mcp.Services;
 using Microsoft.Extensions.Configuration;
@@ -17,8 +18,14 @@ public sealed class McpSettings
     /// <summary>Kommaseparert liste med foretak (slug) der kjøpsutkast kan opprettes selv om det ikke er testforetak.</summary>
     public string? AllowDraftsForCompany { get; set; }
 
-    /// <summary>MVA-type på kjøpsutkastlinjer. Standard NONE (kretsen er ikke MVA-registrert). Må verifiseres i testforetak.</summary>
-    public string PurchaseVatType { get; set; } = "NONE";
+    /// <summary>
+    /// Tillat kjøpsutkast i ekte foretak når klienten ikke støtter bekreftelsesdialog (elicitation). Da er klientens
+    /// godkjenning av verktøykall eneste vern mot at innhold i bilag lurer modellen. Standard false.
+    /// </summary>
+    public bool AllowDraftsWithoutElicitation { get; set; }
+
+    /// <summary>MVA-type på kjøpsutkastlinjer. Kretsen er ikke MVA-registrert, så bare NONE (netto = brutto) støttes.</summary>
+    public string PurchaseVatType => PurchaseDraftValidator.DefaultVatType;
 
     public IReadOnlySet<string> AllowedDraftCompanies =>
         (AllowDraftsForCompany ?? string.Empty)

@@ -33,7 +33,7 @@ public sealed class ContextTools(
             notes = new[]
             {
                 "Verktøyene oppretter aldri bokførte eller betalte kjøp, bare kjøpsutkast som må kontrolleres og bokføres i Fiken.",
-                "Budsjett- og regnskapstall bruker fortegnsregelen fra Fase 3 (inntekt positiv, kostnad negativ), som ennå ikke er verifisert mot ekte data."
+                "Budsjett- og regnskapstall: inntekt positiv, kostnad negativ (samme regel som budsjettrapporten i Fase 3, verifisert mot ekte Fiken-data)."
             }
         };
     });

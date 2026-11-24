@@ -84,14 +84,14 @@ public static class AnomalyFinder
 
     public static IEnumerable<Anomaly> OverduePurchases(IEnumerable<FikenPurchase> unpaidPurchases, DateOnly today) =>
         unpaidPurchases
-            .Where(p => !p.Deleted && !p.Paid && !p.Settled && ParseDate(p.DueDate) is { } due && due < today)
+            .Where(p => !p.Deleted && !p.Paid && !p.Settled && p.OutstandingAmount > 0 && ParseDate(p.DueDate) is { } due && due < today)
             .Select(p => new Anomaly(
                 AnomalyTypes.OverduePurchases,
                 High,
                 p.DueDate,
                 $"Ubetalt leverandørfaktura fra {p.Supplier?.Name ?? "ukjent leverandør"} forfalt {p.DueDate}" +
                 (p.Identifier is null ? "" : $" (fakturanr. {p.Identifier})"),
-                p.GrossAmount / 100m,
+                p.OutstandingAmount / 100m,
                 $"kjøp {p.PurchaseId}"));
 
     public static IEnumerable<Anomaly> OverdueSales(IEnumerable<FikenSale> unsettledSales, DateOnly today) =>

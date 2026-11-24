@@ -129,7 +129,7 @@ public sealed class InboxTools(FikenContextService context, IFikenPurchasingClie
             return new EmbeddedResourceBlock { Resource = BlobResourceContents.FromBytes(file.Content, uri, "application/pdf") };
         }
 
-        throw new McpException($"Filtypen {file.ContentType} støttes ikke. Åpne dokumentet i Fiken.");
+        return new TextContentBlock { Text = $"Filtypen {file.ContentType} kan ikke vises her. Åpne dokumentet i Fiken." };
     }
 
     internal static object ToEhfSummary(FikenEhfDocument d) => new

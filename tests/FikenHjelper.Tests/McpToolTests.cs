@@ -16,7 +16,12 @@ public sealed class McpPurchaseFlowTests : IDisposable
     private readonly FakeFikenApi _api = new();
     private readonly ManualTimeProvider _time = new(new DateTimeOffset(2026, 11, 24, 10, 0, 0, TimeSpan.Zero));
 
-    private PurchaseTools CreateTools(bool testCompany = true, string? allowList = null, PendingDraftStore? pending = null)
+    private PurchaseTools CreateTools(
+        bool testCompany = true,
+        string? allowList = null,
+        PendingDraftStore? pending = null,
+        bool allowWithoutElicitation = false,
+        bool inboxAlreadyUsed = false)
     {
         _api.Get("companies", $$"""[{"name":"Krets AS","slug":"test-as","hasApiAccess":true,"testCompany":{{(testCompany ? "true" : "false")}}}]""")
             .Get("companies/test-as/contacts/42", """{"contactId":42,"name":"Rema","supplier":true,"customer":false,"inactive":false}""")
@@ -24,7 +29,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
             .Get("companies/test-as/accounts", """[{"code":"6800","name":"Kontorrekvisita"}]""")
             .Get("companies/test-as/projects", """[{"projectId":7,"number":"7","name":"Landsleir 2026","completed":false}]""")
             .Get("companies/test-as/purchases/drafts", "[]")
-            .Get("companies/test-as/inbox/11", """{"documentId":11,"name":"Faktura Rema","filename":"rema.pdf","status":false}""")
+            .Get("companies/test-as/inbox/11", $$"""{"documentId":11,"name":"Faktura Rema","filename":"rema.pdf","status":{{(inboxAlreadyUsed ? "true" : "false")}}}""")
             .On(HttpMethod.Post, "companies/test-as/purchases/drafts", (_, _) =>
                 FakeFikenApi.Created("https://api.fiken.no/api/v2/companies/test-as/purchases/drafts/99"))
             .On(HttpMethod.Post, "companies/test-as/purchases/drafts/99/attachments", (_, _) =>
@@ -34,7 +39,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
         var client = _api.CreateClient(store);
         var cache = new FikenDataCache(_time);
         var context = new FikenContextService(store, client, cache);
-        var settings = new McpSettings { AllowDraftsForCompany = allowList };
+        var settings = new McpSettings { AllowDraftsForCompany = allowList, AllowDraftsWithoutElicitation = allowWithoutElicitation };
         return new PurchaseTools(
             context,
             new FikenLookups(client, client, cache),
@@ -105,12 +110,40 @@ public sealed class McpPurchaseFlowTests : IDisposable
     }
 
     [Fact]
-    public async Task RealCompanyOnAllowList_CanCreateDrafts()
+    public async Task RealCompanyOnAllowList_RequiresElicitationUnlessExplicitlyWaived()
     {
         var tools = CreateTools(testCompany: false, allowList: "annet-as, TEST-AS");
         var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20"));
         Assert.True(preview.GetProperty("writeAllowed").GetBoolean());
-        Assert.False(string.IsNullOrEmpty(preview.GetProperty("confirmationToken").GetString()));
+        var token = preview.GetProperty("confirmationToken").GetString();
+        Assert.False(string.IsNullOrEmpty(token));
+
+        // Uten bekreftelsesdialog (server = null betyr ingen elicitation) avvises opprettelsen i ekte foretak.
+        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!));
+        Assert.Contains("elicitation", ex.Message);
+        Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public async Task RealCompanyOnAllowList_WithElicitationWaived_CanCreate()
+    {
+        var tools = CreateTools(testCompany: false, allowList: "test-as", allowWithoutElicitation: true);
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20"));
+
+        var created = ToJson(await tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!));
+        Assert.Equal(99, created.GetProperty("draftId").GetInt64());
+    }
+
+    [Fact]
+    public async Task DocumentUsedSincePreview_AbortsBeforeCreating()
+    {
+        var tools = CreateTools(inboxAlreadyUsed: true);
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42, issueDate: "2026-11-20"));
+        Assert.Contains(preview.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.Contains("allerede brukt"));
+
+        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!));
+        Assert.Contains("brukt som bilag", ex.Message);
+        Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
     }
 
     [Fact]

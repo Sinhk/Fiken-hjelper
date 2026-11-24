@@ -17,7 +17,7 @@ public sealed class BudgetTools(
 {
     internal const string SignNote =
         "Fortegn: inntekt positiv, kostnad negativ (resultat = −beløp på konto 3000–8799, som i budsjettrapporten). " +
-        "Regelen er ikke verifisert mot ekte Fiken-data ennå; kontroller mot /budsjett i Fiken-hjelper Web før tallene brukes i styret.";
+        "Positivt avvik er gunstig.";
 
     [McpServerTool(Name = "get_budget_status", Title = "Budsjett mot regnskap", ReadOnly = true, Idempotent = true, OpenWorld = true)]
     [Description("Henter budsjett mot regnskap per budsjettpost (fra budsjettet i Fiken-hjelper og posteringer i Fiken), med avvik i kr og %, prosjekter per post og kontrolltall (ufordelte posteringer, ukoblede prosjekter). Kan vise flere år side om side.")]
@@ -188,6 +188,12 @@ public sealed class BudgetTools(
         if (exact.Count == 1)
         {
             return exact[0];
+        }
+
+        if (exact.Count > 1)
+        {
+            var ids = string.Join("; ", exact.Select(l => $"prosjekter {string.Join(", ", l.ProjectIds)}"));
+            throw new McpException($"Det finnes {exact.Count} budsjettposter som heter «{trimmed}» i {year} ({ids}). Bruk projectId i stedet.");
         }
 
         var partial = budgetYear.Lines.Where(l => l.Name.Contains(trimmed, StringComparison.CurrentCultureIgnoreCase)).ToList();

@@ -52,6 +52,6 @@ public sealed class FikenPrompts
         1. Kall get_budget_status og oppsummer totalt budsjett mot regnskap.
         2. Velg de 3–5 største avvikene og bruk explain_project_variance for å forklare dem kort (hvilke kontoer/posteringer).
         3. Kall find_accounting_anomalies og list det som bør ryddes før møtet (ufordelte posteringer, forfalte fakturaer, ubehandlede bilag).
-        Skriv i et format som er lett å lime inn i Word/Google Docs. Nevn at fortegnsregelen ikke er verifisert hvis verktøyene sier det.
+        Skriv i et format som er lett å lime inn i Word/Google Docs.
         """;
 }

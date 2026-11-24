@@ -85,6 +85,9 @@ public sealed record FikenPurchase(
 {
     /// <summary>Brutto i øre (sum av netto + mva på linjene).</summary>
     public long GrossAmount => (Lines ?? []).Sum(l => (l.NetPrice ?? 0) + (l.Vat ?? 0));
+
+    /// <summary>Utestående i øre: brutto minus registrerte betalinger (aldri under 0).</summary>
+    public long OutstandingAmount => Math.Max(0, GrossAmount - (Payments ?? []).Sum(p => p.Amount ?? 0));
 }
 
 public sealed record FikenSale(

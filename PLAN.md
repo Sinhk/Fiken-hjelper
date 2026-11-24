@@ -122,14 +122,15 @@ FikenHjelper.slnx
   - Bare kjøpsutkast (`cash=false`, `paid=false`). Bokføring og betaling finnes ikke i koden.
   - To steg: `preview_purchase_draft` gir et engangstoken (15 min), og `create_purchase_draft` tar bare tokenet.
   - Skriving er bare tillatt i testforetak eller i slugs listet i `Mcp__AllowDraftsForCompany`.
-  - Validering: konto i kontoplanen, prosjekt finnes, øre-avrunding, sum mot EHF, duplikat på fakturanummer, kreditnota og valuta.
+  - Bekreftelse via MCP-elicitation (dialog fra serveren, ikke via modellen) før opprettelse og vedlegg. I ekte foretak kreves elicitation, med mindre `Mcp__AllowDraftsWithoutElicitation=true`. Bilagets status sjekkes på nytt før opprettelse.
+  - Validering: konto i kontoplanen (balanse- og inntektskonto avvises), prosjekt finnes, øre-avrunding, sum mot EHF, leverandør mot EHF, duplikat på fakturanummer, kreditnota, valuta og MVA-type.
 - **Web og Mcp samtidig:**
   - Låsfiler i datamappen: `fiken-oauth.lock` hindrer at to prosesser fornyer token samtidig, og `fiken-api.lock` gir 1 kall om gangen og 260 ms mellomrom.
   - `config.lock` beskytter lese-endre-skrive av `config.json`.
   - Endringen ligger også i egen branch `kryssprosess-las` (PR mot `main`).
 - **Analyse:**
   - `ProjectVarianceExplainer` og `AnomalyFinder` bruker Fase 3-hjelperne `BudgetReportBuilder.TryGetResultAmount` og `PrimaryProjectId`, så fortegnet finnes ett sted.
-  - Tallene merkes «ikke verifisert» til Fase 3 er bekreftet mot ekte data.
+  - Fortegnsregelen er verifisert mot ekte Fiken-data i Fase 3-tråden (2025 stemmer på øret).
 - **Gjenstår:**
   - Test hele flyten mot testforetak på Kaladin. Kontroller MVA-type (`NONE`, netto = brutto) på kjøpsutkast, og at vedlegg via `?inboxDocumentId=` fungerer uten filinnhold.
   - EHF-stien er bare testet med falske data, fordi testforetak trolig ikke kan motta EHF.

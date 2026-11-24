@@ -51,6 +51,8 @@ dotnet run --project src/FikenHjelper.Web
 - Bare kjøpsutkast kan opprettes. Ingenting bokføres eller betales.
 - Hvert utkast forhåndsvises med `preview_purchase_draft` og opprettes bare med tokenet derfra, etter at du har sagt ja.
 - I et foretak som ikke er testforetak er serveren **kun lesende**, til du selv legger slugen inn i `Mcp__AllowDraftsForCompany`.
+- Støtter klienten elicitation, viser serveren en egen bekreftelsesdialog før utkastet opprettes. Da kan ikke tekst i et bilag lure AI-en til å opprette noe. I ekte foretak kreves denne dialogen, med mindre du setter `Mcp__AllowDraftsWithoutElicitation=true`.
+- Kjøpsutkast får MVA-type `NONE` (netto = brutto), siden kretsen ikke er MVA-registrert.
 
 Publiser serveren én gang (og etter oppdateringer). `dotnet run` kan skrive byggmeldinger til stdout og forstyrre protokollen.
 
@@ -81,7 +83,7 @@ Valgfrie miljøvariabler (`env`):
 |---|---|
 | `Mcp__CompanySlug` | Bruk et annet foretak enn web-appen, f.eks. testforetaket. Lagres ikke. |
 | `Mcp__AllowDraftsForCompany` | Kommaseparerte slugs der kjøpsutkast er tillatt selv om det ikke er testforetak (f.eks. kretsens ekte foretak, når du er klar). |
-| `Mcp__PurchaseVatType` | MVA-type på kjøpsutkast. Standard `NONE` (netto = brutto). |
+| `Mcp__AllowDraftsWithoutElicitation` | `true` tillater kjøpsutkast i ekte foretak selv om klienten ikke kan vise serverens bekreftelsesdialog (elicitation). Da er klientens godkjenning av verktøykallet eneste bekreftelse, så ikke velg «Always allow» for `create_purchase_draft`. |
 | `FikenHjelper__DataDirectory` | Annen datamappe enn `%LocalAppData%\FikenHjelper`. |
 
 Web-appen og MCP-serveren kan kjøre samtidig. Fornyelse av Fiken-innloggingen og grensen på 1 kall om gangen koordineres med låsfiler i datamappen. Du kan teste serveren med MCP Inspector: `npx @modelcontextprotocol/inspector <sti til FikenHjelper.Mcp.exe>`.

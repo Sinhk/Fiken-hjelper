@@ -288,21 +288,43 @@ public sealed class PurchaseTools(
     [Description("Oppretter kjøpsutkastet som ble forhåndsvist med preview_purchase_draft, og legger ved bilaget. Krever confirmationToken fra forhåndsvisningen og at brukeren har bekreftet. Utkastet blir IKKE bokført eller betalt.")]
     public Task<object> CreatePurchaseDraft(
         [Description("Token fra preview_purchase_draft (kan brukes én gang, gyldig i 15 min).")] string confirmationToken,
+        McpServer? server = null,
         CancellationToken ct = default) => ToolSupport.Run<object>(async () =>
     {
+        const string invalidToken = "Ukjent, brukt eller utløpt confirmationToken. Kall preview_purchase_draft på nytt og få ny bekreftelse fra brukeren.";
         await writeGuard.EnsureAllowedAsync(ct);
         var slug = await context.GetCompanySlugAsync(ct);
-        if (!pendingDrafts.TryTake(confirmationToken, out var pending) || pending is null)
+        if (!pendingDrafts.TryPeek(confirmationToken, out var preview) || preview is null)
         {
-            throw new McpException("Ukjent, brukt eller utløpt confirmationToken. Kall preview_purchase_draft på nytt og få ny bekreftelse fra brukeren.");
+            throw new McpException(invalidToken);
         }
 
-        if (!string.Equals(pending.CompanySlug, slug, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(preview.CompanySlug, slug, StringComparison.OrdinalIgnoreCase))
         {
             throw new McpException("Foretaket er endret siden forhåndsvisningen. Kall preview_purchase_draft på nytt.");
         }
 
-        var created = await purchasing.CreatePurchaseDraftAsync(slug, pending.Request, ct);
+        // Skrivevern + bekreftelse direkte fra brukeren (elicitation) med oppsummeringen fra forhåndsvisningen.
+        await writeGuard.EnsureAllowedAndConfirmedAsync(server, $"Opprette dette kjøpsutkastet i Fiken?\n\n{preview.Summary}", ct);
+
+        if (!pendingDrafts.TryTake(confirmationToken, out var pending) || pending is null)
+        {
+            throw new McpException(invalidToken);
+        }
+
+        // Bilaget kan ha blitt brukt i Fiken eller Web siden forhåndsvisningen.
+        await EnsureSourceStillUnusedAsync(slug, pending.Source, ct);
+
+        CreatedResourceResult created;
+        try
+        {
+            created = await purchasing.CreatePurchaseDraftAsync(slug, pending.Request, ct);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException)
+        {
+            throw new McpException(
+                "Fiken svarte ikke på opprettelsen. Utkastet kan likevel være opprettet: sjekk list_purchase_drafts før du prøver på nytt.", ex);
+        }
         string attachmentStatus;
         if (pending.Source is null)
         {
@@ -341,6 +363,7 @@ public sealed class PurchaseTools(
         [Description("Kjøpsutkastets draftId.")] long draftId,
         [Description("Innboksdokument som skal legges ved.")] long? inboxDocumentId = null,
         [Description("EHF-dokument som skal legges ved.")] long? ehfDocumentId = null,
+        McpServer? server = null,
         CancellationToken ct = default) => ToolSupport.Run<object>(async () =>
     {
         await writeGuard.EnsureAllowedAsync(ct);
@@ -357,9 +380,31 @@ public sealed class PurchaseTools(
             throw new McpException($"Fant ikke kjøpsutkast {draftId}. Vedlegg kan bare legges på kjøpsutkast.");
         }
 
+        await writeGuard.EnsureAllowedAndConfirmedAsync(server, $"Legge {source} ved kjøpsutkast {draftId} i Fiken? Dokumentet markeres som brukt.", ct);
+        await EnsureSourceStillUnusedAsync(slug, source, ct);
         await purchasing.AttachDocumentToPurchaseDraftAsync(slug, draftId, source, ct);
         return new { attached = true, draftId, document = source.ToString() };
     });
+
+    private async Task EnsureSourceStillUnusedAsync(string slug, PurchaseDocumentSource? source, CancellationToken ct)
+    {
+        if (source?.InboxDocumentId is { } inboxId)
+        {
+            var doc = await purchasing.GetInboxDocumentAsync(slug, inboxId, ct);
+            if (doc.Status)
+            {
+                throw new McpException($"Innboksdokument {inboxId} er brukt som bilag siden forhåndsvisningen. Ingenting er opprettet; sjekk i Fiken.");
+            }
+        }
+        else if (source?.EhfDocumentId is { } ehfId)
+        {
+            var ehf = await purchasing.GetEhfDocumentAsync(slug, ehfId, ct);
+            if (!string.Equals(ehf.Status, "unprocessed", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new McpException($"EHF-dokument {ehfId} har fått status «{ehf.Status}» siden forhåndsvisningen. Ingenting er opprettet; sjekk i Fiken.");
+            }
+        }
+    }
 
     private static string BuildSummary(
         ActiveCompany company,

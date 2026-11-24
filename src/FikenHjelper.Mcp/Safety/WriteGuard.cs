@@ -1,13 +1,26 @@
+using System.ComponentModel;
 using FikenHjelper.Mcp.Services;
 using ModelContextProtocol;
+using ModelContextProtocol.Server;
 
 namespace FikenHjelper.Mcp.Safety;
 
 public sealed record WriteDecision(bool Allowed, string Reason);
 
+/// <summary>Skjema for bekreftelsesdialogen (MCP elicitation) som vises direkte til brukeren.</summary>
+public sealed class ConfirmationForm
+{
+    [Description("Kryss av for å bekrefte")]
+    public bool Bekreft { get; set; }
+}
+
 /// <summary>
-/// Skrivevern: kjøpsutkast kan bare opprettes i testforetak, eller i foretak som brukeren eksplisitt har tillatt
-/// med <c>Mcp__AllowDraftsForCompany</c>. Standard for kretsens ekte regnskap er derfor kun lesing.
+/// Skrivevern:
+/// 1. Kjøpsutkast kan bare opprettes i testforetak, eller i foretak brukeren eksplisitt har tillatt med
+///    <c>Mcp__AllowDraftsForCompany</c>. Standard for kretsens ekte regnskap er derfor kun lesing.
+/// 2. Hvis klienten støtter elicitation, må brukeren bekrefte i en dialog fra serveren (ikke via modellen),
+///    så innhold i bilag ikke kan lure modellen til å opprette utkast. I ekte foretak kreves dette, med mindre
+///    brukeren har valgt <c>Mcp__AllowDraftsWithoutElicitation=true</c> og stoler på klientens godkjenning av verktøykall.
 /// </summary>
 public sealed class WriteGuard(McpSettings settings, FikenContextService context)
 {
@@ -42,5 +55,37 @@ public sealed class WriteGuard(McpSettings settings, FikenContextService context
         {
             throw new McpException(decision.Reason);
         }
+    }
+
+    /// <summary>Sjekker skrivevernet og ber brukeren bekrefte <paramref name="message"/> direkte.</summary>
+    public async Task EnsureAllowedAndConfirmedAsync(McpServer? server, string message, CancellationToken ct)
+    {
+        var company = await context.GetActiveCompanyAsync(ct);
+        var decision = Decide(company, settings.AllowedDraftCompanies);
+        if (!decision.Allowed)
+        {
+            throw new McpException(decision.Reason);
+        }
+
+        if (server?.ClientCapabilities?.Elicitation is not null)
+        {
+            var result = await server.ElicitAsync<ConfirmationForm>(message, cancellationToken: ct);
+            if (!result.IsAccepted || result.Content?.Bekreft != true)
+            {
+                throw new McpException("Brukeren bekreftet ikke i dialogen. Ingenting er opprettet i Fiken.");
+            }
+
+            return;
+        }
+
+        if (company.IsTestCompany || settings.AllowDraftsWithoutElicitation)
+        {
+            return;
+        }
+
+        throw new McpException(
+            "MCP-klienten støtter ikke bekreftelsesdialog (elicitation), og dette er ikke et testforetak. " +
+            "Opprett utkastet i Fiken, bruk en klient med elicitation, eller la brukeren selv sette " +
+            "Mcp__AllowDraftsWithoutElicitation=true for å stole på klientens godkjenning av verktøykall.");
     }
 }

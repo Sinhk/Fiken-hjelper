@@ -64,7 +64,7 @@ public sealed class PurchaseDraftValidatorTests
     }
 
     [Fact]
-    public void UnknownAccountAndProject_AreErrors_CompletedProjectAndNonExpenseAccountAreWarnings()
+    public void UnknownAccountAndProject_AreErrors_CompletedProjectIsWarning_BalanceAccountIsError()
     {
         var unknown = PurchaseDraftValidator.Validate(
             Input(new PurchaseDraftLineInput("x", "6999", 10, 999)),
@@ -73,11 +73,35 @@ public sealed class PurchaseDraftValidatorTests
         Assert.Contains(unknown.Errors, e => e.Contains("prosjekt 999"));
 
         var warnings = PurchaseDraftValidator.Validate(
-            Input(new PurchaseDraftLineInput("x", "1920:10001", 10, 3)),
+            Input(new PurchaseDraftLineInput("x", "6800", 10, 3)),
             Context(supplier: Supplier));
         Assert.True(warnings.IsValid);
         Assert.Contains(warnings.Warnings, w => w.Contains("avsluttet"));
-        Assert.Contains(warnings.Warnings, w => w.Contains("ikke en vanlig kostnadskonto"));
+
+        var balance = PurchaseDraftValidator.Validate(
+            Input(new PurchaseDraftLineInput("x", "1920:10001", 10, null)),
+            Context(supplier: Supplier));
+        Assert.False(balance.IsValid);
+        Assert.Contains(balance.Errors, e => e.Contains("balanse- eller inntektskonto"));
+    }
+
+    [Fact]
+    public void VatTypeOtherThanNone_IsError()
+    {
+        var context = Context(supplier: Supplier) with { VatType = "HIGH" };
+        var result = PurchaseDraftValidator.Validate(Input(new PurchaseDraftLineInput("x", "6800", 10, null)), context);
+        Assert.Contains(result.Errors, e => e.Contains("HIGH"));
+    }
+
+    [Fact]
+    public void SupplierDifferentFromEhf_GivesWarning()
+    {
+        var ehf = new FikenEhfDocument(22, "unprocessed", "invoice", "EHF-9", "2026-11-10", null, "Rema", null, 77,
+            1000, 0, 1000, null, "NOK", null, null, null, null, null, null, null);
+        var result = PurchaseDraftValidator.Validate(
+            new PurchaseDraftInput(PurchaseDocumentSource.Ehf(22), 42, null, null, null, null, [new PurchaseDraftLineInput("x", "6800", 10, null)]),
+            Context(ehf: ehf, supplier: Supplier));
+        Assert.Contains(result.Warnings, w => w.Contains("kontakt 77"));
     }
 
     [Fact]

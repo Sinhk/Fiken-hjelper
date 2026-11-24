@@ -64,7 +64,8 @@ public sealed class AnomalyFinderTests
         {
             new FikenPurchase(1, null, "A", "2026-10-01", "2026-10-15", "supplier", false, [new FikenOrderLine(null, "x", 10000, 0, "6800", "NONE", null)], Rema, "NOK", null, null, false, false),
             new FikenPurchase(2, null, "B", "2026-11-20", "2026-12-04", "supplier", false, null, Rema, "NOK", null, null, false, false),
-            new FikenPurchase(3, null, "C", "2026-10-01", "2026-10-15", "supplier", true, null, Rema, "NOK", null, null, false, true)
+            new FikenPurchase(3, null, "C", "2026-10-01", "2026-10-15", "supplier", true, null, Rema, "NOK", null, null, false, true),
+            new FikenPurchase(4, null, "D", "2026-10-01", "2026-10-15", "supplier", false, [new FikenOrderLine(null, "x", 10000, 0, "6800", "NONE", null)], Rema, "NOK", [new FikenPayment(1, "2026-10-10", 10000)], null, false, false)
         };
 
         var anomaly = Assert.Single(AnomalyFinder.OverduePurchases(purchases, Today));

@@ -33,6 +33,21 @@ public sealed class PendingDraftStore(TimeProvider time)
         return (token, expiresAt);
     }
 
+    /// <summary>Leser et utkast uten å bruke opp tokenet (for å vise bekreftelsesdialogen først).</summary>
+    public bool TryPeek(string? token, out PendingDraft? draft)
+    {
+        draft = null;
+        if (string.IsNullOrWhiteSpace(token)
+            || !_pending.TryGetValue(token.Trim(), out var found)
+            || found.ExpiresAt <= time.GetUtcNow())
+        {
+            return false;
+        }
+
+        draft = found;
+        return true;
+    }
+
     /// <summary>Henter og fjerner et utkast. Returnerer false hvis tokenet er ukjent, brukt eller utløpt.</summary>
     public bool TryTake(string? token, out PendingDraft? draft)
     {

@@ -46,6 +46,7 @@ public static partial class PurchaseDraftValidator
     public const int MaxTextLength = 200;
     public const int FirstExpenseAccount = 4000;
     public const int LastExpenseAccount = 7999;
+    public const int LastAllowedAccount = 8999;
 
     /// <summary>Kretsen er ikke MVA-registrert. Må verifiseres i testforetak før bruk mot ekte regnskap.</summary>
     public const string DefaultVatType = "NONE";
@@ -96,6 +97,11 @@ public static partial class PurchaseDraftValidator
         }
 
         // Leverandør
+        if (input.SupplierContactId is { } given && ehf?.SupplierContactId is { } fromEhf && given != fromEhf)
+        {
+            warnings.Add($"Valgt leverandør (kontakt {given}) er ikke den Fiken har koblet til EHF-dokumentet (kontakt {fromEhf}).");
+        }
+
         var contactId = input.SupplierContactId ?? ehf?.SupplierContactId;
         if (contactId is null)
         {
@@ -174,7 +180,11 @@ public static partial class PurchaseDraftValidator
                 }
 
                 var main = int.Parse(account.Split(':')[0], CultureInfo.InvariantCulture);
-                if (main is < FirstExpenseAccount or > LastExpenseAccount)
+                if (main is < FirstExpenseAccount or > LastAllowedAccount)
+                {
+                    errors.Add($"{label}: konto {account} er en balanse- eller inntektskonto. Kjøpslinjer må føres på kostnadskonto (4000–7999, evt. 8xxx).");
+                }
+                else if (main > LastExpenseAccount)
                 {
                     warnings.Add($"{label}: konto {account} er ikke en vanlig kostnadskonto (4000–7999).");
                 }
@@ -235,7 +245,7 @@ public static partial class PurchaseDraftValidator
 
         if (!string.Equals(context.VatType, DefaultVatType, StringComparison.Ordinal))
         {
-            warnings.Add($"MVA-type {context.VatType} brukes (netto = brutto).");
+            errors.Add($"MVA-type {context.VatType} støttes ikke: kretsen er ikke MVA-registrert, og linjene sendes med netto = brutto.");
         }
 
         var request = errors.Count == 0
