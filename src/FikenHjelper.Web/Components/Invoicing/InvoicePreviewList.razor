@@ -100,7 +100,7 @@
     {
         var cardStatus = draft.DuplicateDraftExists
             ? "duplicate"
-            : (!draft.SelectedContactId.HasValue ? "unmatched" : "ok");
+            : (!draft.SelectedContactId.HasValue || draft.HasMissingPrice ? "unmatched" : "ok");
         var customerSelectId = $"cust-{draft.DraftKey}";
         var createOpen = openCreateDraftKeys.Contains(draft.DraftKey);
 
@@ -117,6 +117,10 @@
                             <span class="fh-badge fh-badge-neutral">
                                 Ordrenr: @draft.OrderReference
                             </span>
+                        }
+                        @if (draft.HasMissingPrice)
+                        {
+                            <span class="fh-badge fh-badge-danger">Mangler pris</span>
                         }
                         @if (draft.DuplicateDraftExists)
                         {

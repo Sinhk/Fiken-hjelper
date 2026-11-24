@@ -161,6 +161,8 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         submitCts?.Cancel();
         selectedCompanySlug = newSlug;
         selectedProjectId = null;
+        // Customer IDs belong to the previous company and must not be reused (or saved) for the new one.
+        manualRecipientContactIds.Clear();
         projectEditedBeforeLoad = false;
         customers = [];
         projects = [];

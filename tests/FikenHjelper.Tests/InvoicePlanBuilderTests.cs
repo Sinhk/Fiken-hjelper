@@ -218,6 +218,30 @@ public sealed class InvoicePlanBuilderTests
             p => Assert.Contains(p.ParticipantKey, includedKeys));
         Assert.Contains(plan.GlobalWarnings, w => w.Contains("mangler pris"));
 
+        // Drafts with a missing price are held back, so they are not created as 0 kr invoices.
+        var affectedKeys = unknownPriceEvent.Participants
+            .Where(p => p.FeeCategoryKey == "fee:101" && !p.Cancelled)
+            .Select(p => p.ParticipantKey)
+            .ToHashSet();
+        Assert.All(plan.Drafts, d =>
+        {
+            var affected = d.ParticipantKeys.Any(affectedKeys.Contains);
+            Assert.Equal(affected, d.HasMissingPrice);
+            if (affected)
+            {
+                Assert.False(d.IsReadyToCreate);
+            }
+        });
+
+        // A participant override with a price clears the block for that participant.
+        var pricedOverrides = affectedKeys.ToDictionary(k => k, _ => new ParticipantOverride(CustomPriceNok: 450m));
+        var pricedPlan = InvoicePlanBuilder.Build(
+            unknownPriceEvent,
+            options with { ParticipantOverrides = pricedOverrides },
+            Customers,
+            new Dictionary<string, long>());
+        Assert.DoesNotContain(pricedPlan.Drafts, d => d.HasMissingPrice);
+
         // Known 0 kr (fee:103) is still excluded.
         Assert.All(
             unknownPriceEvent.Participants.Where(p => p.FeeCategoryKey == "fee:103"),

@@ -548,6 +548,13 @@ public static partial class InvoicePlanBuilder
 
         var totalOre = lines.Sum(l => l.LineTotalOre);
         var warnings = new List<string>();
+        var hasMissingPrice = participants.Any(p =>
+            ResolveKnownPriceNok(p, options.CategoryPricesNok, options.ParticipantOverrides) is null);
+
+        if (hasMissingPrice)
+        {
+            warnings.Add("Minst én deltaker mangler pris. Sett pris for kategorien før utkastet kan opprettes.");
+        }
 
         if (!selectedContactId.HasValue)
         {
@@ -583,7 +590,8 @@ public static partial class InvoicePlanBuilder
             ParticipantKeys: participants.Select(p => p.ParticipantKey).ToList(),
             TotalOre: totalOre,
             DuplicateDraftExists: duplicateExists,
-            Warnings: warnings);
+            Warnings: warnings,
+            HasMissingPrice: hasMissingPrice);
     }
 
     private static string Truncate(string? value, int maxLength)
