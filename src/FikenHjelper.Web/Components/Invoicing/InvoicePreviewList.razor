@@ -98,9 +98,9 @@
 
     @foreach (var draft in Plan.Drafts)
     {
-        var cardStatus = draft.DuplicateOrderReferenceExists
+        var cardStatus = draft.DuplicateDraftExists
             ? "duplicate"
-            : (!draft.SelectedContactId.HasValue ? "unmatched" : "ok");
+            : (!draft.SelectedContactId.HasValue || draft.HasMissingPrice ? "unmatched" : "ok");
         var customerSelectId = $"cust-{draft.DraftKey}";
         var createOpen = openCreateDraftKeys.Contains(draft.DraftKey);
 
@@ -118,7 +118,11 @@
                                 Ordrenr: @draft.OrderReference
                             </span>
                         }
-                        @if (draft.DuplicateOrderReferenceExists)
+                        @if (draft.HasMissingPrice)
+                        {
+                            <span class="fh-badge fh-badge-danger">Mangler pris</span>
+                        }
+                        @if (draft.DuplicateDraftExists)
                         {
                             <span class="fh-badge fh-badge-danger">Finnes allerede i Fiken-utkast</span>
                         }

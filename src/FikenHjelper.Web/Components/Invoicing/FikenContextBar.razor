@@ -19,7 +19,8 @@
             <select id="ctx-company"
                     value="@SelectedCompanySlug"
                     @onchange="HandleCompanyChanged"
-                    disabled="@IsLoadingFiken">
+                    disabled="@(IsLoadingFiken || IsCompanyLocked)"
+                    title="@(IsCompanyLocked ? "Kan ikke bytte foretak mens utkast eller kunder opprettes i Fiken." : null)">
                 <option value="">-- Velg foretak --</option>
                 @foreach (var company in Companies)
                 {
@@ -148,6 +149,7 @@
 
     [Parameter] public string SelectedCompanySlug { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> OnCompanyChanged { get; set; }
+    [Parameter] public bool IsCompanyLocked { get; set; }
 
     [Parameter] public long? SelectedProjectId { get; set; }
     [Parameter] public EventCallback<long?> OnProjectChanged { get; set; }

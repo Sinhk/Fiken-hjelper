@@ -75,11 +75,15 @@ public sealed record PlannedInvoiceDraft(
     IReadOnlyList<PlannedInvoiceLine> Lines,
     IReadOnlyList<string> ParticipantKeys,
     long TotalOre,
-    bool DuplicateOrderReferenceExists,
-    IReadOnlyList<string> Warnings)
+    bool DuplicateDraftExists,
+    IReadOnlyList<string> Warnings,
+    bool HasMissingPrice = false)
 {
     public decimal TotalNok => TotalOre / 100m;
-    public bool IsReadyToCreate => SelectedContactId.HasValue && Lines.Count > 0;
+
+    // A draft with a participant whose price is unknown would be created as a 0 kr line,
+    // so it is held back until a price is set or the category is excluded.
+    public bool IsReadyToCreate => SelectedContactId.HasValue && Lines.Count > 0 && !HasMissingPrice;
 }
 
 public sealed record InvoicePlanResult(
