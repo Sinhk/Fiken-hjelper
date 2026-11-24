@@ -12,8 +12,20 @@ public static partial class ImportValueParser
         "ja", "j", "yes", "y", "true", "sann", "1", "x", "✓", "✔"
     };
 
+    private static readonly HashSet<string> FalseValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "nei", "n", "no", "false", "usann", "0", "-", "–"
+    };
+
     public static bool ParseBool(string? value)
         => !string.IsNullOrWhiteSpace(value) && TrueValues.Contains(value.Trim());
+
+    /// <summary>
+    /// Ja/nei-felt der også en annen utfylt verdi betyr ja. Min speiding fyller f.eks. «Bekreftet» med
+    /// tidspunktet for bekreftelsen («2026-11-15 06:15»). Tomt, «-» og nei-verdier gir false.
+    /// </summary>
+    public static bool ParseFlag(string? value)
+        => !string.IsNullOrWhiteSpace(value) && !FalseValues.Contains(value.Trim());
 
     /// <summary>
     /// Tolker beløpsceller som «450», «450,00», «1 250,50», «1.250,50», «kr 450», «450 kr», «450,-» eller «-450».
@@ -37,7 +49,10 @@ public static partial class ImportValueParser
         return ExtractAmountFromLabel(text);
     }
 
-    /// <summary>Henter beløp fra en tekst som «Speider (1.250 kr)», «kr 450 for ledere» eller «Gratis».</summary>
+    /// <summary>
+    /// Henter beløp fra en tekst som «Speider (1.250 kr)», «kr 450 for ledere», «Lederkurs: 700.00»
+    /// (Min speiding-format) eller «Gratis».
+    /// </summary>
     public static decimal? ExtractAmountFromLabel(string? label)
     {
         if (string.IsNullOrWhiteSpace(label))
@@ -56,6 +71,12 @@ public static partial class ImportValueParser
         if (prefix.Success && ParseNumber(prefix.Groups["n"].Value) is { } p)
         {
             return p;
+        }
+
+        var colon = ColonAmount().Match(text);
+        if (colon.Success && ParseNumber(colon.Groups["n"].Value) is { } c)
+        {
+            return c;
         }
 
         return text.Contains("gratis", StringComparison.OrdinalIgnoreCase)
@@ -215,6 +236,10 @@ public static partial class ImportValueParser
     // «kr 450», «kr 1.250,50», «NOK 1 250».
     [GeneratedRegex(@"(?i)(?:\bkr\.?|\bnok)\s*(?<n>-?\d{1,3}(?:[ .]\d{3})+(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)(?![\d])")]
     private static partial Regex PrefixAmount();
+
+    // Min speiding eksporterer avgiften som «<Navn>: <beløp>», f.eks. «Lederkurs: 700.00».
+    [GeneratedRegex(@":\s*(?<n>-?\d+(?:[.,]\d{1,2})?)\s*$")]
+    private static partial Regex ColonAmount();
 
     [GeneratedRegex(@"(?i)\bfree\b")]
     private static partial Regex FreeWord();

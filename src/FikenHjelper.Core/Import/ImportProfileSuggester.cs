@@ -18,8 +18,9 @@ public static partial class ImportProfileSuggester
     private static readonly string[] GroupKeys = ["gruppe", "speidergruppe", "gruppenavn", "group"];
     private static readonly string[] GroupIdKeys = ["gruppenummer", "gruppenr", "groupid"];
     private static readonly string[] CategoryKeys = ["deltakeravgift", "avgift", "priskategori", "kategori", "rolle", "billett", "billettype"];
-    private static readonly string[] AmountKeys = ["totalbelop", "belop", "pris", "sum", "amount"];
-    private static readonly string[] QuantityKeys = ["antall", "quantity"];
+    // «Antall» i Min speidings gruppe-/fullrapport inneholder beløp (f.eks. «0,00»), ikke antall plasser.
+    private static readonly string[] AmountKeys = ["totalbelop", "belop", "pris", "sum", "amount", "antall"];
+    private static readonly string[] QuantityKeys = ["antallplasser", "quantity"];
     private static readonly string[] CancelledDateKeys = ["avmeldingsdato", "avmeldtdato", "cancelleddate"];
     private static readonly string[] StatusKeys = ["avmeldt", "status"];
     private static readonly string[] ConfirmedKeys = ["bekreftet", "confirmed"];

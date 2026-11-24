@@ -142,10 +142,10 @@ public static class ParticipantImportMapper
             }
 
             var attended = col.Attended >= 0
-                ? ImportValueParser.ParseBool(Cell(table, row, col.Attended))
-                : col.CheckedIn < 0 || ImportValueParser.ParseBool(Cell(table, row, col.CheckedIn));
+                ? ImportValueParser.ParseFlag(Cell(table, row, col.Attended))
+                : col.CheckedIn < 0 || ImportValueParser.ParseFlag(Cell(table, row, col.CheckedIn));
             var checkedIn = col.CheckedIn >= 0
-                ? ImportValueParser.ParseBool(Cell(table, row, col.CheckedIn))
+                ? ImportValueParser.ParseFlag(Cell(table, row, col.CheckedIn))
                 : attended;
 
             rows.Add(new RowData(
@@ -160,7 +160,7 @@ public static class ParticipantImportMapper
                 HasAmountColumnValue: amount.HasValue,
                 Quantity: (int)Math.Max(1, quantity),
                 Cancelled: cancelled,
-                Confirmed: col.Confirmed < 0 || ImportValueParser.ParseBool(Cell(table, row, col.Confirmed)),
+                Confirmed: col.Confirmed < 0 || ImportValueParser.ParseFlag(Cell(table, row, col.Confirmed)),
                 Attended: attended,
                 CheckedIn: checkedIn,
                 RegistrationDate: NullIfEmpty(Cell(table, row, col.RegistrationDate)),
@@ -373,8 +373,12 @@ public static class ParticipantImportMapper
     private static bool IsPlainAmount(string value)
         => value.Length > 0 && !value.Any(char.IsLetter) && ImportValueParser.ParseAmountNok(value).HasValue;
 
+    /// <summary>Celleverdi, der Min speidings plassholder «-» for tomt felt regnes som tom.</summary>
     private static string Cell(TabularData table, IReadOnlyList<string> row, int index)
-        => index < 0 ? string.Empty : table.GetCell(row, index).Trim();
+    {
+        var value = index < 0 ? string.Empty : table.GetCell(row, index).Trim();
+        return value is "-" or "–" or "—" ? string.Empty : value;
+    }
 
     private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 

@@ -1,14 +1,19 @@
+using System.Globalization;
 using System.Text;
+using CsvHelper;
+using CsvHelper.Configuration;
 
 namespace FikenHjelper.Core.Import;
 
 /// <summary>
-/// Leser CSV-eksporter (f.eks. fra Min speiding). Gjenkjenner koding (UTF-8 med/uten BOM,
-/// ellers Windows-1252) og skilletegn (semikolon, komma eller tab).
+/// Leser CSV-eksporter (f.eks. fra Min speiding) med CsvHelper. Her gjøres bare det CsvHelper ikke gjør:
+/// gjenkjenning av koding (UTF-8 med/uten BOM, ellers Windows-1252) og valg av skilletegn
+/// (semikolon, komma eller tab) ut fra hvilket som gir mest konsistent antall kolonner.
 /// </summary>
 public static class CsvTableReader
 {
-    private static readonly char[] CandidateDelimiters = [';', ',', '\t'];
+    private static readonly string[] CandidateDelimiters = [";", ",", "\t"];
+    private const int DelimiterSampleRecords = 20;
 
     static CsvTableReader()
     {
@@ -26,28 +31,28 @@ public static class CsvTableReader
 
     public static TabularData Parse(string text, string? encodingName = null)
     {
-        text = text.TrimStart('\uFEFF');
+        text = text.TrimStart('﻿');
         var delimiter = DetectDelimiter(text);
-        var records = SplitRecords(text, delimiter);
+        var records = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true)
+            .Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c)))
+            .ToList();
 
-        // Hopp over tomme linjer før overskriften.
-        var headerIndex = records.FindIndex(r => r.Any(c => !string.IsNullOrWhiteSpace(c)));
-        if (headerIndex < 0)
+        // Første ikke-tomme rad er overskriften.
+        if (records.Count == 0)
         {
             throw new InvalidDataException("Filen er tom eller mangler kolonneoverskrifter.");
         }
 
-        var headers = TabularData.MakeUniqueHeaders(records[headerIndex]);
+        var headers = TabularData.MakeUniqueHeaders(records[0]);
         var rows = records
-            .Skip(headerIndex + 1)
-            .Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c)))
+            .Skip(1)
             .Select(r => (IReadOnlyList<string>)r.Select(c => c.Trim()).ToList())
             .ToList();
 
         return new TabularData(
             headers,
             rows,
-            DetectedDelimiter: delimiter == '\t' ? "tab" : delimiter.ToString(),
+            DetectedDelimiter: delimiter == "\t" ? "tab" : delimiter,
             DetectedEncoding: encodingName);
     }
 
@@ -75,37 +80,24 @@ public static class CsvTableReader
     }
 
     /// <summary>
-    /// Velger skilletegnet som gir flest rader med samme antall kolonner som overskriften (minst to kolonner).
-    /// Bare de første radene vurderes. Ved likt resultat vinner flest kolonner, deretter semikolon før komma før tab.
+    /// Velger skilletegnet som gir flest av de første radene med samme antall kolonner som overskriften
+    /// (minst to kolonner). Ved likt resultat vinner flest kolonner, deretter semikolon før komma før tab.
     /// </summary>
-    internal static char DetectDelimiter(string text)
+    internal static string DetectDelimiter(string text)
     {
-        var sample = text.Length > 64_000 ? text[..64_000] : text;
-        var best = ',';
+        var best = ",";
         var bestScore = (Consistent: -1, Columns: 0);
 
         foreach (var candidate in CandidateDelimiters)
         {
-            List<List<string>> records;
-            try
-            {
-                records = SplitRecords(sample, candidate, throwOnUnclosedQuote: false)
-                    .Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c)))
-                    .Take(20)
-                    .ToList();
-            }
-            catch (InvalidDataException)
+            var records = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
+            if (records.Count == 0 || records[0].Length < 2)
             {
                 continue;
             }
 
-            if (records.Count == 0 || records[0].Count < 2)
-            {
-                continue;
-            }
-
-            var columns = records[0].Count;
-            var consistent = records.Count(r => r.Count == columns);
+            var columns = records[0].Length;
+            var consistent = records.Count(r => r.Length == columns);
             if (consistent > bestScore.Consistent
                 || (consistent == bestScore.Consistent && columns > bestScore.Columns))
             {
@@ -117,75 +109,45 @@ public static class CsvTableReader
         return best;
     }
 
-    internal static List<List<string>> SplitRecords(string text, char delimiter, bool throwOnUnclosedQuote = true)
+    private static List<string[]> ReadRecords(string text, string delimiter, int? maxRecords, bool throwOnBadData)
     {
-        var records = new List<List<string>>();
-        var current = new List<string>();
-        var field = new StringBuilder();
-        var inQuotes = false;
-        var i = 0;
-
-        while (i < text.Length)
+        var unclosedQuote = false;
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
-            var ch = text[i];
-            if (inQuotes)
+            Delimiter = delimiter,
+            HasHeaderRecord = false,
+            IgnoreBlankLines = true,
+            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Et sitert felt som
+            // aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet for stille datatap.
+            BadDataFound = args => unclosedQuote |= args.Field.TrimStart().StartsWith('"')
+        };
+
+        var records = new List<string[]>();
+        using var reader = new StringReader(text);
+        using var parser = new CsvParser(reader, config);
+        try
+        {
+            while ((maxRecords is null || records.Count < maxRecords) && parser.Read())
             {
-                if (ch == '"')
+                var record = parser.Record ?? [];
+                if (record.Any(c => !string.IsNullOrWhiteSpace(c)))
                 {
-                    if (i + 1 < text.Length && text[i + 1] == '"')
-                    {
-                        field.Append('"');
-                        i += 2;
-                        continue;
-                    }
-
-                    inQuotes = false;
-                    i++;
-                    continue;
+                    records.Add(record);
                 }
-
-                field.Append(ch);
-                i++;
-                continue;
-            }
-
-            if (ch == '"' && field.ToString().Trim().Length == 0)
-            {
-                // Anførselstegn åpner bare et sitert felt når det står først i feltet (RFC 4180).
-                field.Clear();
-                inQuotes = true;
-                i++;
-            }
-            else if (ch == delimiter)
-            {
-                current.Add(field.ToString());
-                field.Clear();
-                i++;
-            }
-            else if (ch == '\r' || ch == '\n')
-            {
-                current.Add(field.ToString());
-                field.Clear();
-                records.Add(current);
-                current = [];
-                i += ch == '\r' && i + 1 < text.Length && text[i + 1] == '\n' ? 2 : 1;
-            }
-            else
-            {
-                field.Append(ch);
-                i++;
             }
         }
+        catch (CsvHelperException ex) when (throwOnBadData)
+        {
+            throw new InvalidDataException("Filen kunne ikke leses som CSV. Sjekk at riktig fil og format er valgt.", ex);
+        }
+        catch (CsvHelperException)
+        {
+            // Ved gjenkjenning av skilletegn teller vi bare radene som lot seg lese.
+        }
 
-        if (inQuotes && throwOnUnclosedQuote)
+        if (unclosedQuote && throwOnBadData)
         {
             throw new InvalidDataException("Filen har et anførselstegn som ikke er lukket. Sjekk at riktig fil og format er valgt.");
-        }
-
-        if (field.Length > 0 || current.Count > 0)
-        {
-            current.Add(field.ToString());
-            records.Add(current);
         }
 
         return records;

@@ -21,7 +21,7 @@ internal static class ImportTestData
         string email,
         string fee,
         string total,
-        string cancelledDate = "",
+        string cancelledDate = "-",
         string course = "Peff-kurs",
         string allergy = "",
         string formEmail = "")
@@ -33,6 +33,10 @@ internal static class ImportTestData
         cells[5] = "Romsdal og Nordmøre krets";
         cells[7] = group;
         cells[10] = email;
+        cells[19] = "-";
+        cells[20] = "-";
+        cells[21] = "-";
+        cells[22] = "-";
         cells[23] = "Ja";
         cells[24] = "2026-10-01";
         cells[25] = cancelledDate;
@@ -50,10 +54,10 @@ internal static class ImportTestData
         string memberNo,
         string name,
         string fee,
-        string quantity = "1",
+        string amount = "",
         string confirmed = "Ja",
         string present = "Ja",
-        string cancelledDate = "")
+        string cancelledDate = "-")
     {
         var cells = new string[37];
         Array.Fill(cells, string.Empty);
@@ -65,10 +69,10 @@ internal static class ImportTestData
         cells[9] = $"{memberNo}@example.no";
         cells[27] = present;
         cells[28] = "Ja";
-        cells[30] = confirmed;
+        cells[30] = confirmed == "Ja" ? "2026-11-15 06:15" : confirmed; // Min speiding: tidspunkt når bekreftet.
         cells[31] = cancelledDate;
         cells[32] = fee;
-        cells[33] = quantity;
+        cells[33] = amount; // «Antall» inneholder beløp i Min speidings fullrapport, f.eks. «0,00».
         return string.Join(',', cells.Select(Quote));
     }
 
