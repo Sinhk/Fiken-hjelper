@@ -54,7 +54,9 @@ public static partial class InvoicePlanBuilder
             return false;
         }
 
-        if (filters.ExcludeZeroPrice && ResolveEffectivePriceNok(participant, categoryPricesNok, overrides) <= 0m)
+        // Only exclude participants whose price is known to be 0. A category with no detected or
+        // configured price must stay visible (and be flagged) rather than silently disappear.
+        if (filters.ExcludeZeroPrice && ResolveKnownPriceNok(participant, categoryPricesNok, overrides) is <= 0m)
         {
             return false;
         }
@@ -98,6 +100,16 @@ public static partial class InvoicePlanBuilder
         EventParticipant participant,
         IReadOnlyDictionary<string, decimal> categoryPricesNok,
         IReadOnlyDictionary<string, ParticipantOverride> overrides)
+        => ResolveKnownPriceNok(participant, categoryPricesNok, overrides) ?? 0m;
+
+    /// <summary>
+    /// Returns the price from a participant override, the category price or the detected price,
+    /// or <c>null</c> when no price is known for the participant.
+    /// </summary>
+    public static decimal? ResolveKnownPriceNok(
+        EventParticipant participant,
+        IReadOnlyDictionary<string, decimal> categoryPricesNok,
+        IReadOnlyDictionary<string, ParticipantOverride> overrides)
     {
         if (overrides.TryGetValue(participant.ParticipantKey, out var ov) && ov.CustomPriceNok.HasValue)
         {
@@ -109,7 +121,7 @@ public static partial class InvoicePlanBuilder
             return Math.Max(0m, categoryPrice);
         }
 
-        return Math.Max(0m, participant.DetectedPriceNok ?? 0m);
+        return participant.DetectedPriceNok is { } detected ? Math.Max(0m, detected) : null;
     }
 
     public static InvoicePlanResult Build(
@@ -117,7 +129,7 @@ public static partial class InvoicePlanBuilder
         InvoiceDraftPlanOptions options,
         IReadOnlyList<FikenContact> fikenCustomers,
         IReadOnlyDictionary<string, long> savedGroupMappings,
-        IReadOnlySet<string>? existingDraftOrderReferences = null)
+        IReadOnlyList<FikenInvoiceDraftSummary>? existingDrafts = null)
     {
         ArgumentNullException.ThrowIfNull(eventData);
         ArgumentNullException.ThrowIfNull(options);
@@ -167,13 +179,13 @@ public static partial class InvoicePlanBuilder
         }
 
         var drafts = options.BillingMode == BillingMode.PerScoutGroup
-            ? BuildPerGroupDrafts(eventData, billableParticipants, options, fikenCustomers, savedGroupMappings, existingDraftOrderReferences)
-            : BuildPerParticipantDrafts(eventData, billableParticipants, options, fikenCustomers, savedGroupMappings, existingDraftOrderReferences);
+            ? BuildPerGroupDrafts(eventData, billableParticipants, options, fikenCustomers, savedGroupMappings, existingDrafts)
+            : BuildPerParticipantDrafts(eventData, billableParticipants, options, fikenCustomers, savedGroupMappings, existingDrafts);
 
         var totalOre = drafts.Sum(d => d.TotalOre);
         var districtCoveredTotalOre = districtCoveredParticipants.Sum(d => d.AmountOre);
         var unmatchedCount = drafts.Count(d => !d.SelectedContactId.HasValue);
-        var duplicateCount = drafts.Count(d => d.DuplicateOrderReferenceExists);
+        var duplicateCount = drafts.Count(d => d.DuplicateDraftExists);
 
         var globalWarnings = new List<string>();
         if (string.IsNullOrWhiteSpace(options.IncomeAccount))
@@ -188,7 +200,14 @@ public static partial class InvoicePlanBuilder
 
         if (duplicateCount > 0)
         {
-            globalWarnings.Add($"{duplicateCount} utkast har samme ordrenummer som et eksisterende fakturautkast i Fiken.");
+            globalWarnings.Add($"{duplicateCount} mottaker(e) har allerede et fakturautkast i Fiken for dette arrangementet.");
+        }
+
+        var unknownPriceCount = billableParticipants.Count(p =>
+            ResolveKnownPriceNok(p, options.CategoryPricesNok, options.ParticipantOverrides) is null);
+        if (unknownPriceCount > 0)
+        {
+            globalWarnings.Add($"{unknownPriceCount} deltaker(e) mangler pris. Sett pris for kategorien før utkast opprettes.");
         }
 
         return new InvoicePlanResult(
@@ -286,7 +305,7 @@ public static partial class InvoicePlanBuilder
         InvoiceDraftPlanOptions options,
         IReadOnlyList<FikenContact> fikenCustomers,
         IReadOnlyDictionary<string, long> savedGroupMappings,
-        IReadOnlySet<string>? existingDraftOrderReferences)
+        IReadOnlyList<FikenInvoiceDraftSummary>? existingDrafts)
     {
         var drafts = new List<PlannedInvoiceDraft>();
 
@@ -315,7 +334,7 @@ public static partial class InvoicePlanBuilder
                 options: options,
                 fikenCustomers: fikenCustomers,
                 savedGroupMappings: savedGroupMappings,
-                existingDraftOrderReferences: existingDraftOrderReferences);
+                existingDrafts: existingDrafts);
 
             drafts.Add(draft);
         }
@@ -329,7 +348,7 @@ public static partial class InvoicePlanBuilder
         InvoiceDraftPlanOptions options,
         IReadOnlyList<FikenContact> fikenCustomers,
         IReadOnlyDictionary<string, long> savedGroupMappings,
-        IReadOnlySet<string>? existingDraftOrderReferences)
+        IReadOnlyList<FikenInvoiceDraftSummary>? existingDrafts)
     {
         var drafts = new List<PlannedInvoiceDraft>();
 
@@ -370,7 +389,7 @@ public static partial class InvoicePlanBuilder
                 options: options,
                 fikenCustomers: fikenCustomers,
                 savedGroupMappings: savedGroupMappings,
-                existingDraftOrderReferences: existingDraftOrderReferences);
+                existingDrafts: existingDrafts);
 
             drafts.Add(draft);
         }
@@ -444,6 +463,49 @@ public static partial class InvoicePlanBuilder
         return lines;
     }
 
+    /// <summary>
+    /// Finds an existing Fiken draft for the same customer and the same event. The order reference is
+    /// free text chosen by the user, so it cannot identify a draft on its own. A draft counts as the same
+    /// event when it is on the same Fiken project, or, without a project, has the same invoice text.
+    /// </summary>
+    public static FikenInvoiceDraftSummary? FindExistingDraft(
+        long customerId,
+        InvoiceDraftPlanOptions options,
+        IReadOnlyList<FikenInvoiceDraftSummary>? existingDrafts)
+    {
+        if (existingDrafts is null || existingDrafts.Count == 0)
+        {
+            return null;
+        }
+
+        var invoiceText = NullIfWhiteSpace(options.InvoiceText);
+        foreach (var existing in existingDrafts)
+        {
+            if (existing.Customers is null || !existing.Customers.Any(c => c.ContactId == customerId))
+            {
+                continue;
+            }
+
+            if (options.FikenProjectId.HasValue)
+            {
+                if (existing.ProjectId == options.FikenProjectId)
+                {
+                    return existing;
+                }
+
+                continue;
+            }
+
+            if (invoiceText is not null
+                && string.Equals(NullIfWhiteSpace(existing.InvoiceText), invoiceText, StringComparison.OrdinalIgnoreCase))
+            {
+                return existing;
+            }
+        }
+
+        return null;
+    }
+
     private static PlannedInvoiceDraft CreateDraft(
         string draftKey,
         string recipientKey,
@@ -455,7 +517,7 @@ public static partial class InvoicePlanBuilder
         InvoiceDraftPlanOptions options,
         IReadOnlyList<FikenContact> fikenCustomers,
         IReadOnlyDictionary<string, long> savedGroupMappings,
-        IReadOnlySet<string>? existingDraftOrderReferences)
+        IReadOnlyList<FikenInvoiceDraftSummary>? existingDrafts)
     {
         long? selectedContactId = null;
         long? suggestedContactId = null;
@@ -481,12 +543,18 @@ public static partial class InvoicePlanBuilder
         }
 
         var orderReference = BuildOrderReference(options.OrderReferencePrefix, eventData.ProjectId, string.Empty);
-        var duplicateExists = !string.IsNullOrWhiteSpace(orderReference)
-            && existingDraftOrderReferences is not null
-            && existingDraftOrderReferences.Contains(orderReference);
+        var duplicateExists = selectedContactId.HasValue
+            && FindExistingDraft(selectedContactId.Value, options, existingDrafts) is not null;
 
         var totalOre = lines.Sum(l => l.LineTotalOre);
         var warnings = new List<string>();
+        var hasMissingPrice = participants.Any(p =>
+            ResolveKnownPriceNok(p, options.CategoryPricesNok, options.ParticipantOverrides) is null);
+
+        if (hasMissingPrice)
+        {
+            warnings.Add("Minst én deltaker mangler pris. Sett pris for kategorien før utkastet kan opprettes.");
+        }
 
         if (!selectedContactId.HasValue)
         {
@@ -500,7 +568,7 @@ public static partial class InvoicePlanBuilder
 
         if (duplicateExists)
         {
-            warnings.Add($"Fakturautkast med ordrenummer «{orderReference}» finnes allerede i Fiken.");
+            warnings.Add("Denne kunden har allerede et fakturautkast i Fiken for dette arrangementet.");
         }
 
         if (recipientName.Equals("Uten gruppe", StringComparison.OrdinalIgnoreCase))
@@ -521,8 +589,9 @@ public static partial class InvoicePlanBuilder
             Lines: lines,
             ParticipantKeys: participants.Select(p => p.ParticipantKey).ToList(),
             TotalOre: totalOre,
-            DuplicateOrderReferenceExists: duplicateExists,
-            Warnings: warnings);
+            DuplicateDraftExists: duplicateExists,
+            Warnings: warnings,
+            HasMissingPrice: hasMissingPrice);
     }
 
     private static string Truncate(string? value, int maxLength)

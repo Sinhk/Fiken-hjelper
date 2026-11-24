@@ -270,6 +270,39 @@ public sealed class MinSpeidingParserTests
     }
 
     [Fact]
+    public void Parse_UnrelatedGroupLikeFields_AreNotTreatedAsGroups()
+    {
+        const string json = """
+            {
+              "participants": {
+                "40": {
+                  "member_no": 40001,
+                  "first_name": "Kari",
+                  "last_name": "Speider",
+                  "fee_id": 101,
+                  "membership_status": "active",
+                  "age_group": "Speider",
+                  "other_memberships": [
+                    { "group_id": 5, "status": "aktiv", "start_date": "2020-01-01" },
+                    { "group_id": 6, "group_name": "Sunndal speidergruppe", "role": "leder" }
+                  ]
+                }
+              },
+              "labels": { "project_fee": { "101": "Speider (450 kr)" } }
+            }
+            """;
+
+        var result = MinSpeidingParser.Parse("999", json, null, questionsEndpointAvailable: false);
+
+        var p = Assert.Single(result.Participants);
+        var only = Assert.Single(p.AvailableGroups);
+        Assert.Equal("Sunndal speidergruppe", only.GroupName);
+
+        // A group found only in extra fields is offered as a choice, but is not used as the recipient.
+        Assert.Equal("Uten gruppe", p.GroupName);
+    }
+
+    [Fact]
     public void Parse_IgnoresDeprecatedPlaceholderGroupFields()
     {
         const string json = """
