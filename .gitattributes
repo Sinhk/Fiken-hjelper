@@ -1,0 +1,2 @@
+# Hook-skriptene kjøres av sh, også på Windows, og må ha LF.
+.husky/** text eol=lf

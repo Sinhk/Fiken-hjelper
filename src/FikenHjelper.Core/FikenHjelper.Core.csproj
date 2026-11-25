@@ -12,4 +12,24 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="11.0.0" />
   </ItemGroup>
 
+  <!--
+    Installerer git-hooks (Husky.Net, se .husky/) ved første bygg. Hoppes over uten .git
+    (f.eks. nedlastet ZIP), i CI og med HUSKY=0. Feil her stopper aldri bygget.
+  -->
+  <PropertyGroup>
+    <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../'))</RepoRoot>
+  </PropertyGroup>
+  <Target Name="Husky" AfterTargets="Build"
+          Condition="'$(HUSKY)' != '0' And '$(HUSKY)' != 'false' And '$(CI)' != 'true' And '$(DesignTimeBuild)' != 'true' And Exists('$(RepoRoot).git')"
+          Inputs="$(RepoRoot).config/dotnet-tools.json" Outputs="$(RepoRoot).husky/_/install.stamp">
+    <Exec Command="dotnet tool restore &amp;&amp; dotnet husky install" WorkingDirectory="$(RepoRoot)"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="Low" StandardErrorImportance="Low">
+      <Output TaskParameter="ExitCode" PropertyName="HuskyExitCode" />
+    </Exec>
+    <Message Importance="high" Condition="'$(HuskyExitCode)' != '0'"
+             Text="Git-hooks ble ikke installert. Bygget fortsetter. Kjør 'dotnet tool restore' og 'dotnet husky install' fra rotmappen for å installere dem." />
+    <Touch Files="$(RepoRoot).husky/_/install.stamp" AlwaysCreate="true" Condition="'$(HuskyExitCode)' == '0' And Exists('$(RepoRoot).husky/_')" />
+  </Target>
+
 </Project>

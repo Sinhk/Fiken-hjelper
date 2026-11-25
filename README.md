@@ -49,6 +49,15 @@ dotnet run --project src/FikenHjelper.Web
 dotnet test
 ```
 
+### Git-hooks
+Første `dotnet build` installerer git-hooks med [Husky.Net](https://alirezanet.github.io/Husky.Net/) (`.husky/`):
+- **pre-commit:** [gitleaks](https://github.com/gitleaks/gitleaks) stopper commits med hemmeligheter, og `dotnet format` sjekker endrede `.cs`-filer.
+- **pre-push:** gitleaks sjekker alle commits som ikke er pushet.
+
+Bygg og tester kjøres ikke i hookene, siden CI krever grønt bygg før merge.
+
+gitleaks må installeres separat: `winget install --id Gitleaks.Gitleaks -e` (Windows) eller `brew install gitleaks` (macOS/Linux). Hookene installeres ikke i CI eller i en kopi uten `.git` (f.eks. nedlastet ZIP), og de slås av med miljøvariabelen `HUSKY=0`.
+
 ### 5. Start med .NET Aspire (valgfritt)
 
 Aspire gir et lokalt **Aspire Dashboard** med logger, traces og metrikker – blant annet alle HTTP-kall mot `api.fiken.no` og `min.speiding.no`. Det krever ingen workload eller templates; alt hentes som NuGet-pakker ved første bygg (første gang tar det litt tid).

@@ -1,0 +1,33 @@
+{
+   "$schema": "https://alirezanet.github.io/Husky.Net/schema.json",
+   "tasks": [
+      {
+         "name": "gitleaks-staged",
+         "group": "pre-commit",
+         "command": "gitleaks",
+         "args": [
+            "git",
+            "--pre-commit",
+            "--staged",
+            "--redact",
+            "--no-banner",
+            "--verbose"
+         ]
+      },
+      {
+         "name": "dotnet-format",
+         "group": "pre-commit",
+         "command": "dotnet",
+         "args": [
+            "format",
+            "FikenHjelper.slnx",
+            "--verify-no-changes",
+            "--include",
+            "${staged}"
+         ],
+         "include": [
+            "**/*.cs"
+         ]
+      }
+   ]
+}

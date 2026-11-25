@@ -1,0 +1,9 @@
+#!/bin/sh
+# pre-commit: stopper hemmeligheter (gitleaks) og formateringsfeil (dotnet format).
+# Slås av med HUSKY=0. Avhenger ikke av .husky/_, så hooken virker også i nye
+# worktrees før første bygg.
+if [ "$HUSKY" = "0" ] || [ "$HUSKY" = "false" ]; then exit 0; fi
+
+sh "$(dirname "$0")/scripts/require-gitleaks.sh" || exit 1
+dotnet tool restore >/dev/null || exit 1
+dotnet husky run --group pre-commit
