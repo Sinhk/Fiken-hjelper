@@ -86,3 +86,6 @@ GitHub Actions (`.github/workflows/ci.yml`) kjører på alle pull requests mot `
 - Alle fakturaer opprettes **kun som utkast** i Fiken (`POST /companies/{slug}/invoices/drafts`). Ingenting bokføres eller sendes automatisk.
 - Kretsen er ikke MVA-pliktig, så alle linjer sendes med `vatType = "NONE"`.
 - Fiken API tillater maks 1 samtidig kall og maks 4 kall per sekund – dette håndheves automatisk i `FikenRateLimitHandler`.
+
+## Lisens
+[MIT](LICENSE).

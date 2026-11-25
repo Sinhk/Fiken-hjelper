@@ -15,7 +15,7 @@ public static class DemoEventFactory
         {
             new(
                 ParticipantKey: "90001",
-                MemberNo: 100451,
+                MemberNo: 900101,
                 FirstName: "Ola",
                 LastName: "Nordmann",
                 Email: "ola.nordmann@example.no",
@@ -36,7 +36,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe")]),
             new(
                 ParticipantKey: "90002",
-                MemberNo: 100452,
+                MemberNo: 900102,
                 FirstName: "Ingrid",
                 LastName: "Haugen",
                 Email: "ingrid.haugen@example.no",
@@ -57,7 +57,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe")]),
             new(
                 ParticipantKey: "90003",
-                MemberNo: 100110,
+                MemberNo: 900103,
                 FirstName: "Kari",
                 LastName: "Solberg",
                 Email: "kari.solberg@example.no",
@@ -82,7 +82,7 @@ public static class DemoEventFactory
                 ]),
             new(
                 ParticipantKey: "90004",
-                MemberNo: 100612,
+                MemberNo: 900104,
                 FirstName: "Henrik",
                 LastName: "Bø",
                 Email: "henrik.bo@example.no",
@@ -103,7 +103,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("1. Kristiansund speidergruppe", 502, "Primærgruppe")]),
             new(
                 ParticipantKey: "90005",
-                MemberNo: 100613,
+                MemberNo: 900105,
                 FirstName: "Maja",
                 LastName: "Eide",
                 Email: "maja.eide@example.no",
@@ -124,7 +124,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("1. Kristiansund speidergruppe", 502, "Primærgruppe")]),
             new(
                 ParticipantKey: "90006",
-                MemberNo: 100701,
+                MemberNo: 900106,
                 FirstName: "Sander",
                 LastName: "Moen",
                 Email: "sander.moen@example.no",
@@ -145,7 +145,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("Aukra speidergruppe", 503, "Primærgruppe")]),
             new(
                 ParticipantKey: "90007",
-                MemberNo: 100702,
+                MemberNo: 900107,
                 FirstName: "Linn",
                 LastName: "Berg",
                 Email: "linn.berg@example.no",
@@ -166,7 +166,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("Sunndal speidergruppe", 504, "Primærgruppe")]),
             new(
                 ParticipantKey: "90008",
-                MemberNo: 100899,
+                MemberNo: 900108,
                 FirstName: "Emil",
                 LastName: "Røvik",
                 Email: "emil.rovik@example.no",
@@ -187,7 +187,7 @@ public static class DemoEventFactory
                 AvailableGroups: []),
             new(
                 ParticipantKey: "90009",
-                MemberNo: 100222,
+                MemberNo: 900109,
                 FirstName: "Anders",
                 LastName: "Stab",
                 Email: "anders.stab@example.no",
@@ -208,7 +208,7 @@ public static class DemoEventFactory
                 AvailableGroups: [new ParticipantGroupOption("Molde speidergruppe", 501, "Primærgruppe")]),
             new(
                 ParticipantKey: "90010",
-                MemberNo: 100223,
+                MemberNo: 900110,
                 FirstName: "Silje",
                 LastName: "Stab",
                 Email: "silje.stab@example.no",
