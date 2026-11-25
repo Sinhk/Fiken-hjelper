@@ -3,6 +3,7 @@ using System.Text;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.QualityCheck;
+using Microsoft.Extensions.Time.Testing;
 
 namespace FikenHjelper.Tests;
 
@@ -405,6 +406,32 @@ public sealed class QualityCheckTextFormatterTests
     }
 
     [Fact]
+    public void ToHtml_EncodesTextAndBuildsOneTablePerNonEmptySection()
+    {
+        var html = QualityCheckTextFormatter.ToHtml(SampleReport() with
+        {
+            Sections =
+            [
+                new QualityCheckSection(QualitySectionKeys.CustomerInvoices, "Ubetalte kundefakturaer",
+                [
+                    new QualityFinding("Faktura <1>", "Gruppe & co", new DateOnly(2026, 10, 1), null,
+                        3, 123450, null, QualityStatus.Overdue, Note: "Sier \"hei\" og 'hå'")
+                ]),
+                new QualityCheckSection(QualitySectionKeys.SupplierPurchases, "Ubetalte kjøp", [])
+            ]
+        });
+
+        Assert.Contains("<h2>Kvalitetssjekk per 31.12.2026</h2>", html);
+        Assert.Contains("Faktura &lt;1&gt;", html);
+        Assert.Contains("Gruppe &amp; co", html);
+        Assert.Contains("Sier &quot;hei&quot; og &#39;h&#229;&#39;", html);
+        Assert.Contains("<b>1&#160;234,50</b>", html);
+        Assert.Contains("<p>Ingen åpne poster.</p>", html);
+        Assert.Equal(1, html.Split("<table").Length - 1);
+        Assert.DoesNotContain("<script", html);
+    }
+
+    [Fact]
     public void ToMarkdown_EscapesPipesAndBuildsTable()
     {
         var md = QualityCheckTextFormatter.ToMarkdown(SampleReport());
@@ -510,5 +537,41 @@ public sealed class QualityCheckFikenClientTests
             Assert.Equal(7500, purchase.OutstandingOre);
             Assert.Equal("Leir, Kurs", purchase.Project);
         }
+    }
+}
+
+public sealed class QualityCheckServiceTests
+{
+    [Fact]
+    public void Today_UsesNorwegianTimeAcrossMidnight()
+    {
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 12, 31, 23, 30, 0, TimeSpan.Zero));
+        var client = new FikenClient(new HttpClient(), new LocalConfigStore(
+            new AppSettingsDefaults(FikenApiToken: "x"),
+            Path.Combine(Path.GetTempPath(), "fh-test-" + Guid.NewGuid().ToString("N"))));
+
+        var service = new QualityCheckService(client, client, time);
+
+        Assert.Equal(new DateOnly(2027, 1, 1), service.Today);
+    }
+
+    [Fact]
+    public void BuildReport_SameDataGivesDifferentStatusPerReferenceDate()
+    {
+        var fetchedAt = new DateTimeOffset(2026, 11, 25, 12, 0, 0, TimeSpan.FromHours(1));
+        var purchase = new FikenPurchase(1, TransactionId: null, "F-1", "2026-11-01", "2026-11-20", "supplier",
+            Paid: false,
+            [new FikenOrderLine(null, "Mat", 10000, 0, "6800", "OUTSIDE", null)],
+            Supplier: null, Currency: "NOK", Payments: null, PurchaseAttachments: null, Deleted: false, Settled: false);
+        var data = new QualityCheckData([], [], [purchase], fetchedAt);
+
+        var before = data.BuildReport(new DateOnly(2026, 11, 20));
+        var after = data.BuildReport(new DateOnly(2026, 11, 25));
+
+        Assert.Equal(fetchedAt, after.FetchedAt);
+        Assert.Equal(QualityStatus.Open, before.Sections.Single(s => s.Key == QualitySectionKeys.SupplierPurchases).Findings[0].Status);
+        var overdue = after.Sections.Single(s => s.Key == QualitySectionKeys.SupplierPurchases).Findings[0];
+        Assert.Equal(QualityStatus.Overdue, overdue.Status);
+        Assert.Equal(5, overdue.DaysOverdue);
     }
 }

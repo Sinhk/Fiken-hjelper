@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text;
 
 namespace FikenHjelper.Core.QualityCheck;
@@ -75,6 +76,60 @@ public static class QualityCheckTextFormatter
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Enkel HTML med én tabell per seksjon. Brukes på utklippstavlen sammen med <see cref="ToTabSeparated"/>,
+    /// slik at innliming i Word og Google Docs gir en ekte tabell.
+    /// </summary>
+    public static string ToHtml(QualityCheckReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        const string Cell = "border:1px solid #999;padding:2px 6px;";
+        const string NumCell = Cell + "text-align:right;";
+        var sb = new StringBuilder();
+        sb.Append("<h2>Kvalitetssjekk per ").Append(FormatDate(report.ReferenceDate)).Append("</h2>\n");
+
+        foreach (var section in report.Sections)
+        {
+            sb.Append("<h3>").Append(Encode(SectionHeading(section))).Append("</h3>\n");
+            if (section.Findings.Count == 0)
+            {
+                sb.Append("<p>Ingen åpne poster.</p>\n");
+                continue;
+            }
+
+            sb.Append("<table style=\"border-collapse:collapse\"><thead><tr>");
+            foreach (var (column, i) in Columns.Select((c, i) => (c, i)))
+            {
+                sb.Append("<th style=\"").Append(IsNumberColumn(i) ? NumCell : Cell).Append("\">")
+                    .Append(Encode(column)).Append("</th>");
+            }
+
+            sb.Append("</tr></thead><tbody>\n");
+            foreach (var row in section.Findings.Select(f => Cells(f, FormatKroner)))
+            {
+                sb.Append("<tr>");
+                for (var i = 0; i < row.Length; i++)
+                {
+                    sb.Append("<td style=\"").Append(IsNumberColumn(i) ? NumCell : Cell).Append("\">")
+                        .Append(Encode(row[i])).Append("</td>");
+                }
+
+                sb.Append("</tr>\n");
+            }
+
+            sb.Append("<tr><td style=\"").Append(Cell).Append("\"><b>Sum</b></td>");
+            for (var i = 1; i < Columns.Length; i++)
+            {
+                var value = i == AmountColumn ? "<b>" + Encode(FormatKroner(section.TotalOre)) + "</b>" : "";
+                sb.Append("<td style=\"").Append(IsNumberColumn(i) ? NumCell : Cell).Append("\">").Append(value).Append("</td>");
+            }
+
+            sb.Append("</tr>\n</tbody></table>\n");
+        }
+
+        return sb.ToString();
+    }
+
     public static string ToMarkdown(QualityCheckReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
@@ -91,7 +146,7 @@ public static class QualityCheckTextFormatter
             }
 
             sb.Append("| ").AppendJoin(" | ", Columns).Append(" |\n");
-            sb.Append('|').Append(string.Concat(Columns.Select((_, i) => i is 5 or 6 ? "---:|" : "---|"))).Append('\n');
+            sb.Append('|').Append(string.Concat(Columns.Select((_, i) => IsNumberColumn(i) ? "---:|" : "---|"))).Append('\n');
             foreach (var row in section.Findings.Select(f => Cells(f, FormatKroner)))
             {
                 sb.Append("| ").AppendJoin(" | ", row.Select(EscapeMarkdown)).Append(" |\n");
@@ -136,6 +191,13 @@ public static class QualityCheckTextFormatter
         f.Project ?? "",
         f.Note ?? ""
     ];
+
+    private const int DaysColumn = 5;
+    private const int AmountColumn = 6;
+
+    private static bool IsNumberColumn(int index) => index is DaysColumn or AmountColumn;
+
+    private static string Encode(string value) => WebUtility.HtmlEncode(value);
 
     private static string CleanTab(string value) =>
         value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
