@@ -15,15 +15,19 @@ updates:
     commit-message:
       prefix: "deps"
     groups:
-      # Pakker som slippes samtidig og bør oppdateres sammen.
+      # Pakkefamilier med felles versjonsnummer. De må flyttes samlet, også ved
+      # hovedversjoner, så her grupperes alle oppdateringstyper bevisst.
       aspire:
         patterns: ["Aspire.*"]
       opentelemetry:
         patterns: ["OpenTelemetry*"]
       microsoft-extensions:
         patterns: ["Microsoft.Extensions.*"]
+      # Testpakker med uavhengige versjoner: bare minor/patch samles, så en
+      # hovedversjon av én pakke ikke blokkerer patcher for de andre.
       xunit:
         patterns: ["xunit*", "Microsoft.NET.Test.Sdk"]
+        update-types: ["minor", "patch"]
       # Resten av patch- og minor-oppdateringene samles i én PR.
       # Hovedversjoner får egne PR-er, siden de kan kreve kodeendringer.
       andre-pakker:
@@ -52,5 +56,7 @@ updates:
     commit-message:
       prefix: "ci"
     groups:
+      # Hovedversjoner av actions er som regel bare ny Node-versjon, så alt
+      # samles i én PR.
       github-actions:
         patterns: ["*"]
