@@ -71,7 +71,7 @@ dotnet user-secrets --project src/FikenHjelper.AppHost set "Parameters:fiken-cli
 dotnet user-secrets --project src/FikenHjelper.AppHost set "Parameters:fiken-api-token" "DIN_PERSONLIGE_FIKEN_NOKKEL"
 ```
 
-> `FikenHjelper.ServiceDefaults` legger **ikke** på standard resilience/retries på HttpClients – Fiken-klienten bruker kun sin egne `FikenRateLimitHandler`. Query-strenger (f.eks. OAuth `code`/`state`) redigeres alltid i traces.
+> `FikenHjelper.ServiceDefaults` legger **ikke** på standard resilience/retries på HttpClients – Fiken-klienten bruker kun sin egen `FikenRateLimitHandler`. Query-strenger (f.eks. OAuth `code`/`state`) redigeres alltid i traces.
 
 ### 6. CI
 

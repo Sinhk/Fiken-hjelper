@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace FikenHjelper.Core.Fiken;
 
@@ -13,8 +14,8 @@ public static class FikenServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddSingleton<FikenRateLimiter>();
-        services.AddTransient<FikenRateLimitHandler>();
+        services.TryAddSingleton<FikenRateLimiter>();
+        services.TryAddTransient<FikenRateLimitHandler>();
 
         return services.AddHttpClient<IFikenClient, FikenClient>(client =>
         {

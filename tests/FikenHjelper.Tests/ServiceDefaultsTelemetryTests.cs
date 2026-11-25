@@ -54,6 +54,8 @@ public sealed class ServiceDefaultsTelemetryTests
         }
 
         Assert.Equal("?Redacted", serverActivity.GetTagItem("url.query"));
+        // .NET redigerer selv url.full til "?*"; "?Redacted" viser at vår egen enrichment faktisk kjørte.
+        Assert.EndsWith("?Redacted", clientActivity.GetTagItem("url.full")?.ToString());
         Assert.DoesNotContain("SECRET", serverActivity.DisplayName);
     }
 }

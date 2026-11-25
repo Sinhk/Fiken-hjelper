@@ -53,9 +53,11 @@ public static class Extensions
             logging.IncludeScopes = true;
         });
 
-        // Hosting-loggen ("Request starting ... ?code=...&state=...") skal aldri eksporteres til dashboardet,
-        // selv om noen senker loggnivået lokalt.
-        builder.Logging.AddFilter<OpenTelemetryLoggerProvider>("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        // Hosting-loggen ("Request starting ... ?code=...&state=...") og redirect-loggen (OAuth-authorize-URL med state)
+        // skal aldri skrives til konsoll eller dashboard, selv om noen senker loggnivået lokalt.
+        // Filteret gjelder alle loggprovidere, siden Aspire også viser konsollutskriften.
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Result.RedirectResult", LogLevel.Warning);
 
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics =>
