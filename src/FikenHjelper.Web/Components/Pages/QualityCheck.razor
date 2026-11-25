@@ -22,7 +22,7 @@
                 </MudText>
             </MudStack>
             <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
-                <MudDatePicker Label="Forfalt per" Date="ReferenceDateTime" DateChanged="HandleDateChanged"
+                <MudDatePicker @key="datePickerKey" Label="Forfalt per" Date="ReferenceDateTime" DateChanged="HandleDateChanged"
                                Culture="Nb" DateFormat="dd.MM.yyyy" Editable
                                Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 11rem" />
                 <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
@@ -44,10 +44,13 @@
             </MudStack>
         </MudStack>
 
-        @if (isLoading)
-        {
-            <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
-        }
+        <div role="status" aria-live="polite">
+            @if (isLoading)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-1" aria-label="Henter åpne poster fra Fiken" />
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Henter åpne poster fra Fiken …</MudText>
+            }
+        </div>
 
         @if (!string.IsNullOrWhiteSpace(errorMessage))
         {
@@ -97,7 +100,7 @@
                 }
             </MudGrid>
         }
-        else if (!isLoading && string.IsNullOrWhiteSpace(errorMessage) && hasCompany)
+        else if (!RendererInfo.IsInteractive)
         {
             <MudText Color="Color.Secondary">Laster …</MudText>
         }
@@ -174,6 +177,7 @@
     private bool isLoading;
     private string? errorMessage;
     private IJSObjectReference? clipboardModule;
+    private int datePickerKey;
     private readonly CancellationTokenSource disposeCts = new();
 
     private DateTime? ReferenceDateTime => referenceDate.ToDateTime(TimeOnly.MinValue);
@@ -189,13 +193,44 @@
         }
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Last modulen på forhånd, så kopieringen skjer raskt nok etter klikket (Safari og Firefox krever det).
+        if (firstRender)
+        {
+            try
+            {
+                clipboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/clipboard.js");
+            }
+            catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+            {
+                Logger.LogDebug(ex, "Klarte ikke å laste clipboard.js på forhånd");
+            }
+        }
+    }
+
     private async Task LoadAsync()
     {
+        if (isLoading)
+        {
+            return;
+        }
+
+        CancellationToken ct;
+        try
+        {
+            ct = disposeCts.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
         isLoading = true;
         errorMessage = null;
         try
         {
-            var settings = await ConfigStore.LoadSettingsAsync(disposeCts.Token);
+            var settings = await ConfigStore.LoadSettingsAsync(ct);
             hasCompany = !string.IsNullOrWhiteSpace(settings.FikenCompanySlug);
             if (!hasCompany)
             {
@@ -204,10 +239,10 @@
                 return;
             }
 
-            data = await QualityChecks.FetchAsync(settings.FikenCompanySlug!, disposeCts.Token);
+            data = await QualityChecks.FetchAsync(settings.FikenCompanySlug!, ct);
             Rebuild();
         }
-        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
         }
         catch (FikenApiException ex)
@@ -234,18 +269,28 @@
         if (value is { } date)
         {
             referenceDate = DateOnly.FromDateTime(date);
-            Rebuild();
         }
+        else
+        {
+            // Tømt felt: gå tilbake til i dag, og tegn datovelgeren på nytt så feltet ikke står tomt.
+            today = QualityChecks.Today;
+            referenceDate = today;
+            datePickerKey++;
+        }
+
+        Rebuild();
     }
 
     private void SetToday()
     {
+        today = QualityChecks.Today;
         referenceDate = today;
         Rebuild();
     }
 
     private void SetLastYearEnd()
     {
+        today = QualityChecks.Today;
         referenceDate = new DateOnly(today.Year - 1, 12, 31);
         Rebuild();
     }
@@ -276,13 +321,32 @@
         try
         {
             clipboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/clipboard.js");
-            await clipboardModule.InvokeVoidAsync(function, args);
-            Snackbar.Add(successMessage, Severity.Success);
+            var result = await clipboardModule.InvokeAsync<string>(function, args);
+            switch (result)
+            {
+                case "insecure":
+                    Snackbar.Add(
+                        "Nettleseren gir ikke tilgang til utklippstavlen. Kopiering krever at siden er åpnet via https eller localhost.",
+                        Severity.Warning);
+                    break;
+                case "text" when function == "copyRichText":
+                    Snackbar.Add("Kopiert som ren tekst. Nettleseren tillot ikke tabellformat.", Severity.Info);
+                    break;
+                default:
+                    Snackbar.Add(successMessage, Severity.Success);
+                    break;
+            }
         }
         catch (JSException ex)
         {
             Logger.LogWarning(ex, "Kopiering til utklippstavlen feilet");
-            Snackbar.Add("Nettleseren tillot ikke kopiering til utklippstavlen.", Severity.Warning);
+            Snackbar.Add(
+                "Nettleseren tillot ikke kopiering. Prøv igjen, eller bruk en annen nettleser (Safari kan avvise kopiering fra denne siden).",
+                Severity.Warning);
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
+        {
+            Logger.LogDebug(ex, "Kopiering avbrutt fordi forbindelsen til nettleseren ble brutt");
         }
     }
 
