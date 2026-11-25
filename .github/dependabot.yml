@@ -1,0 +1,62 @@
+# Automatiske avhengighetsoppdateringer. Dependabot lager PR-er mot main,
+# og CI (.github/workflows/ci.yml) bygger og tester dem før merge.
+version: 2
+
+updates:
+  # NuGet-pakker i alle prosjekter (FikenHjelper.slnx).
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Pakkefamilier med felles versjonsnummer. De må flyttes samlet, også ved
+      # hovedversjoner, så her grupperes alle oppdateringstyper bevisst.
+      aspire:
+        patterns: ["Aspire.*"]
+      opentelemetry:
+        patterns: ["OpenTelemetry*"]
+      microsoft-extensions:
+        patterns: ["Microsoft.Extensions.*"]
+      # Testpakker med uavhengige versjoner: bare minor/patch samles, så en
+      # hovedversjon av én pakke ikke blokkerer patcher for de andre.
+      xunit:
+        patterns: ["xunit*", "Microsoft.NET.Test.Sdk"]
+        update-types: ["minor", "patch"]
+      # Resten av patch- og minor-oppdateringene samles i én PR.
+      # Hovedversjoner får egne PR-er, siden de kan kreve kodeendringer.
+      andre-pakker:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # .NET SDK i global.json.
+  - package-ecosystem: dotnet-sdk
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "deps"
+
+  # GitHub Actions i .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "ci"
+    groups:
+      # Hovedversjoner av actions er som regel bare ny Node-versjon, så alt
+      # samles i én PR.
+      github-actions:
+        patterns: ["*"]
