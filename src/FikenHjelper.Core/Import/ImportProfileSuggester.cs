@@ -29,8 +29,8 @@ public static partial class ImportProfileSuggester
     private static readonly string[] TotalAmountKeys = ["totalbelop", "sum", "total", "totalt"];
 
     // Skjemaspørsmål som typisk inneholder sensitive personopplysninger tas ikke med som standard.
-    // Sammenlignes mot starten av hvert ord i overskriften, så «allergier» og «diettbehov» treffes,
-    // mens f.eks. «morsomt» ikke treffer «mor».
+    // Stammene kan stå hvor som helst i et ord, så sammensetninger som «matallergi» og «postadresse» treffes.
+    // Korte ord (mor/far) må være hele ord, så f.eks. «morsomt» ikke treffer «mor».
     private static readonly string[] SensitiveWordStems =
     [
         "mobil", "telefon", "tlf", "fodsel", "adresse", "personnummer", "foresatt", "foreldre", "parorende",
