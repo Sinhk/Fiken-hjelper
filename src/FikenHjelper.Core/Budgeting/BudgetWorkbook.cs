@@ -266,10 +266,17 @@ public static partial class BudgetWorkbookImporter
         }
         else if (commas > 1 || dots > 1)
         {
+            // «1.234.567» er tusenskille; «12.01.2026» (dato) er ikke et tall.
+            if (!IsThousandsGrouped(text, commas > 1 ? ',' : '.'))
+            {
+                return null;
+            }
+
             text = text.Replace(",", string.Empty).Replace(".", string.Empty);
         }
-        else if (dots == 1 && text.Length - text.IndexOf('.') - 1 == 3)
+        else if (dots == 1 && IsThousandsGrouped(text, '.'))
         {
+            // «10.000» er ti tusen, men «0.500» og «1234.567» er desimaltall.
             text = text.Replace(".", string.Empty);
         }
         else
@@ -280,6 +287,17 @@ public static partial class BudgetWorkbookImporter
         return decimal.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : null;
+    }
+
+    /// <summary>«1.234.567»: første gruppe 1–3 sifre uten ledende null, deretter grupper på nøyaktig tre sifre.</summary>
+    private static bool IsThousandsGrouped(string text, char separator)
+    {
+        var parts = (text.StartsWith('-') ? text[1..] : text).Split(separator);
+        return parts.Length > 1
+            && parts[0].Length is >= 1 and <= 3
+            && parts[0][0] != '0'
+            && parts.All(p => p.Length > 0 && p.All(char.IsAsciiDigit))
+            && parts.Skip(1).All(p => p.Length == 3);
     }
 
     /// <summary>

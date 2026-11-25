@@ -287,6 +287,10 @@ public sealed class BudgetWorkbookTests
     [InlineData("12.5", 12.5)]
     [InlineData("1,5", 1.5)]
     [InlineData("-10.000,25", -10000.25)]
+    [InlineData("0.500", 0.5)]
+    [InlineData("-0.250", -0.25)]
+    [InlineData(".500", 0.5)]
+    [InlineData("1234.567", 1234.567)]
     public void ParseNumber_HandlesNorwegianAndMixedFormats(string text, double expected)
     {
         Assert.Equal((decimal)expected, BudgetWorkbookImporter.ParseNumber(text));
@@ -297,6 +301,8 @@ public sealed class BudgetWorkbookTests
     [InlineData("abc")]
     [InlineData("kr")]
     [InlineData("1,2,3.4.5")]
+    [InlineData("12.01.2026")]
+    [InlineData("1.2.3")]
     public void ParseNumber_ReturnsNullForNonNumbers(string text)
     {
         Assert.Null(BudgetWorkbookImporter.ParseNumber(text));

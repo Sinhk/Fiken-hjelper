@@ -87,6 +87,7 @@ public sealed class FikenDataCache(TimeProvider? time = null)
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
+    private readonly Lock _lock = new();
     private long _version;
     private long _clearGeneration;
 
@@ -116,13 +117,22 @@ public sealed class FikenDataCache(TimeProvider? time = null)
                 return shared;
             }
 
-            var generation = Interlocked.Read(ref _clearGeneration);
+            long generation;
+            lock (_lock)
+            {
+                generation = _clearGeneration;
+            }
+
             var fresh = await fetch();
 
             // Er cachen tømt mens vi hentet (f.eks. frakobling av Fiken), skal svaret ikke lagres.
-            if (Interlocked.Read(ref _clearGeneration) == generation)
+            // Sjekk og lagring skjer under samme lås som Clear(), så ingen Clear() kan slippe imellom.
+            lock (_lock)
             {
-                _entries[key] = new Entry(_time.GetUtcNow(), Interlocked.Increment(ref _version), fresh);
+                if (_clearGeneration == generation)
+                {
+                    _entries[key] = new Entry(_time.GetUtcNow(), ++_version, fresh);
+                }
             }
 
             return fresh;
@@ -151,7 +161,10 @@ public sealed class FikenDataCache(TimeProvider? time = null)
 
     public void Clear()
     {
-        Interlocked.Increment(ref _clearGeneration);
-        _entries.Clear();
+        lock (_lock)
+        {
+            _clearGeneration++;
+            _entries.Clear();
+        }
     }
 }
