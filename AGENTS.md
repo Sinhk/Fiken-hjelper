@@ -13,7 +13,7 @@ Gjelder alle agenter (Claude Code, Antigravity m.fl.). `CLAUDE.md` importerer de
 - Eksempelfiler fra brukeren (f.eks. eksporter fra Min speiding) kan inneholde ekte persondata. De leses bare lokalt og kopieres aldri inn i repoet, tester eller commit-meldinger.
 
 ## Arbeidsflyt
-- Brukeren jobber fra flere maskiner. Windows-maskinen Kaladin har Fiken-innloggingen, så alt som trenger ekte Fiken-data, må verifiseres der.
+- Brukeren jobber fra flere maskiner. Fiken-innloggingen finnes bare på brukerens Windows-maskin, så alt som trenger ekte Fiken-data, må verifiseres der.
 - Jobb på en egen branch. Hent `origin/main` jevnlig og rebase før større steg, siden andre maskiner og agenter også committer.
 - Commit gjerne lokalt, men **spør før du pusher**.
 - Bruk av porter når du kjører appen lokalt:
