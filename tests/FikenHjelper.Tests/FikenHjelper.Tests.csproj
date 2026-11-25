@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FikenHjelper.Core\FikenHjelper.Core.csproj" />
     <ProjectReference Include="..\..\src\FikenHjelper.ServiceDefaults\FikenHjelper.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\src\FikenHjelper.Mcp\FikenHjelper.Mcp.csproj" />
   </ItemGroup>
 
 </Project>
