@@ -2,10 +2,12 @@ using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.MinSpeiding;
+using FikenHjelper.Core.QualityCheck;
 using FikenHjelper.Web.Auth;
 using FikenHjelper.Web.Components;
 using Microsoft.AspNetCore.DataProtection;
 using MudBlazor.Services;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
@@ -56,6 +58,9 @@ builder.Services.AddSingleton<IFikenOAuthService>(sp =>
 // Delt med MCP-serveren via låsfil i datamappen. Må registreres før AddFikenApiClient (TryAdd).
 builder.Services.AddSingleton(sp => FikenRateLimiter.CreateShared(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
 builder.Services.AddFikenApiClient();
+
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddTransient<QualityCheckService>();
 
 builder.Services.AddHttpClient<IMinSpeidingClient, MinSpeidingClient>(client =>
 {

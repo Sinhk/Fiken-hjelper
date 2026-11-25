@@ -60,12 +60,16 @@ public sealed record FikenOrderLine(
     [property: JsonPropertyName("vat")] long? Vat,
     [property: JsonPropertyName("account")] string? Account,
     [property: JsonPropertyName("vatType")] string? VatType,
-    [property: JsonPropertyName("projectId")] long? ProjectId);
+    [property: JsonPropertyName("projectId")] long? ProjectId,
+    [property: JsonPropertyName("netPriceInCurrency")] long? NetPriceInCurrency = null,
+    [property: JsonPropertyName("vatInCurrency")] long? VatInCurrency = null);
 
 public sealed record FikenPayment(
     [property: JsonPropertyName("paymentId")] long? PaymentId,
     [property: JsonPropertyName("date")] string? Date,
-    [property: JsonPropertyName("amount")] long? Amount);
+    [property: JsonPropertyName("amount")] long? Amount,
+    [property: JsonPropertyName("amountInNok")] long? AmountInNok = null,
+    [property: JsonPropertyName("currency")] string? Currency = null);
 
 public sealed record FikenPurchase(
     [property: JsonPropertyName("purchaseId")] long PurchaseId,
@@ -81,7 +85,10 @@ public sealed record FikenPurchase(
     [property: JsonPropertyName("payments")] IReadOnlyList<FikenPayment>? Payments,
     [property: JsonPropertyName("purchaseAttachments")] IReadOnlyList<FikenAttachment>? PurchaseAttachments,
     [property: JsonPropertyName("deleted")] bool Deleted,
-    [property: JsonPropertyName("settled")] bool Settled)
+    [property: JsonPropertyName("settled")] bool Settled,
+    [property: JsonPropertyName("project")]
+    [property: JsonConverter(typeof(FikenProjectRefListConverter))]
+    IReadOnlyList<FikenProjectRef>? Projects = null)
 {
     /// <summary>Brutto i øre (sum av netto + mva på linjene).</summary>
     public long GrossAmount => (Lines ?? []).Sum(l => (l.NetPrice ?? 0) + (l.Vat ?? 0));
@@ -101,7 +108,13 @@ public sealed record FikenSale(
     [property: JsonPropertyName("settled")] bool Settled,
     [property: JsonPropertyName("outstandingBalance")] long? OutstandingBalance,
     [property: JsonPropertyName("customer")] FikenContact? Customer,
-    [property: JsonPropertyName("deleted")] bool Deleted);
+    [property: JsonPropertyName("deleted")] bool Deleted,
+    [property: JsonPropertyName("writeOff")] bool WriteOff = false,
+    [property: JsonPropertyName("totalPaid")] long? TotalPaid = null,
+    [property: JsonPropertyName("kid")] string? Kid = null,
+    [property: JsonPropertyName("project")]
+    [property: JsonConverter(typeof(FikenProjectRefListConverter))]
+    IReadOnlyList<FikenProjectRef>? Projects = null);
 
 public sealed record FikenPurchaseDraftLineRequest(
     [property: JsonPropertyName("text")] string Text,

@@ -17,6 +17,9 @@ public static class FikenServiceCollectionExtensions
         services.TryAddSingleton<FikenRateLimiter>();
         services.TryAddTransient<FikenRateLimitHandler>();
 
+        // FikenClient implementerer også IFikenPurchasingClient (lesing av kjøp, salg og innboks).
+        services.TryAddTransient<IFikenPurchasingClient>(sp => (IFikenPurchasingClient)sp.GetRequiredService<IFikenClient>());
+
         return services.AddHttpClient<IFikenClient, FikenClient>(client =>
         {
             client.BaseAddress = new Uri(FikenClient.DefaultBaseAddress);
