@@ -23,7 +23,7 @@ Gjelder alle agenter (Claude Code, Antigravity m.fl.). `CLAUDE.md` importerer de
 ## Valg av løsninger
 - Bruk modne, aktivt vedlikeholdte open source-pakker med åpen lisens framfor å skrive egne parsere eller infrastruktur. Eksempler: CsvHelper for CSV, ClosedXML for Excel, MudBlazor for UI-komponenter. Skriv bare den tynne limkoden rundt.
 - Brukergrensesnitt, feilmeldinger og dokumentasjon skrives på norsk bokmål.
-- Kjør `dotnet build` og `dotnet test` før commit.
+- Kjør `dotnet build`, `dotnet test` og `dotnet format --verify-no-changes` før commit. CI (`.github/workflows/ci.yml`) kjører de samme sjekkene på alle PR-er mot `main`, og bygget feiler på kompilatoradvarsler.
 
 ## Eksportfiler fra Min speiding
 Disse konvensjonene går ikke fram av kolonnenavnene:
