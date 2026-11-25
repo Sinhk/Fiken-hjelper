@@ -220,12 +220,31 @@ public static partial class BudgetWorkbookImporter
             }
         }
 
-        if (value.IsNumber)
+        if (value.IsNumber && double.IsFinite(value.GetNumber()))
         {
-            return Math.Round((decimal)value.GetNumber(), 2);
+            return ToAmount(value.GetNumber());
         }
 
         return value.IsText ? ParseNumber(value.GetText()) : null;
+    }
+
+    /// <summary>
+    /// Gjør et tall fra en Excel-celle om til et beløp med to desimaler. Tallet går via den korteste
+    /// desimalteksten som gir samme double (det som står i cellen, f.eks. «1.015»), ikke via den eksakte
+    /// binærverdien (1,01499999…). Fra .NET 11 bruker <c>(decimal)double</c> den eksakte verdien, og da
+    /// ville 1,015 blitt rundet ned til 1,01.
+    /// </summary>
+    public static decimal ToAmount(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            throw new OverflowException($"«{value}» er ikke et gyldig beløp.");
+        }
+
+        var shortest = decimal.Parse(value.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture);
+        var rounded = Math.Round(shortest, 2);
+        // -0,001 og -0.0 gir ellers «negativ null».
+        return rounded == 0m ? 0m : rounded;
     }
 
     /// <summary>

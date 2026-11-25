@@ -1,6 +1,6 @@
 # Fiken-hjelper – Plan og veikart
 
-Verktøysamling i **.NET 10** for regnskapsfører/kasserer i **Romsdal og Nordmøre krets (Norges speiderforbund)**.
+Verktøysamling i **.NET 11** for regnskapsfører/kasserer i **Romsdal og Nordmøre krets (Norges speiderforbund)**.
 
 ## Arkitektur og grunnprinsipper
 

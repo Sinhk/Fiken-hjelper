@@ -1,13 +1,13 @@
 # Fiken-hjelper
 
-Lokale verktøy i **.NET 10** for regnskapsfører/kasserer i **Romsdal og Nordmøre krets (Norges speiderforbund)**.
+Lokale verktøy i **.NET 11** for regnskapsfører/kasserer i **Romsdal og Nordmøre krets (Norges speiderforbund)**.
 
 Se [PLAN.md](PLAN.md) for hele veikartet (CSV/XLSX-import, budsjettrapporter i Excel, MCP-server for AI-chat og .NET Aspire-støtte).
 
 ## Kom i gang
 
 ### 1. Forutsetninger
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [.NET 11 SDK](https://dotnet.microsoft.com/download)
 - Fiken-konto med API-tilgang aktivert (*Foretak → Tilleggstjenester*)
 - Egen OAuth2-utviklerapp i Fiken (anbefalt, krever ikke godkjenning på forhånd) – eller personlig API-nøkkel fra `api@fiken.no`
 - Prosjekt-ID og API-nøkkel fra `min.speiding.no` (*Prosjekter → Webtjenester*)

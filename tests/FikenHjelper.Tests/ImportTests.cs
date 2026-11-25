@@ -163,6 +163,7 @@ public sealed class ImportValueParserTests
     [InlineData("450,00", 450)]
     [InlineData("450.00", 450)]
     [InlineData("1 250,50", 1250.50)]
+    [InlineData("kr 375,10", 375.10)]
     [InlineData("1.250,50", 1250.50)]
     [InlineData("1.250", 1250)]
     [InlineData("kr 450", 450)]
@@ -196,7 +197,7 @@ public sealed class ImportValueParserTests
     [InlineData("Avgift: -700.00", -700)]
     public void ParseAmountNok_ParsesNorwegianFormats(string input, double expected)
     {
-        Assert.Equal((decimal)expected, ImportValueParser.ParseAmountNok(input));
+        Assert.Equal(TestAmounts.Exact(expected), ImportValueParser.ParseAmountNok(input));
     }
 
     [Theory]
