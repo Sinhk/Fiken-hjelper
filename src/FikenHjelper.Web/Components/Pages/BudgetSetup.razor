@@ -1,4 +1,5 @@
 @page "/budsjett/oppsett"
+@using System.Globalization
 @rendermode InteractiveServer
 
 <PageTitle>Rediger budsjett – Fiken-hjelper</PageTitle>
@@ -58,6 +59,8 @@
         }
         else
         {
+            <MudTabs Elevation="0" TabPanelsClass="pt-3" @bind-ActivePanelIndex="activeTab">
+            <MudTabPanel Text="Budsjettposter">
             <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
                 Inntekter skrives som positive beløp og kostnader som negative. Regnskapet hentes fra de koblede Fiken-prosjektene.
                 Fyll bare ut «Manuelt regnskap» for år uten prosjekter i Fiken.
@@ -94,27 +97,21 @@
                                                  Placeholder="Fra Fiken" Class="fh-num-input" aria-label="@($"Manuelt regnskap for {line.Name}")" />
                             </td>
                             <td>
-                                <MudSelect T="long" MultiSelection Dense Margin="Margin.Dense" Variant="Variant.Text"
-                                           SelectedValues="line.ProjectIds" SelectedValuesChanged="v => SetProjects(line, v)"
-                                           ToStringFunc="ProjectName" MultiSelectionTextFunc="ProjectSummary"
-                                           Placeholder="@(projects.Count == 0 ? "Ingen prosjekter lastet" : "Velg prosjekter")"
-                                           Disabled="@(projects.Count == 0)" aria-label="@($"Prosjekter for {line.Name}")">
-                                    @foreach (var p in projects)
+                                <div class="d-flex flex-wrap align-center gap-1">
+                                    @foreach (var id in line.ProjectIds.Where(id => !projectsLoaded || projectsById.ContainsKey(id)))
                                     {
-                                        var usedBy = UsedByOther(p.ProjectId, line);
-                                        <MudSelectItem T="long" Value="p.ProjectId">
-                                            @p.Name
-                                            @if (p.Completed)
-                                            {
-                                                <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> (avsluttet)</MudText>
-                                            }
-                                            @if (usedBy is not null)
-                                            {
-                                                <MudText Inline Typo="Typo.caption" Color="Color.Warning"> – brukt i «@usedBy»</MudText>
-                                            }
-                                        </MudSelectItem>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 OnClose="_ => RemoveProject(line, id)" title="@UsedByOtherTitle(id, line)"
+                                                 Color="@(UsedByOther(id, line) is null ? Color.Default : Color.Warning)">
+                                            @ProjectName(id)
+                                        </MudChip>
                                     }
-                                </MudSelect>
+                                    <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                                               OnClick="() => OpenPickerAsync(line)" Disabled="@(projects.Count == 0)"
+                                               aria-label="@($"Velg prosjekter for {line.Name}")">
+                                        @(projects.Count == 0 ? "Ingen prosjekter lastet" : line.ProjectIds.Count == 0 ? "Velg prosjekter" : "Endre")
+                                    </MudButton>
+                                </div>
                                 @foreach (var missing in projectsLoaded ? line.ProjectIds.Where(id => !projectsById.ContainsKey(id)) : [])
                                 {
                                     <MudChip T="string" Size="Size.Small" Color="Color.Warning" OnClose="_ => RemoveProject(line, missing)">
@@ -157,6 +154,135 @@
                     Slett @current.Year
                 </MudButton>
             </MudStack>
+            </MudTabPanel>
+
+            <MudTabPanel Text="Prosjekter → poster" BadgeData="@UnlinkedBadge" BadgeColor="Color.Warning">
+                @if (!projectsLoaded)
+                {
+                    <MudAlert Severity="Severity.Info">Prosjektene er ikke hentet fra Fiken.</MudAlert>
+                }
+                else if (IsLoadingActivity)
+                {
+                    <MudProgressLinear Indeterminate Color="Color.Primary" />
+                    <MudText Typo="Typo.body2" Class="mt-2">Henter posteringer for @current.Year fra Fiken …</MudText>
+                }
+                else if (CurrentActivity is null && !ActivityFailed)
+                {
+                    <MudAlert Severity="Severity.Info">
+                        Posteringer for @current.Year er ikke hentet ennå.
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => LoadActivityAsync(current.Year)">Hent nå</MudButton>
+                    </MudAlert>
+                }
+                else if (CurrentActivity is null)
+                {
+                    <MudAlert Severity="Severity.Warning">
+                        Klarte ikke å hente posteringer for @current.Year.
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => LoadActivityAsync(current.Year, refresh: true)">Prøv igjen</MudButton>
+                    </MudAlert>
+                }
+                else
+                {
+                    var rows = ProjectRows;
+                    var visible = rows
+                        .Where(r => !onlyUnlinked || r.Lines.Count == 0)
+                        .Where(r => string.IsNullOrWhiteSpace(projectSearch)
+                                    || Nb.CompareInfo.IndexOf(r.Project.Name, projectSearch.Trim(), CompareOptions.IgnoreCase) >= 0
+                                    || (r.Project.Number?.Contains(projectSearch.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
+                        .ToList();
+                    var strong = rows.Count(r => r.Lines.Count == 0 && r.SuggestionIsStrong);
+
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
+                        Prosjekter med posteringer i @current.Year. Velg hvilken budsjettpost hvert prosjekt hører til.
+                        Endringene lagres med «Lagre» øverst.
+                    </MudText>
+                    <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudTextField T="string" @bind-Value="projectSearch" Immediate DebounceInterval="150" Clearable
+                                      Placeholder="Søk etter prosjekt" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 18rem" aria-label="Søk etter prosjekt" />
+                        <MudSwitch T="bool" @bind-Value="onlyUnlinked" Color="Color.Primary">Bare ukoblede (@rows.Count(r => r.Lines.Count == 0))</MudSwitch>
+                        <MudSpacer />
+                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.DoneAll" Disabled="@(strong == 0)"
+                                   OnClick="AcceptStrongSuggestions">
+                            Godta sikre forslag (@strong)
+                        </MudButton>
+                    </MudStack>
+
+                    @if (visible.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Success">
+                            @(rows.Count == 0 ? $"Ingen prosjekter har posteringer i {current.Year}." : "Alle prosjekter med posteringer er koblet til en budsjettpost.")
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudSimpleTable Dense Bordered Style="overflow-x: auto">
+                            <thead>
+                                <tr>
+                                    <th style="min-width: 14rem">Prosjekt</th>
+                                    <th style="min-width: 8rem" class="fh-num-col">Regnskap @current.Year</th>
+                                    <th style="min-width: 16rem">Budsjettpost</th>
+                                    <th style="min-width: 14rem">Forslag</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in visible)
+                                {
+                                    var r = row;
+                                    <tr @key="r.Project.ProjectId">
+                                        <td>
+                                            @r.Project.Name
+                                            @if (!string.IsNullOrWhiteSpace(r.Project.Number))
+                                            {
+                                                <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> (@r.Project.Number)</MudText>
+                                            }
+                                            @if (r.Project.Completed)
+                                            {
+                                                <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> – avsluttet</MudText>
+                                            }
+                                        </td>
+                                        <td class="fh-num-col tabular-nums">@r.Activity.Amount.ToString("N0", Nb)</td>
+                                        <td>
+                                            @if (r.Lines.Count > 1)
+                                            {
+                                                <MudText Typo="Typo.body2" Color="Color.Warning">
+                                                    Koblet til flere poster: @string.Join(", ", r.Lines.Select(l => l.Name)). Endres under «Budsjettposter».
+                                                </MudText>
+                                            }
+                                            else
+                                            {
+                                                <MudSelect T="int" Value="@(r.Lines.Count == 1 ? current.Lines.IndexOf(r.Lines[0]) : -1)"
+                                                           ValueChanged="i => SetProjectLine(r.Project.ProjectId, i)"
+                                                           Dense Margin="Margin.Dense" Variant="Variant.Text"
+                                                           aria-label="@($"Budsjettpost for {r.Project.Name}")">
+                                                    <MudSelectItem T="int" Value="-1">— ikke koblet —</MudSelectItem>
+                                                    @for (var i = 0; i < current.Lines.Count; i++)
+                                                    {
+                                                        var index = i;
+                                                        <MudSelectItem T="int" Value="index">@current.Lines[index].Name</MudSelectItem>
+                                                    }
+                                                </MudSelect>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (r.Suggestion is { } suggestion)
+                                            {
+                                                <MudButton Variant="@(r.SuggestionIsStrong ? Variant.Filled : Variant.Outlined)" Size="Size.Small"
+                                                           Color="Color.Primary" StartIcon="@Icons.Material.Filled.Lightbulb"
+                                                           OnClick="() => SetProjectLine(r.Project.ProjectId, current.Lines.IndexOf(suggestion.Item))"
+                                                           title="@LineMatchText(suggestion)">
+                                                    @suggestion.Item.Name
+                                                </MudButton>
+                                                <MudText Inline Typo="Typo.caption" Color="Color.Secondary" Class="ml-1">@LineMatchText(suggestion)</MudText>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </MudSimpleTable>
+                    }
+                }
+            </MudTabPanel>
+            </MudTabs>
         }
     </MudPaper>
 
@@ -196,6 +322,50 @@
                     </MudListItem>
                 }
             </MudList>
+
+            @if (importPreview.Suggestions.Count > 0)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-3">Prosjektnavn uten eksakt treff i Fiken</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
+                    Huk av forslagene som stemmer. Sikre forslag er huket av på forhånd. Prosjekter uten hake kobles ikke.
+                </MudText>
+                <MudSimpleTable Dense Bordered Style="overflow-x: auto">
+                    <thead>
+                        <tr>
+                            <th style="width: 4rem">Koble</th>
+                            <th>Navn i arket</th>
+                            <th>Budsjettpost</th>
+                            <th style="min-width: 16rem">Fiken-prosjekt</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var suggestion in importPreview.Suggestions)
+                        {
+                            var sug = suggestion;
+                            <tr>
+                                <td>
+                                    <MudCheckBox T="bool" Value="acceptedSuggestions.Contains(sug)" Dense
+                                                 ValueChanged="v => ToggleSuggestion(sug, v)" aria-label="@($"Koble {sug.SheetName}")" />
+                                </td>
+                                <td>@sug.SheetName</td>
+                                <td>
+                                    @string.Join("; ", sug.Targets.GroupBy(t => t.LineName, StringComparer.CurrentCultureIgnoreCase)
+                                        .Select(g => $"{g.Key} ({string.Join(", ", g.Select(t => t.Year).Order())})"))
+                                </td>
+                                <td>
+                                    <MudSelect T="long" Value="suggestionChoices[sug]" ValueChanged="id => ChooseSuggestion(sug, id)"
+                                               Dense Margin="Margin.Dense" Variant="Variant.Text" aria-label="@($"Fiken-prosjekt for {sug.SheetName}")">
+                                        @foreach (var candidate in sug.Candidates)
+                                        {
+                                            <MudSelectItem T="long" Value="candidate.Item.ProjectId">@candidate.Item.Name (likhet @candidate.Score %)</MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
 
             @if (importPreview.Warnings.Count > 0)
             {

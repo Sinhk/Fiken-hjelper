@@ -44,6 +44,19 @@ public sealed class BudgetYear
 {
     public int Year { get; set; }
     public List<BudgetLine> Lines { get; set; } = [];
+
+    /// <summary>Kopi med egne poster og prosjektlister, så endringer i kopien ikke påvirker originalen.</summary>
+    public BudgetYear Copy() => new()
+    {
+        Year = Year,
+        Lines = Lines.Select(l => new BudgetLine
+        {
+            Name = l.Name,
+            Amount = l.Amount,
+            ManualActual = l.ManualActual,
+            ProjectIds = [.. l.ProjectIds]
+        }).ToList()
+    };
 }
 
 /// <summary>
@@ -67,6 +80,9 @@ public sealed class BudgetLine
 }
 
 public sealed record ProjectActual(long ProjectId, string Name, decimal Amount);
+
+/// <summary>Resultat og antall posteringer på resultatkonti for ett prosjekt i ett år.</summary>
+public sealed record ProjectActivity(decimal Amount, int PostingCount);
 
 public sealed record BudgetLineReport(
     string Name,

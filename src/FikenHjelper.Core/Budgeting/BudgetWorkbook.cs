@@ -9,7 +9,27 @@ namespace FikenHjelper.Core.Budgeting;
 
 public sealed record BudgetImportResult(
     IReadOnlyList<BudgetYear> Years,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    /// <summary>Prosjektnavn i arket uten eksakt treff i Fiken, med forslag. Kobles først når de er godtatt.</summary>
+    public IReadOnlyList<ProjectImportSuggestion> Suggestions { get; init; } = [];
+}
+
+/// <summary>Én budsjettpost i ett år som et prosjektnavn i arket hører til.</summary>
+public sealed record ProjectImportTarget(int Year, string LineName);
+
+/// <summary>
+/// Et prosjektnavn fra arkene «Regnskap ÅÅÅÅ» som ikke finnes eksakt i Fiken, med de mest like
+/// Fiken-prosjektene. Samme navn i flere år gir ett forslag.
+/// </summary>
+public sealed record ProjectImportSuggestion(
+    string SheetName,
+    IReadOnlyList<ProjectImportTarget> Targets,
+    IReadOnlyList<NameMatch<FikenProject>> Candidates)
+{
+    /// <summary>Det beste forslaget er sikkert nok til å godtas på forhånd.</summary>
+    public bool IsStrong => ProjectNameMatcher.IsStrong(Candidates);
+}
 
 /// <summary>
 /// Leser kretsens oppsett "Sammenstilling av budsjett og regnskap":
@@ -87,6 +107,7 @@ public static partial class BudgetWorkbookImporter
             }
         }
 
+        var pending = new Dictionary<string, (string Name, List<ProjectImportTarget> Targets)>();
         var projectsByName = fikenProjects
             .Where(p => !string.IsNullOrWhiteSpace(p.Name))
             .GroupBy(p => Normalize(p.Name))
@@ -113,18 +134,66 @@ public static partial class BudgetWorkbookImporter
                 line.ManualActual = null;
             }
 
-            ImportProjectSheet(projectSheet, budgetYear, projectsByName, warnings);
+            ImportProjectSheet(projectSheet, budgetYear, projectsByName, pending, warnings);
+        }
+
+        var suggestions = new List<ProjectImportSuggestion>();
+        foreach (var (name, targets) in pending.Values)
+        {
+            var candidates = ProjectNameMatcher.Rank(name, fikenProjects, p => p.Name)
+                .Take(ProjectLinking.MaxSuggestions)
+                .ToList();
+            if (candidates.Count == 0)
+            {
+                warnings.AddRange(targets.Select(t =>
+                    $"{t.Year}: Fant ikke prosjektet «{name}» i Fiken. Koble det manuelt til «{t.LineName}»."));
+                continue;
+            }
+
+            suggestions.Add(new ProjectImportSuggestion(name, targets, candidates));
         }
 
         return new BudgetImportResult(
             years.Values.OrderByDescending(y => y.Year).ToList(),
-            warnings);
+            warnings)
+        {
+            Suggestions = suggestions
+        };
+    }
+
+    /// <summary>
+    /// Kobler godtatte forslag til budsjettpostene de gjelder i <paramref name="years"/>.
+    /// <paramref name="choices"/> gir valgt Fiken-prosjekt per forslag. Forslag som ikke er med, kobles ikke.
+    /// Bruk gjerne kopier av årene fra importen (<see cref="BudgetYear.Copy"/>), så forhåndsvisningen
+    /// ikke endres hvis lagringen feiler.
+    /// </summary>
+    public static void ApplySuggestions(
+        IReadOnlyList<BudgetYear> years,
+        IEnumerable<(ProjectImportSuggestion Suggestion, long ProjectId)> choices)
+    {
+        ArgumentNullException.ThrowIfNull(years);
+        ArgumentNullException.ThrowIfNull(choices);
+
+        foreach (var (suggestion, projectId) in choices)
+        {
+            foreach (var target in suggestion.Targets)
+            {
+                var line = years
+                    .FirstOrDefault(y => y.Year == target.Year)?
+                    .Lines.FirstOrDefault(l => Normalize(l.Name) == Normalize(target.LineName));
+                if (line is not null && !line.ProjectIds.Contains(projectId))
+                {
+                    line.ProjectIds.Add(projectId);
+                }
+            }
+        }
     }
 
     private static void ImportProjectSheet(
         IXLWorksheet sheet,
         BudgetYear budgetYear,
         Dictionary<string, List<long>> projectsByName,
+        Dictionary<string, (string Name, List<ProjectImportTarget> Targets)> pending,
         List<string> warnings)
     {
         var linesByName = budgetYear.Lines.ToDictionary(l => Normalize(l.Name));
@@ -153,7 +222,20 @@ public static partial class BudgetWorkbookImporter
 
             if (!projectsByName.TryGetValue(Normalize(projectName), out var ids))
             {
-                warnings.Add($"{budgetYear.Year}: Fant ikke prosjektet «{projectName}» i Fiken. Koble det manuelt til «{line.Name}».");
+                // Avgjøres etter at alle år er lest, så samme navn i flere år gir ett forslag.
+                var key = Normalize(projectName);
+                if (!pending.TryGetValue(key, out var entry))
+                {
+                    entry = (projectName, []);
+                    pending[key] = entry;
+                }
+
+                var target = new ProjectImportTarget(budgetYear.Year, line.Name);
+                if (!entry.Targets.Contains(target))
+                {
+                    entry.Targets.Add(target);
+                }
+
                 continue;
             }
 

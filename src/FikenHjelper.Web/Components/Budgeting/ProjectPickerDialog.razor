@@ -1,0 +1,131 @@
+@using System.Globalization
+
+@* Velger Fiken-prosjekter for én budsjettpost: søk, forslag etter navn øverst, koblede og avsluttede skjult. *@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField T="string" @bind-Value="search" Immediate DebounceInterval="150"
+                          Placeholder="Søk på navn eller nummer" Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Clearable AutoFocus aria-label="Søk etter prosjekt" />
+            <MudStack Row Wrap="Wrap.Wrap" Spacing="2">
+                <MudCheckBox T="bool" @bind-Value="showLinkedElsewhere" Dense Size="Size.Small">Vis prosjekter koblet til andre poster</MudCheckBox>
+                <MudCheckBox T="bool" @bind-Value="showCompleted" Dense Size="Size.Small">Vis avsluttede uten posteringer</MudCheckBox>
+            </MudStack>
+            @if (Activity is null)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Regnskapstall for @Year.Year er ikke hentet, så avsluttede prosjekter er skjult.
+                </MudText>
+            }
+
+            <div style="max-height: 55vh; overflow-y: auto">
+                @{
+                    var options = Options;
+                }
+                @if (options.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="pa-2">Ingen prosjekter passer.</MudText>
+                }
+                @foreach (var group in options.GroupBy(o => o.Group))
+                {
+                    <MudText Typo="Typo.overline" HtmlTag="h3" Class="mt-2">@GroupTitle(group.Key)</MudText>
+                    @foreach (var option in group)
+                    {
+                        var project = option.Project;
+                        <div class="d-flex align-center gap-2">
+                            <MudCheckBox T="bool" Value="selected.Contains(project.ProjectId)"
+                                         ValueChanged="v => Toggle(project.ProjectId, v)" Dense Size="Size.Small">
+                                @project.Name
+                                @if (!string.IsNullOrWhiteSpace(project.Number))
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> (@project.Number)</MudText>
+                                }
+                                @if (project.Completed)
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> – avsluttet</MudText>
+                                }
+                                @if (option.Match is { } match)
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Primary"> – @MatchText(match)</MudText>
+                                }
+                                @if (option.UsedBy is not null)
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Warning"> – brukt i @option.UsedBy</MudText>
+                                }
+                            </MudCheckBox>
+                            <MudSpacer />
+                            @if (option.Activity is { } activity)
+                            {
+                                <MudText Typo="Typo.body2" Class="tabular-nums">@activity.Amount.ToString("N0", Nb)</MudText>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="mr-auto ml-4">@selected.Count valgt</MudText>
+        <MudButton OnClick="Cancel">Avbryt</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Bruk</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public BudgetLine Line { get; set; } = default!;
+    [Parameter, EditorRequired] public BudgetYear Year { get; set; } = default!;
+    [Parameter] public BudgetYear? PreviousYear { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<FikenProject> Projects { get; set; } = [];
+
+    /// <summary>Posteringer per prosjekt i året, eller null når de ikke er hentet.</summary>
+    [Parameter] public IReadOnlyDictionary<long, ProjectActivity>? Activity { get; set; }
+
+    private HashSet<long> selected = [];
+    private string? search;
+    private bool showLinkedElsewhere;
+    private bool showCompleted;
+
+    protected override void OnInitialized() => selected = [.. Line.ProjectIds];
+
+    private IReadOnlyList<ProjectPickerOption> Options => ProjectLinking.BuildPickerOptions(
+        Line, selected, Year, PreviousYear, Projects, Activity, search, showLinkedElsewhere, showCompleted);
+
+    private void Toggle(long id, bool on)
+    {
+        if (on)
+        {
+            selected.Add(id);
+        }
+        else
+        {
+            selected.Remove(id);
+        }
+    }
+
+    // Behold rekkefølgen prosjektene allerede hadde, og legg nye til sist.
+    private void Submit() => MudDialog.Close(DialogResult.Ok(
+        Line.ProjectIds.Where(selected.Contains).Concat(selected.Except(Line.ProjectIds)).ToList()));
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private static string GroupTitle(ProjectPickerGroup group) => group switch
+    {
+        ProjectPickerGroup.Selected => "Valgt",
+        ProjectPickerGroup.Suggested => "Forslag",
+        ProjectPickerGroup.Unlinked => "Ikke koblet",
+        ProjectPickerGroup.LinkedElsewhere => "Koblet til andre poster",
+        _ => "Avsluttet, uten posteringer i året"
+    };
+
+    private static string MatchText(NameMatch<FikenProject> match) => match.Reason switch
+    {
+        NameMatchReason.Exact => "samme navn",
+        NameMatchReason.History => "koblet hit i fjor",
+        _ => $"likhet {match.Score} %"
+    };
+}
