@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  SOLUTION: FikenHjelper.slnx
+
+jobs:
+  build-and-test:
+    name: Bygg og test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore "$SOLUTION"
+
+      - name: Bygg (advarsler gir feil)
+        run: dotnet build "$SOLUTION" --no-restore -c Release -warnaserror
+
+      - name: Sjekk formatering
+        run: dotnet format "$SOLUTION" --verify-no-changes --no-restore
+
+      - name: Test
+        run: >
+          dotnet test "$SOLUTION" --no-build -c Release
+          --logger "trx;LogFileName=test-results.trx"
+          --logger "GitHubActions"
+          --results-directory TestResults
+
+      - name: Last opp testresultater
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+          if-no-files-found: ignore

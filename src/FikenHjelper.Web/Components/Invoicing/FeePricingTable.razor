@@ -17,9 +17,11 @@
             <tbody>
                 @foreach (var category in Categories)
                 {
-                    var currentPrice = CategoryPrices.TryGetValue(category.Key, out var configured)
+                    decimal? knownPrice = CategoryPrices.TryGetValue(category.Key, out var configured)
                         ? configured
-                        : (category.SuggestedPriceNok ?? 0m);
+                        : category.SuggestedPriceNok;
+                    var priceMissing = !knownPrice.HasValue;
+                    var currentPrice = knownPrice ?? 0m;
                     var currentLabel = CategoryLabels is not null
                         && CategoryLabels.TryGetValue(category.Key, out var customLabel)
                         && !string.IsNullOrWhiteSpace(customLabel)
@@ -51,7 +53,11 @@
                                         {
                                             <span class="fh-hint">Fra Min speiding: @category.Label</span>
                                         }
-                                        @if (currentPrice <= 0m)
+                                        @if (priceMissing)
+                                        {
+                                            <span class="fh-badge fh-badge-danger">Mangler pris</span>
+                                        }
+                                        else if (currentPrice <= 0m)
                                         {
                                             <span class="fh-badge fh-badge-neutral">Gratis</span>
                                         }
@@ -93,7 +99,8 @@
                                    type="number"
                                    step="0.01"
                                    min="0"
-                                   value="@currentPrice.ToString(CultureInfo.InvariantCulture)"
+                                   value="@(priceMissing ? string.Empty : currentPrice.ToString(CultureInfo.InvariantCulture))"
+                                   placeholder="@(priceMissing ? "Sett pris" : null)"
                                    @onchange="(e) => HandlePriceChanged(category.Key, e)" />
                         </td>
                     </tr>

@@ -243,6 +243,10 @@ public static partial class MinSpeidingParser
             raw.PrimaryMembershipInfo?.GroupId,
             "Primærgruppe");
 
+        // Groups found in other fields are offered as choices, but never become the invoice
+        // recipient on their own: only the registration or primary membership can do that.
+        var trustedGroupCount = availableGroups.Count;
+
         if (raw.ExtensionData is not null)
         {
             foreach (var (key, element) in raw.ExtensionData)
@@ -256,8 +260,8 @@ public static partial class MinSpeidingParser
             }
         }
 
-        var defaultGroupName = availableGroups.Count > 0 ? availableGroups[0].GroupName : UnknownGroupName;
-        var defaultGroupId = availableGroups.Count > 0
+        var defaultGroupName = trustedGroupCount > 0 ? availableGroups[0].GroupName : UnknownGroupName;
+        var defaultGroupId = trustedGroupCount > 0
             ? availableGroups[0].GroupId ?? raw.PrimaryMembershipInfo?.GroupId
             : null;
 
@@ -400,12 +404,10 @@ public static partial class MinSpeidingParser
             }
             else if (keyMatchesGroup
                 && prop.Value.ValueKind == JsonValueKind.String
-                && !IgnoredStringSubKeys.Contains(prop.Name)
-                && !PureIdGroupKeys.Contains(prop.Name))
+                && long.TryParse(prop.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mapId))
             {
-                long? mapId = long.TryParse(prop.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
-                    ? parsed
-                    : null;
+                // Only the id → name map form ({"501": "Molde speidergruppe"}). Other text properties
+                // (status, dates, roles) are not group names.
                 TryAddGroupTokenText(prop.Value.GetString(), mapId, labelGroupLookup, addGroup, allowRawString: true);
             }
         }
@@ -457,10 +459,10 @@ public static partial class MinSpeidingParser
         }
     }
 
+    // Only known group-list keys count. Matching any key that merely contains "group" or
+    // "membership" turned fields like age_group or membership_status into scout groups.
     private static bool IsGroupOrMembershipKey(string key)
-        => key.Contains("group", StringComparison.OrdinalIgnoreCase)
-            || key.Contains("membership", StringComparison.OrdinalIgnoreCase)
-            || key.Contains("gruppe", StringComparison.OrdinalIgnoreCase);
+        => ExtensionGroupListKeys.Contains(key);
 
     private static bool IsDirectGroupNameProperty(string propName, bool keyMatchesGroup)
         => propName.Equals("group_name", StringComparison.OrdinalIgnoreCase)
@@ -543,20 +545,11 @@ public static partial class MinSpeidingParser
         "secondary_groups"
     };
 
-    private static readonly HashSet<string> IgnoredStringSubKeys = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> ExtensionGroupListKeys = new(PluralGroupKeys, StringComparer.OrdinalIgnoreCase)
     {
-        "troop_name",
-        "patrol_name",
-        "district_name",
-        "org_name",
-        "organisation_name",
-        "region_name",
-        "cancelled_date",
-        "registration_date",
-        "confirmed_at",
-        "source",
-        "type",
-        "role"
+        "other_memberships",
+        "group_memberships",
+        "additional_groups"
     };
 
     private static (string Key, string Label) ResolveFeeCategory(

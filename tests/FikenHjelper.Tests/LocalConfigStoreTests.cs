@@ -146,4 +146,45 @@ public sealed class LocalConfigStoreTests : IDisposable
         await store.DeleteEventDraftStateAsync("12345");
         Assert.Null(await store.LoadEventDraftStateAsync("12345"));
     }
+
+    [Fact]
+    public async Task LoadEventDraftState_UnreadableFile_ReturnsNullAndMovesFileAside()
+    {
+        var store = new LocalConfigStore(null, _tempDir);
+        var draftsDir = Path.Combine(_tempDir, "drafts");
+        Directory.CreateDirectory(draftsDir);
+        await File.WriteAllTextAsync(Path.Combine(draftsDir, "12345.json"), "{ \"billingMode\": \"PerParticipant\", ");
+
+        Assert.Null(await store.LoadEventDraftStateAsync("12345"));
+        Assert.False(File.Exists(Path.Combine(draftsDir, "12345.json")));
+        Assert.Single(Directory.GetFiles(draftsDir, "12345.json.corrupt-*"));
+
+        // Saving again works normally afterwards.
+        await store.SaveEventDraftStateAsync(new SavedEventDraftState { ProjectId = "12345", FikenCompanySlug = " krets " });
+        var reloaded = await store.LoadEventDraftStateAsync("12345");
+        Assert.NotNull(reloaded);
+        Assert.Equal("krets", reloaded!.FikenCompanySlug);
+    }
+
+    [Fact]
+    public async Task LoadEventDraftState_FileWithoutFormatVersion_ReadsAsLegacy()
+    {
+        var store = new LocalConfigStore(null, _tempDir);
+        var draftsDir = Path.Combine(_tempDir, "drafts");
+        Directory.CreateDirectory(draftsDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(draftsDir, "777.json"),
+            """{ "projectId": "777", "categoryPricesNok": { "fee:101": 450 } }""");
+
+        var legacy = await store.LoadEventDraftStateAsync("777");
+        Assert.NotNull(legacy);
+        Assert.Equal(0, legacy!.FormatVersion);
+
+        await store.SaveEventDraftStateAsync(new SavedEventDraftState
+        {
+            ProjectId = "777",
+            FormatVersion = SavedEventDraftState.CurrentFormatVersion
+        });
+        Assert.Equal(SavedEventDraftState.CurrentFormatVersion, (await store.LoadEventDraftStateAsync("777"))!.FormatVersion);
+    }
 }
