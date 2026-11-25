@@ -376,7 +376,7 @@ public static class ParticipantImportMapper
         => value.Length > 0 && !value.Any(char.IsLetter) && ImportValueParser.ParseAmountNok(value).HasValue;
 
     /// <summary>
-    /// Samme prioritet som <c>MinSpeidingParser.DetectPriceNok</c>: et beløp over 0 vinner, ellers prisen i
+    /// Samme prioritet som <c>MinSpeidingParser.DetectPriceNok</c>: et beløp som ikke er 0 vinner, ellers prisen i
     /// avgiftsnavnet, ellers 0 fra beløpskolonnen. Min speidings fullrapport har ofte «Antall» = «0,00» også når
     /// avgiften koster noe.
     /// </summary>

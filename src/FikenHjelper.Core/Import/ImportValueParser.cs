@@ -168,6 +168,11 @@ public static partial class ImportValueParser
             fraction = text[(lastSeparator + 1)..];
         }
 
+        if (!integerPart.All(c => char.IsAsciiDigit(c) || c is ' ' or '.' or ','))
+        {
+            return null;
+        }
+
         var digits = new string(integerPart.Where(char.IsAsciiDigit).ToArray());
         if (digits.Length == 0 || !fraction.All(char.IsAsciiDigit)
             || !decimal.TryParse(fraction.Length > 0 ? $"{digits}.{fraction}" : digits, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var number))
@@ -269,7 +274,8 @@ public static partial class ImportValueParser
     private static partial Regex PrefixAmount();
 
     // Min speiding eksporterer avgiften som «<Navn>: <beløp>», f.eks. «Lederkurs: 700.00».
-    [GeneratedRegex(@":\s*(?<n>-?\d{1,3}(?:[ .,]\d{3})+(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*$")]
+    // Kolon rett etter et siffer er klokkeslett («10:00-18:30»), ikke beløp. Tusenskillet må være det samme i hele tallet.
+    [GeneratedRegex(@"(?<!\d):\s*(?<n>-?[1-9]\d{0,2}(?<sep>[ .,])\d{3}(?:\k<sep>\d{3})*(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*$")]
     private static partial Regex ColonAmount();
 
     [GeneratedRegex(@"(?i)\bfree\b")]

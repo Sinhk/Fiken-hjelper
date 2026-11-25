@@ -145,6 +145,11 @@ public sealed class ImportValueParserTests
     [InlineData("Sommerleir: 1,500.00", 1500)]
     [InlineData("Sommerleir: 1.500", 1500)]
     [InlineData("Sommerleir: 1500,5", 1500.5)]
+    [InlineData("Avgift: 1.5", 1.5)]
+    [InlineData("Avgift: 12.50", 12.5)]
+    [InlineData("Avgift: 1,5", 1.5)]
+    [InlineData("Avgift: 1 500", 1500)]
+    [InlineData("Avgift: -700.00", -700)]
     public void ParseAmountNok_ParsesNorwegianFormats(string input, double expected)
     {
         Assert.Equal((decimal)expected, ImportValueParser.ParseAmountNok(input));
@@ -157,6 +162,10 @@ public sealed class ImportValueParserTests
     [InlineData("Betalt 2026")]
     [InlineData("Del 1 av 2")]
     [InlineData("450 + 50")]
+    [InlineData("Dagspass lørdag 10:00-18:30")]
+    [InlineData("Oppmøte kl 18:00")]
+    [InlineData("Avgift: 1 500,000")]
+    [InlineData("Avgift: 1.500,000")]
     public void ParseAmountNok_ReturnsNullForNonAmounts(string input)
     {
         Assert.Null(ImportValueParser.ParseAmountNok(input));
@@ -205,7 +214,16 @@ public sealed class ImportProfileSuggesterTests
     [InlineData("Generelt - Foreldres tlf", false)]
     [InlineData("Generelt - Pårørende ved ulykke", false)]
     [InlineData("Generelt - Hva heter patruljen din?", true)]
+    [InlineData("Generelt - Postadresse", false)]
+    [InlineData("Generelt - Nødtelefon", false)]
+    [InlineData("Generelt - Har deltakeren matallergi?", false)]
+    [InlineData("Generelt - Spesialdiett", false)]
+    [InlineData("Generelt - Astmamedisin", false)]
+    [InlineData("Generelt - Hjertesykdom", false)]
+    [InlineData("Generelt - Laktoseintoleranse", false)]
     [InlineData("Generelt - Hva var morsomst i fjor?", true)]
+    [InlineData("Generelt - Hvilken farge liker du?", true)]
+    [InlineData("Generelt - Erfaring med friluftsliv", true)]
     public void Suggest_SensitiveFormQuestionsAreNotIncluded(string header, bool included)
     {
         var profile = ImportProfileSuggester.Suggest(["Navn", header]);

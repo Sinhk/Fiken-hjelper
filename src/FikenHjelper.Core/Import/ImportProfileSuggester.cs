@@ -34,7 +34,7 @@ public static partial class ImportProfileSuggester
     private static readonly string[] SensitiveWordStems =
     [
         "mobil", "telefon", "tlf", "fodsel", "adresse", "personnummer", "foresatt", "foreldre", "parorende",
-        "allergi", "diett", "helse", "medisin", "sykdom", "politiattest"
+        "allergi", "diett", "intoleranse", "helse", "medisin", "sykdom", "politiattest"
     ];
 
     private static readonly string[] SensitiveWholeWords = ["mor", "mors", "far", "fars"];
@@ -173,7 +173,7 @@ public static partial class ImportProfileSuggester
         => WordSplitter().Split(header)
             .Select(ImportValueParser.NormalizeKey)
             .Where(w => w.Length > 0)
-            .Any(w => SensitiveWholeWords.Contains(w) || SensitiveWordStems.Any(stem => w.StartsWith(stem, StringComparison.Ordinal)));
+            .Any(w => SensitiveWholeWords.Contains(w) || SensitiveWordStems.Any(stem => w.Contains(stem, StringComparison.Ordinal)));
 
     private static string StripDuplicateSuffix(string header) => DuplicateSuffix().Replace(header, string.Empty);
 
@@ -182,7 +182,9 @@ public static partial class ImportProfileSuggester
         var key = ImportValueParser.NormalizeKey(header);
         return key.Contains("foresatt", StringComparison.Ordinal)
             || key.Contains("mors", StringComparison.Ordinal)
-            || key.Contains("fars", StringComparison.Ordinal);
+            || key.Contains("fars", StringComparison.Ordinal)
+            || key.Contains("foreldre", StringComparison.Ordinal)
+            || key.Contains("parorende", StringComparison.Ordinal);
     }
 
     [GeneratedRegex(@"[^\p{L}\p{Nd}]+")]
