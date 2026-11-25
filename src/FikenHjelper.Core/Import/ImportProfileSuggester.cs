@@ -28,17 +28,10 @@ public static partial class ImportProfileSuggester
     private static readonly string[] CheckedInKeys = ["innsjekket", "checkedin"];
     private static readonly string[] TotalAmountKeys = ["totalbelop", "sum", "total", "totalt"];
 
-    // Skjemaspørsmål som typisk inneholder sensitive personopplysninger tas ikke med som standard.
-    // Stammene kan stå hvor som helst i et ord, så sammensetninger som «matallergi» og «postadresse» treffes.
-    // Korte ord (mor/far) må være hele ord, så f.eks. «morsomt» ikke treffer «mor».
-    private static readonly string[] SensitiveWordStems =
-    [
-        "mobil", "telefon", "tlf", "fodsel", "adresse", "personnummer", "foresatt", "foreldre", "parorende",
-        "allergi", "diett", "intoleranse", "helse", "medisin", "sykdom", "politiattest"
-    ];
-
-    private static readonly string[] SensitiveWholeWords = ["mor", "mors", "far", "fars"];
     private static readonly string[] RegistrationDateKeys = ["pameldtdato", "pameldingsdato", "registreringsdato"];
+    // Bare generelle kommentarfelt tas med som ekstra kolonner. Svar på påmeldingsskjemaet («<Skjema> - <Spørsmål>»)
+    // varierer per arrangement, trengs ikke til fakturering og kan inneholde helseopplysninger, så de tas aldri med
+    // automatisk.
     private static readonly string[] ExtraKeys = ["kommentar", "merknad", "comment"];
 
     public static ImportProfile Suggest(IReadOnlyList<string> headers)
@@ -93,8 +86,7 @@ public static partial class ImportProfileSuggester
         var mapped = new HashSet<string>(profile.ReferencedColumns(), StringComparer.OrdinalIgnoreCase);
         profile.ExtraColumns = headers
             .Where(h => !mapped.Contains(h))
-            .Where(h => FormQuestionPrefix().IsMatch(h) || ExtraKeys.Contains(ImportValueParser.NormalizeKey(h)))
-            .Where(h => !IsSensitive(h))
+            .Where(h => ExtraKeys.Contains(ImportValueParser.NormalizeKey(h)))
             .ToList();
 
         return profile;
@@ -169,12 +161,6 @@ public static partial class ImportProfileSuggester
         return null;
     }
 
-    private static bool IsSensitive(string header)
-        => WordSplitter().Split(header)
-            .Select(ImportValueParser.NormalizeKey)
-            .Where(w => w.Length > 0)
-            .Any(w => SensitiveWholeWords.Contains(w) || SensitiveWordStems.Any(stem => w.Contains(stem, StringComparison.Ordinal)));
-
     private static string StripDuplicateSuffix(string header) => DuplicateSuffix().Replace(header, string.Empty);
 
     private static bool IsGuardianColumn(string header)
@@ -187,15 +173,8 @@ public static partial class ImportProfileSuggester
             || key.Contains("parorende", StringComparison.Ordinal);
     }
 
-    [GeneratedRegex(@"[^\p{L}\p{Nd}]+")]
-    private static partial Regex WordSplitter();
-
     [GeneratedRegex(@"\s\(\d+\)$")]
     private static partial Regex DuplicateSuffix();
-
-    // Spørsmål fra påmeldingsskjema eksporteres som «<Skjema> - <Spørsmål>», f.eks. «Generelt - Hva heter patruljen din?».
-    [GeneratedRegex(@"^[^-]{2,60}\s-\s\S")]
-    private static partial Regex FormQuestionPrefix();
 
     [GeneratedRegex(@"^projectParticipantsReport", RegexOptions.IgnoreCase)]
     private static partial Regex GenericReportName();

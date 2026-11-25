@@ -206,28 +206,14 @@ public sealed class ImportValueParserTests
 public sealed class ImportProfileSuggesterTests
 {
     [Theory]
-    [InlineData("Generelt - Har du allergier?", false)]
-    [InlineData("Generelt - Trenger du medisiner?", false)]
-    [InlineData("Generelt - Helseopplysninger", false)]
-    [InlineData("Generelt - Status for politiattest", false)]
-    [InlineData("Generelt - Mors navn", false)]
-    [InlineData("Generelt - Foreldres tlf", false)]
-    [InlineData("Generelt - Pårørende ved ulykke", false)]
-    [InlineData("Generelt - Hva heter patruljen din?", true)]
-    [InlineData("Generelt - Postadresse", false)]
-    [InlineData("Generelt - Nødtelefon", false)]
-    [InlineData("Generelt - Har deltakeren matallergi?", false)]
-    [InlineData("Generelt - Spesialdiett", false)]
-    [InlineData("Generelt - Astmamedisin", false)]
-    [InlineData("Generelt - Hjertesykdom", false)]
-    [InlineData("Generelt - Laktoseintoleranse", false)]
-    [InlineData("Generelt - Hva var morsomst i fjor?", true)]
-    [InlineData("Generelt - Hvilken farge liker du?", true)]
-    [InlineData("Generelt - Erfaring med friluftsliv", true)]
-    public void Suggest_SensitiveFormQuestionsAreNotIncluded(string header, bool included)
+    [InlineData("Generelt - Hva heter patruljen din?")]
+    [InlineData("Generelt - Er det noe annet vi bør vite?")]
+    [InlineData("Generelt - Har du allergier?")]
+    [InlineData("Påmelding - Hvilken farge liker du?")]
+    public void Suggest_FormQuestionsAreNotIncluded(string header)
     {
         var profile = ImportProfileSuggester.Suggest(["Navn", header]);
-        Assert.Equal(included, profile.ExtraColumns.Contains(header));
+        Assert.Empty(profile.ExtraColumns);
     }
 
     [Fact]
@@ -250,15 +236,8 @@ public sealed class ImportProfileSuggesterTests
         Assert.Null(profile.ConfirmedColumn);
         Assert.Equal(["E-post", "E-post (2)", "Generelt - E-postadresse"], profile.EmailColumns);
 
-        // Skjemaspørsmål tas med, sensitive kolonner (helse, kontaktinfo) og e-post-svaret gjør det ikke.
-        Assert.Contains("Generelt - Hvilket kurs skal du delta på?", profile.ExtraColumns);
-        Assert.Contains("Generelt - Hva heter patruljen din?", profile.ExtraColumns);
-        Assert.DoesNotContain("Generelt - Har deltakeren allergier eller diettbehov vi må ta hensyn til?", profile.ExtraColumns);
-        Assert.DoesNotContain("Generelt - Beskrivelse av allergi/diettbehov", profile.ExtraColumns);
-        Assert.DoesNotContain("Generelt - E-postadresse", profile.ExtraColumns);
-        Assert.DoesNotContain("Fødselsdato", profile.ExtraColumns);
-        Assert.DoesNotContain("Generelt - Mobilnummer", profile.ExtraColumns);
-        Assert.DoesNotContain("Adresse", profile.ExtraColumns);
+        // Svar på påmeldingsskjemaet og sensitive kolonner (helse, kontaktinfo) tas ikke med.
+        Assert.Empty(profile.ExtraColumns);
         Assert.DoesNotContain("Foresatt 1 e-post", profile.EmailColumns);
     }
 
@@ -387,8 +366,7 @@ public sealed class ParticipantImportMapperTests
         Assert.True(ola.Confirmed);
         Assert.True(ola.Attended);
         Assert.Equal("ola@example.no", ola.Email); // fra skjemaets e-postsvar når «E-post» er tom
-        Assert.False(ola.Answers.ContainsKey("Beskrivelse av allergi/diettbehov")); // helseopplysning, tas ikke med
-        Assert.Equal("Peff-kurs", ola.Answers["Hvilket kurs skal du delta på?"]);
+        Assert.Empty(ola.Answers); // skjemasvar tas ikke med som standard
         Assert.Equal("Molde speidergruppe", ola.GroupName);
         Assert.Equal("Fil", ola.AvailableGroups.Single().SourceLabel);
 
@@ -412,6 +390,19 @@ public sealed class ParticipantImportMapperTests
         Assert.Contains(ev.FeeCategories, c => c.Label == "Speider (450 kr)" && c.SuggestedPriceNok == 450m);
         Assert.Contains(ev.FeeCategories, c => c.Label == "Speider (300 kr)" && c.SuggestedPriceNok == 300m);
         Assert.Contains(ev.FeeCategories, c => c.Label == "Leder" && c.SuggestedPriceNok == 250m);
+    }
+
+    [Fact]
+    public void Map_ExplicitExtraColumns_BecomeAnswers()
+    {
+        var table = Individual(
+            ImportTestData.IndividualRow("900001", "Ola Testesen", "Molde speidergruppe", "ola@example.no", "Deltaker (450 kr)", "450"));
+        var profile = ImportProfileSuggester.Suggest(table.Headers);
+        profile.ExtraColumns = ["Generelt - Hvilket kurs skal du delta på?"];
+
+        var ola = ParticipantImportMapper.Map(table, profile, "Kurshelg").Event.Participants.Single();
+
+        Assert.Equal("Peff-kurs", ola.Answers["Hvilket kurs skal du delta på?"]);
     }
 
     [Fact]
