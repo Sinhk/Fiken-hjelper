@@ -5,32 +5,41 @@
          "name": "gitleaks-staged",
          "group": "pre-commit",
          "command": "gitleaks",
-         "args": [ "git", "--pre-commit", "--staged", "--redact", "--no-banner", "--verbose" ]
+         "args": [
+            "git",
+            "--pre-commit",
+            "--staged",
+            "--redact",
+            "--no-banner",
+            "--verbose"
+         ]
       },
       {
          "name": "dotnet-format",
          "group": "pre-commit",
          "command": "dotnet",
-         "args": [ "format", "FikenHjelper.slnx", "--verify-no-changes", "--include", "${staged}" ],
-         "include": [ "**/*.cs" ]
+         "args": [
+            "format",
+            "FikenHjelper.slnx",
+            "--verify-no-changes",
+            "--include",
+            "${staged}"
+         ],
+         "include": [
+            "**/*.cs"
+         ]
       },
       {
          "name": "gitleaks-unpushed",
          "group": "pre-push",
          "command": "gitleaks",
-         "args": [ "git", "--log-opts=HEAD --not --remotes", "--redact", "--no-banner", "--verbose" ]
-      },
-      {
-         "name": "dotnet-build",
-         "group": "pre-push",
-         "command": "dotnet",
-         "args": [ "build", "FikenHjelper.slnx", "-warnaserror", "--nologo", "-v", "q" ]
-      },
-      {
-         "name": "dotnet-test",
-         "group": "pre-push",
-         "command": "dotnet",
-         "args": [ "test", "FikenHjelper.slnx", "--no-build", "--nologo", "-v", "q" ]
+         "args": [
+            "git",
+            "--log-opts=HEAD --not --remotes",
+            "--redact",
+            "--no-banner",
+            "--verbose"
+         ]
       }
    ]
 }

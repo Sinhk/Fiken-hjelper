@@ -52,7 +52,9 @@ dotnet test
 ### Git-hooks
 Første `dotnet build` installerer git-hooks med [Husky.Net](https://alirezanet.github.io/Husky.Net/) (`.husky/`):
 - **pre-commit:** [gitleaks](https://github.com/gitleaks/gitleaks) stopper commits med hemmeligheter, og `dotnet format` sjekker endrede `.cs`-filer.
-- **pre-push:** gitleaks sjekker alle commits som ikke er pushet, og løsningen bygges og testes.
+- **pre-push:** gitleaks sjekker alle commits som ikke er pushet.
+
+Bygg og tester kjøres ikke i hookene, siden CI krever grønt bygg før merge.
 
 gitleaks må installeres separat: `winget install gitleaks` (Windows) eller `brew install gitleaks` (macOS/Linux). Hookene slås av med miljøvariabelen `HUSKY=0`, som CI bruker.
 
