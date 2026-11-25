@@ -49,6 +49,15 @@ dotnet run --project src/FikenHjelper.Web
 dotnet test
 ```
 
+### 5. CI
+
+GitHub Actions (`.github/workflows/ci.yml`) kjører på alle pull requests mot `main` og ved push til `main`. Sjekkene er:
+- bygg i Release der kompilatoradvarsler gir feil (`-warnaserror`)
+- formateringssjekk med `dotnet format --verify-no-changes` (kjør `dotnet format` lokalt for å rette opp)
+- alle tester, med resultater i jobbsammendraget og som nedlastbar `test-results`-artefakt
+
+`main` krever at CI er grønn før en PR kan merges.
+
 ## Sikkerhetsprinsipper
 - Alle fakturaer opprettes **kun som utkast** i Fiken (`POST /companies/{slug}/invoices/drafts`). Ingenting bokføres eller sendes automatisk.
 - Kretsen er ikke MVA-pliktig, så alle linjer sendes med `vatType = "NONE"`.
