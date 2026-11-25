@@ -248,6 +248,8 @@ public sealed class BudgetImportSuggestionTests
             sheet.Cell("C3").Value = "Leirer";
             sheet.Cell("A4").Value = "Noe helt annet";
             sheet.Cell("C4").Value = "Leirer";
+            sheet.Cell("A5").Value = "Landsleirr";
+            sheet.Cell("C5").Value = "Leirer";
         }
 
         var stream = new MemoryStream();
@@ -279,6 +281,7 @@ public sealed class BudgetImportSuggestionTests
         var typo = result.Suggestions.Single(s => s.SheetName == "Landsleirr");
         Assert.Equal(900002, typo.Candidates[0].Item.ProjectId);
         Assert.True(typo.IsStrong);
+        Assert.Equal([2026, 2025], typo.Targets.Select(t => t.Year));
 
         Assert.All(result.Years.SelectMany(y => y.Lines), l => Assert.Empty(l.ProjectIds));
         Assert.Equal(2, result.Warnings.Count(w => w.Contains("Noe helt annet")));
@@ -286,15 +289,17 @@ public sealed class BudgetImportSuggestionTests
     }
 
     [Fact]
-    public void ApplySuggestions_LinksChosenProjectToAllTargets()
+    public void ApplySuggestions_LinksChosenProjectToAllTargets_InCopiesOnly()
     {
         using var stream = CreateWorkbook();
         var result = BudgetWorkbookImporter.Import(stream, Fiken);
         var renamed = result.Suggestions.Single(s => s.SheetName == "Kretsbannerkonkurranse");
+        var copies = result.Years.Select(y => y.Copy()).ToList();
 
-        BudgetWorkbookImporter.ApplySuggestions(result, [(renamed, 900001L), (renamed, 900001L)]);
+        BudgetWorkbookImporter.ApplySuggestions(copies, [(renamed, 900001L), (renamed, 900001L)]);
 
-        foreach (var year in result.Years)
+        Assert.All(result.Years.SelectMany(y => y.Lines), l => Assert.Empty(l.ProjectIds));
+        foreach (var year in copies)
         {
             Assert.Equal([900001L], year.Lines.Single(l => l.Name == "Kretsbannerkonkurranse").ProjectIds);
             Assert.Empty(year.Lines.Single(l => l.Name == "Leirer").ProjectIds);

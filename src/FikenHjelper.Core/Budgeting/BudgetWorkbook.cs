@@ -162,21 +162,23 @@ public static partial class BudgetWorkbookImporter
     }
 
     /// <summary>
-    /// Kobler godtatte forslag til budsjettpostene de gjelder. <paramref name="choices"/> gir valgt
-    /// Fiken-prosjekt per forslag. Forslag som ikke er med, kobles ikke.
+    /// Kobler godtatte forslag til budsjettpostene de gjelder i <paramref name="years"/>.
+    /// <paramref name="choices"/> gir valgt Fiken-prosjekt per forslag. Forslag som ikke er med, kobles ikke.
+    /// Bruk gjerne kopier av årene fra importen (<see cref="BudgetYear.Copy"/>), så forhåndsvisningen
+    /// ikke endres hvis lagringen feiler.
     /// </summary>
     public static void ApplySuggestions(
-        BudgetImportResult result,
+        IReadOnlyList<BudgetYear> years,
         IEnumerable<(ProjectImportSuggestion Suggestion, long ProjectId)> choices)
     {
-        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(years);
         ArgumentNullException.ThrowIfNull(choices);
 
         foreach (var (suggestion, projectId) in choices)
         {
             foreach (var target in suggestion.Targets)
             {
-                var line = result.Years
+                var line = years
                     .FirstOrDefault(y => y.Year == target.Year)?
                     .Lines.FirstOrDefault(l => Normalize(l.Name) == Normalize(target.LineName));
                 if (line is not null && !line.ProjectIds.Contains(projectId))
@@ -228,7 +230,12 @@ public static partial class BudgetWorkbookImporter
                     pending[key] = entry;
                 }
 
-                entry.Targets.Add(new ProjectImportTarget(budgetYear.Year, line.Name));
+                var target = new ProjectImportTarget(budgetYear.Year, line.Name);
+                if (!entry.Targets.Contains(target))
+                {
+                    entry.Targets.Add(target);
+                }
+
                 continue;
             }
 

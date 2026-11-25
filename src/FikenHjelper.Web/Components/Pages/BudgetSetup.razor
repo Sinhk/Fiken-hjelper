@@ -161,10 +161,17 @@
                 {
                     <MudAlert Severity="Severity.Info">Prosjektene er ikke hentet fra Fiken.</MudAlert>
                 }
-                else if (isLoadingActivity)
+                else if (IsLoadingActivity)
                 {
                     <MudProgressLinear Indeterminate Color="Color.Primary" />
                     <MudText Typo="Typo.body2" Class="mt-2">Henter posteringer for @current.Year fra Fiken …</MudText>
+                }
+                else if (CurrentActivity is null && !ActivityFailed)
+                {
+                    <MudAlert Severity="Severity.Info">
+                        Posteringer for @current.Year er ikke hentet ennå.
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => LoadActivityAsync(current.Year)">Hent nå</MudButton>
+                    </MudAlert>
                 }
                 else if (CurrentActivity is null)
                 {

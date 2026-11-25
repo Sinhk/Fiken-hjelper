@@ -44,6 +44,19 @@ public sealed class BudgetYear
 {
     public int Year { get; set; }
     public List<BudgetLine> Lines { get; set; } = [];
+
+    /// <summary>Kopi med egne poster og prosjektlister, så endringer i kopien ikke påvirker originalen.</summary>
+    public BudgetYear Copy() => new()
+    {
+        Year = Year,
+        Lines = Lines.Select(l => new BudgetLine
+        {
+            Name = l.Name,
+            Amount = l.Amount,
+            ManualActual = l.ManualActual,
+            ProjectIds = [.. l.ProjectIds]
+        }).ToList()
+    };
 }
 
 /// <summary>

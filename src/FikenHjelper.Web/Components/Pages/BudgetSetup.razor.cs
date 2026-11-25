@@ -41,7 +41,8 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     // Posteringer per prosjekt og år, til forslag, beløp og fanen «Prosjekter → poster».
     private readonly Dictionary<int, IReadOnlyDictionary<long, ProjectActivity>> activityByYear = [];
-    private bool isLoadingActivity;
+    private readonly HashSet<int> loadingActivityYears = [];
+    private readonly HashSet<int> failedActivityYears = [];
     private int activeTab;
     private bool onlyUnlinked = true;
     private string? projectSearch;
@@ -130,14 +131,23 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         }
     }
 
+    private bool IsLoadingActivity => current is not null && loadingActivityYears.Contains(current.Year);
+
+    private bool ActivityFailed => current is not null && failedActivityYears.Contains(current.Year);
+
+    /// <summary>Henter posteringer for året. Hvert år hentes høyst én gang om gangen.</summary>
     private async Task LoadActivityAsync(int year, bool refresh = false)
     {
-        if (!projectsLoaded || year == 0 || (!refresh && activityByYear.ContainsKey(year)))
+        if (!projectsLoaded
+            || year == 0
+            || loadingActivityYears.Contains(year)
+            || (!refresh && activityByYear.ContainsKey(year)))
         {
             return;
         }
 
-        isLoadingActivity = true;
+        loadingActivityYears.Add(year);
+        failedActivityYears.Remove(year);
         StateHasChanged();
         try
         {
@@ -151,10 +161,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         {
             Logger.LogWarning(ex, "Klarte ikke å hente posteringer for {Year}", year);
             activityByYear.Remove(year);
+            failedActivityYears.Add(year);
         }
         finally
         {
-            isLoadingActivity = false;
+            loadingActivityYears.Remove(year);
         }
     }
 
@@ -217,6 +228,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         data.Years.Remove(current);
         MarkDirty();
         SelectYearCore(data.Years.Select(y => y.Year).DefaultIfEmpty(0).Max());
+        await LoadActivityAsync(selectedYear);
     }
 
     private void AddLine()
@@ -330,7 +342,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         if (accepted > 0)
         {
             MarkDirty();
-            Snackbar.Add($"Koblet {accepted} prosjekter. Husk å lagre.", Severity.Info);
+            Snackbar.Add($"Koblet {accepted} {(accepted == 1 ? "prosjekt" : "prosjekter")}. Husk å lagre.", Severity.Info);
         }
     }
 
@@ -489,7 +501,8 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             return;
         }
 
-        var chosen = importPreview.Years.Where(y => importSelection.Contains(y.Year)).ToList();
+        // Kopier, så forhåndsvisningen er uendret hvis lagringen feiler og brukeren endrer valgene.
+        var chosen = importPreview.Years.Where(y => importSelection.Contains(y.Year)).Select(y => y.Copy()).ToList();
         if (chosen.Count == 0)
         {
             return;
@@ -508,8 +521,12 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             }
 
             BudgetWorkbookImporter.ApplySuggestions(
-                importPreview,
+                chosen,
                 acceptedSuggestions.Select(s => (s, suggestionChoices[s])));
+            var notLinked = importPreview.Suggestions
+                .Where(s => !acceptedSuggestions.Contains(s) && s.Targets.Any(t => importSelection.Contains(t.Year)))
+                .Select(s => $"«{s.SheetName}»")
+                .ToList();
             saved.Years.RemoveAll(y => chosen.Any(c => c.Year == y.Year));
             saved.Years.AddRange(chosen);
             await BudgetStore.SaveAsync(saved, disposeCts.Token);
@@ -519,6 +536,13 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             SelectYearCore(chosen.Max(y => y.Year));
             await LoadActivityAsync(selectedYear);
             Snackbar.Add($"Importerte {chosen.Count} år.", Severity.Success);
+            if (notLinked.Count > 0)
+            {
+                Snackbar.Add(
+                    $"Disse prosjektnavnene ble ikke koblet: {string.Join(", ", notLinked)}. Koble dem manuelt, f.eks. under «Prosjekter → poster».",
+                    Severity.Warning,
+                    o => o.RequireInteraction = true);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

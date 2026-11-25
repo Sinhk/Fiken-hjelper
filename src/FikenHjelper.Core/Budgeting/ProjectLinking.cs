@@ -154,9 +154,9 @@ public static class ProjectLinking
 
                 var historyNames = previousYear?.Lines
                     .Where(l => l.ProjectIds.Contains(project.ProjectId))
-                    .Select(l => l.Name)
+                    .Select(l => l.Name.Trim())
                     .ToHashSet(NameComparer) ?? [];
-                var ranked = ProjectNameMatcher.Rank(project.Name, candidates, l => l.Name, l => historyNames.Contains(l.Name));
+                var ranked = ProjectNameMatcher.Rank(project.Name, candidates, l => l.Name, l => historyNames.Contains(l.Name.Trim()));
                 return new ProjectLinkRow(
                     project,
                     activity[project.ProjectId],
