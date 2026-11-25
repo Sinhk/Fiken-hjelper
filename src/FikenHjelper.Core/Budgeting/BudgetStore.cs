@@ -90,12 +90,21 @@ public sealed class JsonBudgetStore : IBudgetStore
                 Year = y.Year,
                 Lines = (y.Lines ?? [])
                     .Where(l => l is not null && !string.IsNullOrWhiteSpace(l.Name))
-                    .Select(l => new BudgetLine
+                    .Select(l =>
                     {
-                        Name = l.Name.Trim(),
-                        Amount = l.Amount,
-                        ManualActual = l.ManualActual,
-                        ProjectIds = (l.ProjectIds ?? []).Where(id => id > 0).Distinct().ToList()
+                        var ids = (l.ProjectIds ?? []).Where(id => id > 0).Distinct().ToList();
+                        // Bare andeler for koblede prosjekter, og bare mellom 0 og 100 %.
+                        var shares = (l.ProjectShares ?? [])
+                            .Where(kv => ids.Contains(kv.Key) && kv.Value is > 0 and <= 100)
+                            .ToDictionary(kv => kv.Key, kv => kv.Value);
+                        return new BudgetLine
+                        {
+                            Name = l.Name.Trim(),
+                            Amount = l.Amount,
+                            ManualActual = l.ManualActual,
+                            ProjectIds = ids,
+                            ProjectShares = shares.Count > 0 ? shares : null
+                        };
                     })
                     .ToList()
             })

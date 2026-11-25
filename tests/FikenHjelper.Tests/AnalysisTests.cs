@@ -149,6 +149,6 @@ public sealed class AnomalyFinderTests
         var types = AnomalyFinder.FromBudgetReport(report).Select(a => a.Type).ToList();
         Assert.Contains(AnomalyTypes.UnallocatedPostings, types);
         Assert.Contains(AnomalyTypes.UnlinkedProjects, types);
-        Assert.Contains(AnomalyTypes.ProjectsLinkedToSeveralLines, types);
+        Assert.Contains(AnomalyTypes.InvalidProjectSplits, types);
     }
 }

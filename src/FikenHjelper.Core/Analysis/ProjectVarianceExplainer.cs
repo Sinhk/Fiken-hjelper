@@ -17,7 +17,11 @@ public sealed record PostingDetail(
     string? Description,
     string Account,
     long ProjectId,
-    decimal Amount);
+    decimal Amount)
+{
+    /// <summary>Andelen i prosent som teller her, når prosjektet er fordelt på flere poster.</summary>
+    public decimal? Share { get; init; }
+}
 
 public sealed record ProjectVarianceExplanation(
     int Year,
@@ -44,9 +48,25 @@ public static class ProjectVarianceExplainer
         int maxPostings)
     {
         ArgumentNullException.ThrowIfNull(projectIds);
+        return Explain(year, projectIds.Distinct().ToDictionary(id => id, _ => 1m), entries, previousYearEntries, accounts, maxPostings);
+    }
+
+    /// <summary>
+    /// Som over, men med en andel (0–1) per prosjekt for prosjekter fordelt på flere budsjettposter
+    /// (<see cref="ProjectSplits.LineFractions"/>). Beløpene ganges med andelen, og summene avrundes til øre.
+    /// </summary>
+    public static ProjectVarianceExplanation Explain(
+        int year,
+        IReadOnlyDictionary<long, decimal> projectFractions,
+        IReadOnlyList<FikenJournalEntry> entries,
+        IReadOnlyList<FikenJournalEntry>? previousYearEntries,
+        IReadOnlyList<FikenAccount> accounts,
+        int maxPostings)
+    {
+        ArgumentNullException.ThrowIfNull(projectFractions);
         ArgumentNullException.ThrowIfNull(entries);
 
-        var wanted = projectIds.ToHashSet();
+        var wanted = projectFractions;
         var accountNames = (accounts ?? [])
             .GroupBy(a => a.Code, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.Ordinal);
@@ -55,7 +75,7 @@ public static class ProjectVarianceExplainer
         var previous = previousYearEntries is null ? null : Collect(previousYearEntries, wanted);
         var previousByAccount = previous?
             .GroupBy(p => MainAccount(p.Account))
-            .ToDictionary(g => g.Key, g => g.Sum(p => p.Amount), StringComparer.Ordinal);
+            .ToDictionary(g => g.Key, g => Round(g.Sum(p => p.Amount)), StringComparer.Ordinal);
 
         var accountKeys = postings.Select(p => MainAccount(p.Account))
             .Concat(previousByAccount?.Keys ?? Enumerable.Empty<string>())
@@ -68,7 +88,7 @@ public static class ProjectVarianceExplainer
                 return new AccountBreakdown(
                     account,
                     accountNames.GetValueOrDefault(account),
-                    current.Sum(p => p.Amount),
+                    Round(current.Sum(p => p.Amount)),
                     previousByAccount is null ? null : previousByAccount.GetValueOrDefault(account),
                     current.Count);
             })
@@ -80,19 +100,22 @@ public static class ProjectVarianceExplainer
             .OrderByDescending(p => Math.Abs(p.Amount))
             .ThenBy(p => p.Date, StringComparer.Ordinal)
             .Take(Math.Clamp(maxPostings, 0, 200))
+            .Select(p => p with { Amount = Round(p.Amount) })
             .ToList();
 
         return new ProjectVarianceExplanation(
             year,
-            wanted.Order().ToList(),
-            postings.Sum(p => p.Amount),
-            previous?.Sum(p => p.Amount),
+            wanted.Keys.Order().ToList(),
+            Round(postings.Sum(p => p.Amount)),
+            previous is null ? null : Round(previous.Sum(p => p.Amount)),
             postings.Count,
             byAccount,
             largest);
     }
 
-    private static List<PostingDetail> Collect(IReadOnlyList<FikenJournalEntry> entries, HashSet<long> wanted)
+    private static decimal Round(decimal amount) => Math.Round(amount, 2, MidpointRounding.AwayFromZero);
+
+    private static List<PostingDetail> Collect(IReadOnlyList<FikenJournalEntry> entries, IReadOnlyDictionary<long, decimal> wanted)
     {
         var result = new List<PostingDetail>();
         foreach (var entry in entries)
@@ -101,7 +124,7 @@ public static class ProjectVarianceExplainer
             {
                 if (!BudgetReportBuilder.TryGetResultAmount(line, out _, out var amount)
                     || BudgetReportBuilder.PrimaryProjectId(line) is not { } projectId
-                    || !wanted.Contains(projectId))
+                    || !wanted.TryGetValue(projectId, out var fraction))
                 {
                     continue;
                 }
@@ -113,7 +136,10 @@ public static class ProjectVarianceExplainer
                     entry.Description,
                     line.Account!,
                     projectId,
-                    amount));
+                    amount * fraction)
+                {
+                    Share = fraction == 1m ? null : fraction * 100m
+                });
             }
         }
 

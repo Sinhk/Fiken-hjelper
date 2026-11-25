@@ -126,7 +126,8 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             }
 
             var linked = current.Lines.SelectMany(l => l.ProjectIds).ToHashSet();
-            var count = activity.Count(kv => kv.Value.PostingCount > 0 && !linked.Contains(kv.Key) && projectsById.ContainsKey(kv.Key));
+            var count = activity.Count(kv => kv.Value.PostingCount > 0 && !linked.Contains(kv.Key) && projectsById.ContainsKey(kv.Key))
+                + ProjectSplits.Validate(current, ProjectName).Count;
             return count > 0 ? count : null;
         }
     }
@@ -270,11 +271,10 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             return;
         }
 
-        current.Lines.AddRange(previous.Lines.Select(l => new BudgetLine
+        current.Lines.AddRange(previous.Copy().Lines.Select(l =>
         {
-            Name = l.Name,
-            Amount = l.Amount,
-            ProjectIds = [.. l.ProjectIds]
+            l.ManualActual = null;
+            return l;
         }));
         MarkDirty();
     }
@@ -299,6 +299,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         var result = await dialog.Result;
         if (result is { Canceled: false, Data: List<long> ids } && !ids.SequenceEqual(line.ProjectIds))
         {
+            foreach (var removed in line.ProjectIds.Except(ids))
+            {
+                line.SetShare(removed, null);
+            }
+
             line.ProjectIds = ids;
             MarkDirty();
         }
@@ -315,6 +320,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         foreach (var line in current.Lines)
         {
             line.ProjectIds.Remove(projectId);
+            line.SetShare(projectId, null);
         }
 
         if (lineIndex >= 0 && lineIndex < current.Lines.Count)
@@ -356,14 +362,82 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
     private void RemoveProject(BudgetLine line, long id)
     {
         line.ProjectIds.Remove(id);
+        line.SetShare(id, null);
+        MarkDirty();
+    }
+
+    /// <summary>Andelen som tekst når prosjektet er fordelt på flere poster, ellers null.</summary>
+    private string? SharedShare(BudgetLine line, long id)
+    {
+        if (current is null || line.ManualActual.HasValue
+            || current.Lines.Count(l => !l.ManualActual.HasValue && l.ProjectIds.Contains(id)) < 2)
+        {
+            return null;
+        }
+
+        return line.ShareOf(id) is { } share ? $"{share.ToString("0.##", Nb)} %" : "mangler andel";
+    }
+
+    private async Task OpenSplitAsync(ProjectLinkRow row)
+    {
+        if (current is null)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters<ProjectSplitDialog>
+        {
+            { d => d.Project, row.Project },
+            { d => d.Year, current },
+            { d => d.Amount, row.Activity.Amount }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await Dialogs.ShowAsync<ProjectSplitDialog>($"Fordel «{row.Project.Name}»", parameters, options);
+        var result = await dialog.Result;
+        if (result is not { Canceled: false, Data: List<ProjectSplitDialog.SplitRow> rows })
+        {
+            return;
+        }
+
+        var id = row.Project.ProjectId;
+        // Koblinger til poster med manuelt regnskapstall er ikke med i dialogen og beholdes.
+        foreach (var line in current.Lines.Where(l => !l.ManualActual.HasValue))
+        {
+            line.ProjectIds.Remove(id);
+            line.SetShare(id, null);
+        }
+
+        foreach (var split in rows)
+        {
+            split.Line.ProjectIds.Add(id);
+            split.Line.SetShare(id, rows.Count > 1 ? split.Share : null);
+        }
+
         MarkDirty();
     }
 
     private string? UsedByOther(long projectId, BudgetLine line) =>
         current?.Lines.FirstOrDefault(l => !ReferenceEquals(l, line) && l.ProjectIds.Contains(projectId))?.Name;
 
-    private string? UsedByOtherTitle(long projectId, BudgetLine line) =>
-        UsedByOther(projectId, line) is { } other ? $"Også koblet til «{other}»" : null;
+    /// <summary>
+    /// Advarsel for et prosjekt i en post: koblet til flere poster uten gyldig fordelingsnøkkel, eller koblet
+    /// til en annen post når denne har manuelt regnskapstall. Null når alt er i orden.
+    /// </summary>
+    private string? ProjectChipWarning(long projectId, BudgetLine line)
+    {
+        if (current is null || UsedByOther(projectId, line) is not { } other)
+        {
+            return null;
+        }
+
+        var links = ProjectSplits.LinksByProject(current).GetValueOrDefault(projectId) ?? [];
+        if (links.Count > 1)
+        {
+            return ProjectSplits.Check(projectId, links) is null ? null : "Fordelingsnøkkelen går ikke opp i 100 %. Rett den med «Fordel …».";
+        }
+
+        return $"Også koblet til «{other}»";
+    }
 
     private string ProjectName(long id) =>
         projectsById.TryGetValue(id, out var p) ? p.Name : $"Prosjekt {id}";
@@ -396,6 +470,14 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             SelectYearCore(selectedYear);
             isDirty = false;
             Snackbar.Add("Budsjettet er lagret.", Severity.Success);
+            var issues = data.Years.SelectMany(y => ProjectSplits.Validate(y, ProjectName).Select(i => $"{y.Year}: {i.Description}")).ToList();
+            if (issues.Count > 0)
+            {
+                Snackbar.Add(
+                    $"Fordelingsnøkkel må rettes: {string.Join(" ", issues)}",
+                    Severity.Warning,
+                    o => o.RequireInteraction = true);
+            }
         }
         catch (Exception ex)
         {
@@ -520,7 +602,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
                 return;
             }
 
-            BudgetWorkbookImporter.ApplySuggestions(
+            var splitMessages = BudgetWorkbookImporter.ApplySuggestions(
                 chosen,
                 acceptedSuggestions.Select(s => (s, suggestionChoices[s])));
             var notLinked = importPreview.Suggestions
@@ -542,6 +624,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
                     $"Disse prosjektnavnene ble ikke koblet: {string.Join(", ", notLinked)}. Koble dem manuelt, f.eks. under «Prosjekter → poster».",
                     Severity.Warning,
                     o => o.RequireInteraction = true);
+            }
+
+            if (splitMessages.Count > 0)
+            {
+                Snackbar.Add(string.Join(" ", splitMessages), Severity.Info, o => o.RequireInteraction = true);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

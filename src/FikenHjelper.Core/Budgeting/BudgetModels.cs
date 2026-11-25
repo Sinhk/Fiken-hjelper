@@ -54,7 +54,8 @@ public sealed class BudgetYear
             Name = l.Name,
             Amount = l.Amount,
             ManualActual = l.ManualActual,
-            ProjectIds = [.. l.ProjectIds]
+            ProjectIds = [.. l.ProjectIds],
+            ProjectShares = l.ProjectShares is null ? null : new Dictionary<long, decimal>(l.ProjectShares)
         }).ToList()
     };
 }
@@ -73,13 +74,45 @@ public sealed class BudgetLine
     public List<long> ProjectIds { get; set; } = [];
 
     /// <summary>
+    /// Fordelingsnøkkel: hvor mange prosent av prosjektets resultat som hører til denne posten, for
+    /// prosjekter som er koblet til flere poster. Summen for et prosjekt må være 100 over alle postene.
+    /// Prosjekter som bare er koblet til én post, teller helt, uansett hva som står her.
+    /// </summary>
+    public Dictionary<long, decimal>? ProjectShares { get; set; }
+
+    /// <summary>Andelen i prosent for prosjektet i denne posten, eller null når ingen er satt.</summary>
+    public decimal? ShareOf(long projectId) =>
+        ProjectShares is not null && ProjectShares.TryGetValue(projectId, out var share) ? share : null;
+
+    /// <summary>Setter eller fjerner (null) andelen for prosjektet.</summary>
+    public void SetShare(long projectId, decimal? share)
+    {
+        if (share is { } value)
+        {
+            (ProjectShares ??= [])[projectId] = value;
+        }
+        else if (ProjectShares?.Remove(projectId) == true && ProjectShares.Count == 0)
+        {
+            ProjectShares = null;
+        }
+    }
+
+    /// <summary>
     /// Manuelt regnskapstall. Brukes i stedet for Fiken-tall når satt, f.eks. for år før kretsen
     /// tok i bruk prosjekter i Fiken.
     /// </summary>
     public decimal? ManualActual { get; set; }
 }
 
-public sealed record ProjectActual(long ProjectId, string Name, decimal Amount);
+/// <summary>
+/// Regnskap for ett prosjekt. For et prosjekt fordelt på flere poster er <see cref="Amount"/> postens del,
+/// <see cref="Share"/> andelen i prosent og <see cref="FullAmount"/> hele prosjektets resultat.
+/// </summary>
+public sealed record ProjectActual(long ProjectId, string Name, decimal Amount)
+{
+    public decimal? Share { get; init; }
+    public decimal? FullAmount { get; init; }
+}
 
 /// <summary>Resultat og antall posteringer på resultatkonti for ett prosjekt i ett år.</summary>
 public sealed record ProjectActivity(decimal Amount, int PostingCount);
@@ -111,7 +144,7 @@ public sealed record BudgetYearReport(
     IReadOnlyList<BudgetLineReport> Lines,
     IReadOnlyList<UnallocatedPosting> UnallocatedPostings,
     IReadOnlyList<ProjectActual> UnlinkedProjects,
-    IReadOnlyList<ProjectActual> ProjectsLinkedToSeveralLines,
+    IReadOnlyList<ProjectSplitIssue> InvalidProjectSplits,
     int PostingsWithSeveralProjects,
     bool HasFikenData)
 {

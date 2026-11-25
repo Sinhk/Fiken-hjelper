@@ -101,9 +101,13 @@
                                     @foreach (var id in line.ProjectIds.Where(id => !projectsLoaded || projectsById.ContainsKey(id)))
                                     {
                                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                                                 OnClose="_ => RemoveProject(line, id)" title="@UsedByOtherTitle(id, line)"
-                                                 Color="@(UsedByOther(id, line) is null ? Color.Default : Color.Warning)">
+                                                 OnClose="_ => RemoveProject(line, id)" title="@ProjectChipWarning(id, line)"
+                                                 Color="@(ProjectChipWarning(id, line) is null ? Color.Default : Color.Warning)">
                                             @ProjectName(id)
+                                            @if (SharedShare(line, id) is { } share)
+                                            {
+                                                <span class="tabular-nums"> · @share</span>
+                                            }
                                         </MudChip>
                                     }
                                     <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
@@ -244,12 +248,23 @@
                                         <td>
                                             @if (r.Lines.Count > 1)
                                             {
-                                                <MudText Typo="Typo.body2" Color="Color.Warning">
-                                                    Koblet til flere poster: @string.Join(", ", r.Lines.Select(l => l.Name)). Endres under «Budsjettposter».
-                                                </MudText>
+                                                var problem = ProjectSplits.Check(r.Project.ProjectId, r.Lines.Where(l => !l.ManualActual.HasValue).ToList());
+                                                <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+                                                    <MudText Typo="Typo.body2" Color="@(problem is null ? Color.Default : Color.Warning)">
+                                                        @string.Join(", ", r.Lines.Select(l => l.ShareOf(r.Project.ProjectId) is { } s ? $"{l.Name} {s.ToString("0.##", Nb)} %" : l.Name))
+                                                        @if (problem is not null)
+                                                        {
+                                                            <span> – @(problem == ProjectSplitProblem.MissingShares ? "mangler fordelingsnøkkel" : "summerer ikke til 100 %")</span>
+                                                        }
+                                                    </MudText>
+                                                    <MudSpacer />
+                                                    <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.CallSplit"
+                                                               OnClick="() => OpenSplitAsync(r)">Fordel …</MudButton>
+                                                </MudStack>
                                             }
                                             else
                                             {
+                                                <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
                                                 <MudSelect T="int" Value="@(r.Lines.Count == 1 ? current.Lines.IndexOf(r.Lines[0]) : -1)"
                                                            ValueChanged="i => SetProjectLine(r.Project.ProjectId, i)"
                                                            Dense Margin="Margin.Dense" Variant="Variant.Text"
@@ -261,6 +276,9 @@
                                                         <MudSelectItem T="int" Value="index">@current.Lines[index].Name</MudSelectItem>
                                                     }
                                                 </MudSelect>
+                                                <MudIconButton Icon="@Icons.Material.Filled.CallSplit" Size="Size.Small" OnClick="() => OpenSplitAsync(r)"
+                                                               title="Fordel på flere poster" aria-label="@($"Fordel {r.Project.Name} på flere poster")" />
+                                                </MudStack>
                                             }
                                         </td>
                                         <td>

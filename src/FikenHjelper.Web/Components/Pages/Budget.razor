@@ -185,7 +185,15 @@
                                                     @foreach (var p in line.Projects)
                                                     {
                                                         <MudStack Row Justify="Justify.SpaceBetween" Spacing="4">
-                                                            <MudText Typo="Typo.body2">@p.Name</MudText>
+                                                            <MudText Typo="Typo.body2">
+                                                                @p.Name
+                                                                @if (p.FullAmount is { } full)
+                                                                {
+                                                                    <MudText Inline Typo="Typo.caption" Color="@(p.Share is null ? Color.Warning : Color.Secondary)">
+                                                                        @(p.Share is { } share ? $" ({share.ToString("0.##", Nb)} % av {Kr(full)})" : " (mangler fordelingsnøkkel)")
+                                                                    </MudText>
+                                                                }
+                                                            </MudText>
                                                             <MudText Typo="Typo.body2" Class="tabular-nums">@Kr(p.Amount)</MudText>
                                                         </MudStack>
                                                     }
@@ -270,11 +278,18 @@
                     </MudAlert>
                 }
 
-                @if (report.ProjectsLinkedToSeveralLines.Count > 0)
+                @if (report.InvalidProjectSplits.Count > 0)
                 {
                     <MudAlert Severity="Severity.Warning" Class="mb-2">
-                        Disse prosjektene er koblet til flere budsjettposter og telles dobbelt:
-                        @string.Join(", ", report.ProjectsLinkedToSeveralLines.Select(p => p.Name))
+                        <MudText Typo="Typo.body2"><strong>Prosjekter fordelt på flere poster uten gyldig fordelingsnøkkel:</strong></MudText>
+                        <ul class="mb-1">
+                            @foreach (var issue in report.InvalidProjectSplits)
+                            {
+                                <li>@issue.Description</li>
+                            }
+                        </ul>
+                        Til nøkkelen går opp i 100 %, kan prosjektet telles mer enn én gang. Rett den under
+                        <MudLink Href="@($"budsjett/oppsett?year={year}")">Rediger budsjett</MudLink>.
                     </MudAlert>
                 }
 
@@ -404,7 +419,7 @@
         !r.HasFikenData
             ? 0
             : r.UnlinkedProjects.Count
-              + r.ProjectsLinkedToSeveralLines.Count
+              + r.InvalidProjectSplits.Count
               + (r.UnallocatedPostings.Count > 0 ? 1 : 0);
 
     private static string Kr(decimal value) => value.ToString("N0", Nb);

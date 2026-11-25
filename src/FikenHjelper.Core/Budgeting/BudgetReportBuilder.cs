@@ -66,22 +66,35 @@ public static class BudgetReportBuilder
 
         var hasFikenData = journalEntries is not null;
         // Poster med manuelt regnskapstall bruker ikke prosjektene sine, så de teller ikke som kobling.
-        var linkedCount = budget.Lines
-            .Where(l => !l.ManualActual.HasValue)
-            .SelectMany(l => l.ProjectIds.Distinct())
-            .GroupBy(id => id)
-            .ToDictionary(g => g.Key, g => g.Count());
+        var links = ProjectSplits.LinksByProject(budget);
 
-        ProjectActual ToActual(long id) => new(
-            id,
-            projectNames.GetValueOrDefault(id) ?? $"Prosjekt {id}",
-            perProject.GetValueOrDefault(id));
+        string NameOf(long id) => projectNames.GetValueOrDefault(id) ?? $"Prosjekt {id}";
+        ProjectActual ToActual(long id) => new(id, NameOf(id), perProject.GetValueOrDefault(id));
+
+        // Prosjekter fordelt på flere poster: postens del av resultatet, avrundet så summen stemmer.
+        var allocated = new Dictionary<(BudgetLine Line, long ProjectId), decimal>();
+        foreach (var (id, linkedLines) in links.Where(kv => kv.Value.Count > 1))
+        {
+            var parts = ProjectSplits.Allocate(id, perProject.GetValueOrDefault(id), linkedLines);
+            for (var i = 0; i < linkedLines.Count; i++)
+            {
+                allocated[(linkedLines[i], id)] = parts[i];
+            }
+        }
+
+        ProjectActual LineActual(BudgetLine line, long id)
+        {
+            var full = ToActual(id);
+            return allocated.TryGetValue((line, id), out var part)
+                ? full with { Amount = part, Share = line.ShareOf(id), FullAmount = full.Amount }
+                : full;
+        }
 
         var lines = budget.Lines.Select(line =>
         {
             var lineProjects = line.ProjectIds
                 .Distinct()
-                .Select(ToActual)
+                .Select(id => LineActual(line, id))
                 .OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
 
@@ -91,16 +104,12 @@ public static class BudgetReportBuilder
         }).ToList();
 
         var unlinked = perProject
-            .Where(kv => !linkedCount.ContainsKey(kv.Key) && kv.Value != 0)
+            .Where(kv => !links.ContainsKey(kv.Key) && kv.Value != 0)
             .Select(kv => ToActual(kv.Key))
             .OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 
-        var doubleLinked = linkedCount
-            .Where(kv => kv.Value > 1)
-            .Select(kv => ToActual(kv.Key))
-            .OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
+        var invalidSplits = ProjectSplits.Validate(budget, NameOf, id => perProject.GetValueOrDefault(id));
 
         return new BudgetYearReport(
             budget.Year,
@@ -110,7 +119,7 @@ public static class BudgetReportBuilder
                 .ThenBy(p => p.JournalEntryNumber)
                 .ToList(),
             unlinked,
-            doubleLinked,
+            invalidSplits,
             severalProjects,
             hasFikenData)
         {

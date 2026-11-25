@@ -96,6 +96,12 @@ FikenHjelper.slnx
 
 **Neste forbedringer (fra brukertest og verifisering 24.11.2026):**
 - **Prosjekt fordelt på flere budsjettposter:** Et prosjekt skal kunne kobles til flere poster, med en fordelingsnøkkel (f.eks. prosent eller faste beløp) som deler prosjektets resultat mellom postene. Summen av fordelingen må gå opp i 100 %. Kontrollen for «prosjekt koblet til flere poster» blir da en kontroll av at nøkkelen er satt og går opp. Gjelder rapport, eksport og import.
+  - *Status (branch `fase3-fordeling`):* Prosent per prosjekt og post i `projectShares` ved siden av `projectIds` i `budgets.json`. Gamle filer leses uendret, og eldre versjoner ignorerer feltet.
+    - Rapporten fordeler prosjektets resultat etter andelene, avrundet til øre, og den siste posten får resten. Er prosjektet bare koblet til én post, teller det helt.
+    - Kontrollen «ugyldig fordeling» (også i MCP og avviksfunn) slår ut når andeler mangler eller ikke summerer til 100 %.
+    - Redigering: «Fordel …» i fanen «Prosjekter → poster». Import regner ut andelene fra kolonnen «Sum» når samme prosjekt står på flere poster i «Regnskap ÅÅÅÅ».
+    - Eksport: fanen *Prosjekter* har kolonnene «Andel» og «Prosjektet totalt».
+    - `explain_project_variance` vekter beløpene med postens andel.
 - **Mer oversiktlig kobling i «Rediger budsjett»:** Med mange prosjekter er nedtrekkslisten tung å bruke. Vurder f.eks. søk/filter, skjule avsluttede og allerede koblede prosjekter, eller en egen visning med prosjekter i én kolonne og budsjettpost i en annen.
 - **Foreslå prosjekter etter navn:** Prosjekter som matcher eller nesten matcher budsjettpostens navn, og som ikke er koblet ennå, legges øverst i listen. Samme likhetsmatching brukes i importen: når et navn ikke finnes eksakt (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse»), foreslås nærmeste prosjekt i stedet for bare en advarsel.
 - *Status (branch `fase3-kobling`):* Forslag etter navn og ny kobling er laget, fordelingsnøkkel kommer i egen PR.
