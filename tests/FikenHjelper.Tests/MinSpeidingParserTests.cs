@@ -140,7 +140,7 @@ public sealed class MinSpeidingParserTests
         string label,
         double? expectedDouble)
     {
-        var expected = expectedDouble.HasValue ? (decimal?)Convert.ToDecimal(expectedDouble.Value) : null;
+        var expected = expectedDouble.HasValue ? (decimal?)TestAmounts.Exact(expectedDouble.Value) : null;
         var actual = MinSpeidingParser.TryExtractPriceNokFromLabel(label);
         Assert.Equal(expected, actual);
     }

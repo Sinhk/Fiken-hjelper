@@ -294,8 +294,7 @@ public sealed class BudgetWorkbookTests
     [InlineData("1234.567", 1234.567)]
     public void ParseNumber_HandlesNorwegianAndMixedFormats(string text, double expected)
     {
-        // Via teksten: fra .NET 11 gir (decimal)double den eksakte binærverdien (1234,5670000000000072…).
-        Assert.Equal(decimal.Parse(expected.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture), BudgetWorkbookImporter.ParseNumber(text));
+        Assert.Equal(TestAmounts.Exact(expected), BudgetWorkbookImporter.ParseNumber(text));
     }
 
     [Theory]
@@ -308,6 +307,22 @@ public sealed class BudgetWorkbookTests
     public void ToAmount_RoundsTheValueShownInTheCell(double cellValue, string expected)
     {
         Assert.Equal(decimal.Parse(expected, CultureInfo.InvariantCulture), BudgetWorkbookImporter.ToAmount(cellValue));
+    }
+
+    [Theory]
+    [InlineData(-0.0)]
+    [InlineData(-0.001)]
+    public void ToAmount_NegativeZero_IsPlainZero(double cellValue)
+    {
+        Assert.False(decimal.IsNegative(BudgetWorkbookImporter.ToAmount(cellValue)));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void ToAmount_NotFinite_ThrowsOverflow(double cellValue)
+    {
+        Assert.Throws<OverflowException>(() => BudgetWorkbookImporter.ToAmount(cellValue));
     }
 
     [Theory]

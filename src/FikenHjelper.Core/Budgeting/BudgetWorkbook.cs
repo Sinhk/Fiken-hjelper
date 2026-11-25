@@ -220,7 +220,7 @@ public static partial class BudgetWorkbookImporter
             }
         }
 
-        if (value.IsNumber)
+        if (value.IsNumber && double.IsFinite(value.GetNumber()))
         {
             return ToAmount(value.GetNumber());
         }
@@ -236,8 +236,15 @@ public static partial class BudgetWorkbookImporter
     /// </summary>
     public static decimal ToAmount(double value)
     {
+        if (!double.IsFinite(value))
+        {
+            throw new OverflowException($"«{value}» er ikke et gyldig beløp.");
+        }
+
         var shortest = decimal.Parse(value.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture);
-        return Math.Round(shortest, 2);
+        var rounded = Math.Round(shortest, 2);
+        // -0,001 og -0.0 gir ellers «negativ null».
+        return rounded == 0m ? 0m : rounded;
     }
 
     /// <summary>
