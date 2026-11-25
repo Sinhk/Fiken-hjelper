@@ -405,6 +405,31 @@ public sealed class QualityCheckTextFormatterTests
     }
 
     [Fact]
+    public void ToHtml_EncodesTextAndBuildsOneTablePerNonEmptySection()
+    {
+        var html = QualityCheckTextFormatter.ToHtml(SampleReport() with
+        {
+            Sections =
+            [
+                new QualityCheckSection(QualitySectionKeys.CustomerInvoices, "Ubetalte kundefakturaer",
+                [
+                    new QualityFinding("Faktura <1>", "Gruppe & co", new DateOnly(2026, 10, 1), null,
+                        3, 123450, null, QualityStatus.Overdue)
+                ]),
+                new QualityCheckSection(QualitySectionKeys.SupplierPurchases, "Ubetalte kjøp", [])
+            ]
+        });
+
+        Assert.Contains("<h2>Kvalitetssjekk per 31.12.2026</h2>", html);
+        Assert.Contains("Faktura &lt;1&gt;", html);
+        Assert.Contains("Gruppe &amp; co", html);
+        Assert.Contains("<b>1&#160;234,50</b>", html);
+        Assert.Contains("<p>Ingen åpne poster.</p>", html);
+        Assert.Equal(1, html.Split("<table").Length - 1);
+        Assert.DoesNotContain("<script", html);
+    }
+
+    [Fact]
     public void ToMarkdown_EscapesPipesAndBuildsTable()
     {
         var md = QualityCheckTextFormatter.ToMarkdown(SampleReport());
@@ -494,6 +519,7 @@ public sealed class QualityCheckFikenClientTests
         using (http)
         {
             var service = new QualityCheckService(client, client, TimeProvider.System);
+            Assert.True(service.Today.Year >= 2026);
             var report = await service.RunAsync("krets", new DateOnly(2026, 12, 31), TestContext.Current.CancellationToken);
 
             var invoices = report.Sections.Single(s => s.Key == QualitySectionKeys.CustomerInvoices);

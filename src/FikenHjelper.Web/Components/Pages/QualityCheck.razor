@@ -1,0 +1,323 @@
+@page "/kvalitetssjekk"
+@rendermode InteractiveServer
+@using System.Globalization
+@using FikenHjelper.Core.QualityCheck
+@implements IAsyncDisposable
+@inject QualityCheckService QualityChecks
+@inject ILocalConfigStore ConfigStore
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject ILogger<QualityCheck> Logger
+
+<PageTitle>Kvalitetssjekk – Fiken-hjelper</PageTitle>
+<MudProviders />
+
+<MudStack Spacing="4">
+    <MudPaper Class="pa-4" Outlined>
+        <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.h5" HtmlTag="h1">Kvalitetssjekk</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Ubetalte kundefakturaer, åpne salg og ubetalte kjøp – før styremøte og årsoppgjør.
+                </MudText>
+            </MudStack>
+            <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                <MudDatePicker Label="Forfalt per" Date="ReferenceDateTime" DateChanged="HandleDateChanged"
+                               Culture="Nb" DateFormat="dd.MM.yyyy" Editable
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 11rem" />
+                <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                    <MudButton OnClick="SetToday">I dag</MudButton>
+                    <MudButton OnClick="SetLastYearEnd">31.12.@(today.Year - 1)</MudButton>
+                </MudButtonGroup>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="LoadAsync" Disabled="isLoading">
+                    Hent på nytt
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy"
+                           OnClick="CopyTableAsync" Disabled="report is null">
+                    Kopier tabell
+                </MudButton>
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Notes"
+                           OnClick="CopyMarkdownAsync" Disabled="report is null">
+                    Kopier som Markdown
+                </MudButton>
+            </MudStack>
+        </MudStack>
+
+        @if (isLoading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
+        }
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+        }
+
+        @if (!hasCompany)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                Ingen Fiken-foretak er valgt. Koble til Fiken under <MudLink Href="innstillinger">Innstillinger</MudLink>.
+            </MudAlert>
+        }
+
+        <MudAlert Severity="Severity.Info" Dense Variant="Variant.Text" Class="mb-3">
+            Listen viser åpne poster slik de står i Fiken nå@(data is null ? "" : $" (hentet {data.FetchedAt.ToString("dd.MM.yyyy 'kl.' HH:mm", Nb)})").
+            Velger du en dato bakover i tid, kommer ikke poster som er betalt etter datoen med, og delbetalinger etter datoen er trukket fra.
+            «Kopier tabell» gir en ferdig tabell når du limer inn i Word, Google Docs eller et regneark.
+        </MudAlert>
+
+        @if (report is not null)
+        {
+            <MudGrid Spacing="2">
+                @foreach (var section in report.Sections)
+                {
+                    <MudItem xs="12" md="4">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudStack Row AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.caption">@section.Title</MudText>
+                                <MudChip T="string" Size="Size.Small" Color="StatusColor(section.Status)" Variant="Variant.Text">
+                                    @SectionStatusText(section)
+                                </MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(section.TotalOre) kr</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                @section.Findings.Count stk
+                                @if (section.OverdueCount > 0)
+                                {
+                                    <span> · forfalt @section.OverdueCount stk, @Kr(section.OverdueOre) kr</span>
+                                }
+                                @if (section.UnknownAmountCount > 0)
+                                {
+                                    <span> · @section.UnknownAmountCount med ukjent beløp</span>
+                                }
+                            </MudText>
+                        </MudPaper>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+        else if (!isLoading && string.IsNullOrWhiteSpace(errorMessage) && hasCompany)
+        {
+            <MudText Color="Color.Secondary">Laster …</MudText>
+        }
+    </MudPaper>
+
+    @if (report is not null)
+    {
+        @foreach (var section in report.Sections)
+        {
+            <MudPaper Class="pa-4" Outlined @key="section.Key">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">@section.Title</MudText>
+                @if (section.Findings.Count == 0)
+                {
+                    <MudText Color="Color.Success">Ingen åpne poster.</MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Referanse</th>
+                                <th>Motpart</th>
+                                <th>Dato</th>
+                                <th>Forfall</th>
+                                <th class="fh-num-col">Dager forfalt</th>
+                                <th class="fh-num-col">Utestående (kr)</th>
+                                <th>Prosjekt</th>
+                                <th>Merknad</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var finding in section.Findings)
+                            {
+                                <tr>
+                                    <td>
+                                        <MudChip T="string" Size="Size.Small" Color="StatusColor(finding.Status)">
+                                            @QualityCheckTextFormatter.StatusText(finding.Status)
+                                        </MudChip>
+                                    </td>
+                                    <td>@finding.Reference</td>
+                                    <td>@finding.Counterparty</td>
+                                    <td class="tabular-nums">@QualityCheckTextFormatter.FormatDate(finding.Date)</td>
+                                    <td class="tabular-nums">@QualityCheckTextFormatter.FormatDate(finding.DueDate)</td>
+                                    <td class="fh-num-col tabular-nums">@finding.DaysOverdue</td>
+                                    <td class="fh-num-col tabular-nums">@(finding.OutstandingOre is { } ore ? Kr(ore) : "ukjent")</td>
+                                    <td>@finding.Project</td>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">@finding.Note</MudText></td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <th colspan="6">Sum</th>
+                                <th class="fh-num-col tabular-nums">@Kr(section.TotalOre)</th>
+                                <th colspan="2"></th>
+                            </tr>
+                        </tfoot>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        }
+    }
+</MudStack>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    private QualityCheckData? data;
+    private QualityCheckReport? report;
+    private DateOnly today;
+    private DateOnly referenceDate;
+    private bool hasCompany = true;
+    private bool isLoading;
+    private string? errorMessage;
+    private IJSObjectReference? clipboardModule;
+    private readonly CancellationTokenSource disposeCts = new();
+
+    private DateTime? ReferenceDateTime => referenceDate.ToDateTime(TimeOnly.MinValue);
+
+    protected override async Task OnInitializedAsync()
+    {
+        today = QualityChecks.Today;
+        referenceDate = today;
+
+        if (RendererInfo.IsInteractive)
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            var settings = await ConfigStore.LoadSettingsAsync(disposeCts.Token);
+            hasCompany = !string.IsNullOrWhiteSpace(settings.FikenCompanySlug);
+            if (!hasCompany)
+            {
+                data = null;
+                report = null;
+                return;
+            }
+
+            data = await QualityChecks.FetchAsync(settings.FikenCompanySlug!, disposeCts.Token);
+            Rebuild();
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+        }
+        catch (FikenApiException ex)
+        {
+            Logger.LogWarning(ex, "Fiken-feil ved kvalitetssjekk");
+            errorMessage = ex.UserMessage;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å kjøre kvalitetssjekk");
+            errorMessage = "Noe gikk galt under henting fra Fiken. Se loggen for detaljer.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // Dato endres uten nye kall til Fiken: reglene kjøres på nytt på data som allerede er hentet.
+    private void Rebuild() => report = data?.BuildReport(referenceDate);
+
+    private void HandleDateChanged(DateTime? value)
+    {
+        if (value is { } date)
+        {
+            referenceDate = DateOnly.FromDateTime(date);
+            Rebuild();
+        }
+    }
+
+    private void SetToday()
+    {
+        referenceDate = today;
+        Rebuild();
+    }
+
+    private void SetLastYearEnd()
+    {
+        referenceDate = new DateOnly(today.Year - 1, 12, 31);
+        Rebuild();
+    }
+
+    private async Task CopyTableAsync()
+    {
+        if (report is null)
+        {
+            return;
+        }
+
+        await CopyAsync("copyRichText", "Tabellen er kopiert.",
+            QualityCheckTextFormatter.ToHtml(report), QualityCheckTextFormatter.ToTabSeparated(report));
+    }
+
+    private async Task CopyMarkdownAsync()
+    {
+        if (report is null)
+        {
+            return;
+        }
+
+        await CopyAsync("copyText", "Markdown er kopiert.", QualityCheckTextFormatter.ToMarkdown(report));
+    }
+
+    private async Task CopyAsync(string function, string successMessage, params object[] args)
+    {
+        try
+        {
+            clipboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/clipboard.js");
+            await clipboardModule.InvokeVoidAsync(function, args);
+            Snackbar.Add(successMessage, Severity.Success);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Kopiering til utklippstavlen feilet");
+            Snackbar.Add("Nettleseren tillot ikke kopiering til utklippstavlen.", Severity.Warning);
+        }
+    }
+
+    private static string Kr(long ore) => QualityCheckTextFormatter.FormatKroner(ore);
+
+    private static Color StatusColor(QualityStatus status) => status switch
+    {
+        QualityStatus.Overdue => Color.Error,
+        QualityStatus.CheckManually => Color.Warning,
+        QualityStatus.Credit => Color.Info,
+        QualityStatus.Open => Color.Default,
+        _ => Color.Success
+    };
+
+    private static string SectionStatusText(QualityCheckSection section) => section.Status switch
+    {
+        QualityStatus.Ok => "OK",
+        QualityStatus.Overdue => "Forfalt",
+        QualityStatus.CheckManually => "Sjekk",
+        _ => "Åpne poster"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        disposeCts.Cancel();
+        disposeCts.Dispose();
+        if (clipboardModule is not null)
+        {
+            try
+            {
+                await clipboardModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}

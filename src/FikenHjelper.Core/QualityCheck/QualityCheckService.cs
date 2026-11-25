@@ -2,6 +2,17 @@ using FikenHjelper.Core.Fiken;
 
 namespace FikenHjelper.Core.QualityCheck;
 
+/// <summary>Åpne poster hentet fra Fiken, før reglene er brukt. Kan bygges på nytt for en annen dato uten nye kall.</summary>
+public sealed record QualityCheckData(
+    IReadOnlyList<FikenInvoice> Invoices,
+    IReadOnlyList<FikenSale> Sales,
+    IReadOnlyList<FikenPurchase> Purchases,
+    DateTimeOffset FetchedAt)
+{
+    public QualityCheckReport BuildReport(DateOnly referenceDate) =>
+        QualityCheckService.Build(Invoices, Sales, Purchases, referenceDate, FetchedAt);
+}
+
 /// <summary>
 /// Henter åpne poster fra Fiken (bare GET-kall) og bygger en kvalitetssjekk før styremøte eller årsoppgjør.
 /// Laget for å kunne brukes både fra web-appen og fra MCP-serveren.
@@ -13,20 +24,28 @@ public sealed class QualityCheckService(
 {
     private static readonly TimeZoneInfo NorwegianTimeZone = ResolveNorwegianTimeZone();
 
-    public async Task<QualityCheckReport> RunAsync(
-        string companySlug,
-        DateOnly? referenceDate = null,
-        CancellationToken ct = default)
+    /// <summary>Dagens dato i norsk tid.</summary>
+    public DateOnly Today => DateOnly.FromDateTime(NorwegianNow().DateTime);
+
+    public async Task<QualityCheckData> FetchAsync(string companySlug, CancellationToken ct = default)
     {
-        var fetchedAt = TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), NorwegianTimeZone);
-        var refDate = referenceDate ?? DateOnly.FromDateTime(fetchedAt.DateTime);
+        var fetchedAt = NorwegianNow();
 
         // Kallene går sekvensielt uansett (FikenRateLimitHandler), så de kjøres etter hverandre.
         var invoices = await fiken.GetUnsettledInvoicesAsync(companySlug, ct);
         var sales = await purchasing.GetSalesAsync(companySlug, settled: false, ct: ct);
         var purchases = await purchasing.GetPurchasesAsync(companySlug, paid: false, ct: ct);
 
-        return Build(invoices, sales, purchases, refDate, fetchedAt);
+        return new QualityCheckData(invoices, sales, purchases, fetchedAt);
+    }
+
+    public async Task<QualityCheckReport> RunAsync(
+        string companySlug,
+        DateOnly? referenceDate = null,
+        CancellationToken ct = default)
+    {
+        var data = await FetchAsync(companySlug, ct);
+        return data.BuildReport(referenceDate ?? DateOnly.FromDateTime(data.FetchedAt.DateTime));
     }
 
     public static QualityCheckReport Build(
@@ -45,6 +64,9 @@ public sealed class QualityCheckService(
 
         return new QualityCheckReport(referenceDate, fetchedAt, sections);
     }
+
+    private DateTimeOffset NorwegianNow() =>
+        TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), NorwegianTimeZone);
 
     private static TimeZoneInfo ResolveNorwegianTimeZone()
     {
