@@ -100,11 +100,15 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
         var tokenResponse = await PostTokenFormAsync(formFields, isConfidential ? (clientId, clientSecret) : null, isRefresh: false, ct);
         var expiresAtUtc = ComputeExpiresAtUtc(tokenResponse.ExpiresIn);
 
-        await _configStore.SaveFikenOAuthTokensAsync(
-            tokenResponse.AccessToken,
-            tokenResponse.RefreshToken,
-            expiresAtUtc,
-            CancellationToken.None);
+        // Samme lås som fornyelse, så en fornyelse som pågår i en annen prosess ikke overskriver den nye innloggingen.
+        using (await AcquireTokenLocksAsync(CancellationToken.None))
+        {
+            await _configStore.SaveFikenOAuthTokensAsync(
+                tokenResponse.AccessToken,
+                tokenResponse.RefreshToken,
+                expiresAtUtc,
+                CancellationToken.None);
+        }
 
         return tokenResponse;
     }
@@ -217,6 +221,8 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
 
     public async Task DisconnectAsync(CancellationToken ct = default)
     {
+        // Samme lås som fornyelse, så en fornyelse som pågår i en annen prosess ikke skriver tokens tilbake etterpå.
+        using var locks = await AcquireTokenLocksAsync(ct);
         var settings = await _configStore.LoadSettingsAsync(ct);
         if (!string.IsNullOrWhiteSpace(settings.FikenOAuthAccessToken))
         {
@@ -246,6 +252,33 @@ public sealed class FikenOAuthService : IFikenOAuthService, IDisposable
         }
 
         await _configStore.ClearFikenOAuthTokensAsync(ct);
+    }
+
+    /// <summary>Tar prosesslåsen og fillåsen for tokens, i samme rekkefølge som fornyelsen.</summary>
+    private async Task<IDisposable> AcquireTokenLocksAsync(CancellationToken ct)
+    {
+        await _refreshGate.WaitAsync(ct);
+        try
+        {
+            var fileLock = await CrossProcessFileLock.AcquireAsync(
+                Path.Combine(_configStore.DataDirectory, RefreshLockFileName),
+                ct);
+            return new TokenLocks(fileLock, _refreshGate);
+        }
+        catch
+        {
+            _refreshGate.Release();
+            throw;
+        }
+    }
+
+    private sealed class TokenLocks(CrossProcessFileLock fileLock, SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose()
+        {
+            fileLock.Dispose();
+            gate.Release();
+        }
     }
 
     private async Task<FikenOAuthTokenResponse> PostTokenFormAsync(

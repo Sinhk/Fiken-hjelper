@@ -252,8 +252,11 @@ public sealed class CrossProcessLockTests : IDisposable
 
         // Begge har fått 401 på acc-1 og ber om tvungen fornyelse samtidig.
         var results = await Task.WhenAll(
-            oauthA.GetValidAccessTokenAsync(forceRefresh: true, TestContext.Current.CancellationToken),
-            oauthB.GetValidAccessTokenAsync(forceRefresh: true, TestContext.Current.CancellationToken));
+            oauthA.GetValidAccessTokenAsync(forceRefresh: true, TestContext.Current.CancellationToken, rejectedAccessToken: "acc-1"),
+            oauthB.GetValidAccessTokenAsync(forceRefresh: true, TestContext.Current.CancellationToken, rejectedAccessToken: "acc-1"));
+
+        // Den andre ser at tokenet allerede er fornyet, og sender ikke et nytt refresh-kall.
+        Assert.Equal(1, issued);
 
         Assert.All(results, token => Assert.StartsWith("acc-", token));
         Assert.DoesNotContain("acc-1", results);
@@ -427,6 +430,139 @@ public sealed class OAuthReviewFixTests : IDisposable
         await http.GetAsync("companies", TestContext.Current.CancellationToken);
 
         Assert.True(times[1] - times[0] >= spacing - TimeSpan.FromMilliseconds(15));
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+    }
+}
+
+/// <summary>Rettelser etter uavhengig review av låsingen (Neon).</summary>
+public sealed class CrossProcessLockSecondReviewTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "fiken-lock-review2-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Disconnect_WhileAnotherProcessRefreshes_TokensAreNotWrittenBack()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var seed = new LocalConfigStore(dataDirectory: _tempDir);
+        await seed.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client" }, ct);
+        await seed.SaveFikenOAuthTokensAsync("acc-1", "ref-1", DateTimeOffset.UtcNow.AddMinutes(-5), ct);
+
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var refreshHttp = new HttpClient(new StubHttpHandler(async (_, _) =>
+        {
+            refreshStarted.SetResult();
+            await releaseRefresh.Task;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"access_token":"acc-2","refresh_token":"ref-2","token_type":"bearer","expires_in":3600}""",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        using var revokeHttp = new HttpClient(new StubHttpHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))));
+        var storeMcp = new LocalConfigStore(dataDirectory: _tempDir);
+        var storeWeb = new LocalConfigStore(dataDirectory: _tempDir);
+        using var mcp = new FikenOAuthService(refreshHttp, storeMcp);
+        using var web = new FikenOAuthService(revokeHttp, storeWeb);
+
+        var refresh = mcp.GetValidAccessTokenAsync(ct: ct);
+        await refreshStarted.Task.WaitAsync(ct);
+        var disconnect = web.DisconnectAsync(ct);
+        await Task.Delay(100, ct);
+        Assert.False(disconnect.IsCompleted); // venter på fornyelsen
+
+        releaseRefresh.SetResult();
+        await refresh;
+        await disconnect;
+
+        var loaded = await storeWeb.LoadSettingsAsync(ct);
+        Assert.False(loaded.HasFikenOAuthTokens);
+    }
+
+    [Fact]
+    public async Task RateLimitRetry_ReleasesFileLockWhileWaiting()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var lockPath = Path.Combine(_tempDir, FikenRateLimiter.LockFileName);
+        using var limiter = new FikenRateLimiter(TimeSpan.Zero, lockPath);
+        var calls = 0;
+        var lockFreeDuringWait = false;
+        using var http = new HttpClient(new FikenRateLimitHandler(limiter)
+        {
+            InnerHandler = new StubHttpHandler(async (request, innerCt) =>
+            {
+                if (Interlocked.Increment(ref calls) == 1)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(200, innerCt);
+                        try
+                        {
+                            using var probe = await CrossProcessFileLock.AcquireAsync(lockPath, innerCt, TimeSpan.FromMilliseconds(500));
+                            lockFreeDuringWait = true;
+                        }
+                        catch (TimeoutException)
+                        {
+                        }
+                    }, innerCt);
+                    var tooMany = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                    tooMany.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+                    return tooMany;
+                }
+
+                await Task.CompletedTask;
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            })
+        })
+        {
+            BaseAddress = new Uri(FikenClient.DefaultBaseAddress)
+        };
+
+        using var response = await http.GetAsync("companies", ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, calls);
+        Assert.True(lockFreeDuringWait);
+    }
+
+    [Fact]
+    public async Task CorruptSharedTimestamp_IsIgnored()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        Directory.CreateDirectory(_tempDir);
+        var lockPath = Path.Combine(_tempDir, FikenRateLimiter.LockFileName);
+        await File.WriteAllBytesAsync(lockPath, BitConverter.GetBytes(long.MaxValue), ct);
+        using var limiter = new FikenRateLimiter(TimeSpan.FromMilliseconds(10), lockPath);
+
+        using (await limiter.AcquireSlotAsync(ct))
+        {
+            await limiter.WaitForSpacingAsync(ct);
+            limiter.RecordRequestCompleted();
+        }
+    }
+
+    [Fact]
+    public async Task FileLock_InMissingDirectoryOnUnwritablePath_FailsWithoutWaitingForTimeout()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        // En fil der mappa skulle vært: stien kan aldri opprettes.
+        Directory.CreateDirectory(_tempDir);
+        var blocker = Path.Combine(_tempDir, "ikke-en-mappe");
+        await File.WriteAllTextAsync(blocker, "x", ct);
+        var started = DateTimeOffset.UtcNow;
+
+        await Assert.ThrowsAnyAsync<IOException>(() =>
+            CrossProcessFileLock.AcquireAsync(Path.Combine(blocker, "sub", "x.lock"), ct, TimeSpan.FromSeconds(30)));
+        Assert.True(DateTimeOffset.UtcNow - started < TimeSpan.FromSeconds(5));
     }
 
     public void Dispose()

@@ -48,6 +48,11 @@ public sealed class CrossProcessFileLock : IDisposable
                     FileOptions.None);
                 return new CrossProcessFileLock(stream);
             }
+            catch (Exception ex) when (IsPermanentFailure(ex))
+            {
+                // Feil sti eller manglende rettigheter blir ikke bedre av å vente.
+                throw;
+            }
             catch (IOException) when (DateTimeOffset.UtcNow < deadline)
             {
                 await Task.Delay(RetryDelay, ct);
@@ -65,6 +70,11 @@ public sealed class CrossProcessFileLock : IDisposable
             }
         }
     }
+
+    private static bool IsPermanentFailure(Exception ex) =>
+        ex is DirectoryNotFoundException or PathTooLongException or DriveNotFoundException
+        // Bare Windows gir tilgangsfeil ved låskonflikt. På Linux/macOS betyr den manglende rettigheter.
+        || (ex is UnauthorizedAccessException && !OperatingSystem.IsWindows());
 
     /// <summary>Leser et 64-biters tall fra starten av låsfila (0 hvis tom).</summary>
     public long ReadInt64()

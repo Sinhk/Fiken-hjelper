@@ -40,6 +40,12 @@ public sealed class FikenRateLimiter : IDisposable
     public static FikenRateLimiter CreateShared(string dataDirectory) =>
         new(DefaultMinimumSpacing, Path.Combine(dataDirectory, LockFileName));
 
+    /// <summary>
+    /// Hvor lenge vi venter på låsfila. Må være lengre enn ett kall kan vare (HttpClient-timeout),
+    /// ellers får en ventende prosess tidsavbrudd selv om den andre prosessen bare har et tregt kall.
+    /// </summary>
+    public static readonly TimeSpan FileLockTimeout = TimeSpan.FromMinutes(3);
+
     public async Task<IDisposable> AcquireSlotAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -47,7 +53,7 @@ public sealed class FikenRateLimiter : IDisposable
         {
             try
             {
-                _currentFileLock = await CrossProcessFileLock.AcquireAsync(_lockFilePath, cancellationToken);
+                _currentFileLock = await CrossProcessFileLock.AcquireAsync(_lockFilePath, cancellationToken, FileLockTimeout);
             }
             catch
             {
@@ -65,7 +71,8 @@ public sealed class FikenRateLimiter : IDisposable
         if (_currentFileLock is { } fileLock)
         {
             var sharedTicks = fileLock.ReadInt64();
-            if (sharedTicks > 0)
+            // Ignorer ugyldig innhold i låsfila i stedet for å feile på hvert kall.
+            if (sharedTicks > 0 && sharedTicks <= DateTimeOffset.MaxValue.UtcTicks)
             {
                 var shared = new DateTimeOffset(sharedTicks, TimeSpan.Zero);
                 if (shared > nextAllowed)
@@ -130,7 +137,7 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
 {
     private const int MaxRateLimitRetries = 2;
 
-    /// <summary>Lengste ventetid ved 429 mens låsen holdes, så andre prosesser ikke blir stående lenge.</summary>
+    /// <summary>Lengste ventetid ved 429 før kallet prøves på nytt. Lengre ventetid gir 429 tilbake til kalleren.</summary>
     private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(10);
     private readonly FikenRateLimiter _limiter;
     private readonly bool _ownsLimiter;
@@ -151,8 +158,6 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        using var _ = await _limiter.AcquireSlotAsync(cancellationToken);
-
         byte[]? bufferedContent = null;
         string? bufferedMediaType = null;
         if (request.Content is not null)
@@ -163,27 +168,31 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
 
         for (var attempt = 0; ; attempt++)
         {
-            await _limiter.WaitForSpacingAsync(cancellationToken);
-
-            using var outgoing = CloneRequest(request, bufferedContent, bufferedMediaType);
             HttpResponseMessage? response = null;
-            try
+            // Plassen (og låsfila) holdes per forsøk, ikke under ventetiden ved 429, så andre prosesser slipper til.
+            using (await _limiter.AcquireSlotAsync(cancellationToken))
             {
-                response = await base.SendAsync(outgoing, cancellationToken);
+                await _limiter.WaitForSpacingAsync(cancellationToken);
 
-                // Les hele svaret mens plassen holdes: HttpClient leser ellers innholdet etter at handleren har
-                // returnert, og da kunne et nytt kall (også fra en annen prosess) startet samtidig.
-                await response.Content.LoadIntoBufferAsync(cancellationToken);
-            }
-            catch
-            {
-                response?.Dispose();
-                throw;
-            }
-            finally
-            {
-                // Mellomrommet gjelder også etter feil og tidsavbrudd.
-                _limiter.RecordRequestCompleted();
+                using var outgoing = CloneRequest(request, bufferedContent, bufferedMediaType);
+                try
+                {
+                    response = await base.SendAsync(outgoing, cancellationToken);
+
+                    // Les hele svaret mens plassen holdes: HttpClient leser ellers innholdet etter at handleren har
+                    // returnert, og da kunne et nytt kall (også fra en annen prosess) startet samtidig.
+                    await response.Content.LoadIntoBufferAsync(cancellationToken);
+                }
+                catch
+                {
+                    response?.Dispose();
+                    throw;
+                }
+                finally
+                {
+                    // Mellomrommet gjelder også etter feil og tidsavbrudd.
+                    _limiter.RecordRequestCompleted();
+                }
             }
 
             if (response.StatusCode != HttpStatusCode.TooManyRequests || attempt >= MaxRateLimitRetries)
