@@ -27,7 +27,12 @@ public sealed class BudgetTools(
         [Description("Hent ferske tall fra Fiken i stedet for mellomlagrede (maks 15 min gamle).")] bool refresh = false,
         CancellationToken ct = default) => ToolSupport.Run<object>(async () =>
     {
-        var lastYear = year ?? ToolSupport.Today(time).Year;
+        var lastYear = ToolSupport.ValidateYear(year ?? ToolSupport.Today(time).Year);
+        if (lastYear - Math.Clamp(years, 1, 5) + 1 < BudgetData.MinYear)
+        {
+            throw new McpException($"Kan ikke gå lenger tilbake enn {BudgetData.MinYear}.");
+        }
+
         var count = Math.Clamp(years, 1, 5);
         var comparison = await reports.BuildComparisonAsync(Enumerable.Range(0, count).Select(i => lastYear - i), refresh, ct);
 
@@ -80,7 +85,7 @@ public sealed class BudgetTools(
             throw new ArgumentException("Oppgi enten budgetLineName eller projectId.");
         }
 
-        var y = year ?? ToolSupport.Today(time).Year;
+        var y = ToolSupport.ValidateYear(year ?? ToolSupport.Today(time).Year);
         var slug = await context.GetCompanySlugAsync(ct);
         var budget = await budgetStore.LoadAsync(ct);
 
@@ -88,7 +93,7 @@ public sealed class BudgetTools(
         BudgetLine? previousLine = null;
         IReadOnlyCollection<long> projectIds;
         IReadOnlyCollection<long> previousProjectIds;
-        if (budgetLineName is not null)
+        if (!string.IsNullOrWhiteSpace(budgetLineName))
         {
             line = FindLine(budget.FindYear(y), budgetLineName, y);
             projectIds = line.ProjectIds.Distinct().ToList();
@@ -157,7 +162,9 @@ public sealed class BudgetTools(
             {
                 year = y - 1,
                 budget = previousLine?.Amount,
-                actual = previous.Actual,
+                // Samme regel som budsjettrapporten: et manuelt regnskapstall går foran Fiken-tallene.
+                actual = previousLine?.ManualActual ?? previous.Actual,
+                manualActual = previousLine?.ManualActual is not null,
                 projects = previousProjectIds.Select(id => new { projectId = id, name = projectNames.GetValueOrDefault(id) }).ToList()
             },
             projects = projectIds.Select(id => new { projectId = id, name = projectNames.GetValueOrDefault(id) }).ToList(),

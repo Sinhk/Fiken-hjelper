@@ -27,7 +27,7 @@ public sealed class AnomalyTools(
         CancellationToken ct = default) => ToolSupport.Run<object>(async () =>
     {
         var today = ToolSupport.Today(time);
-        var y = year ?? today.Year;
+        var y = ToolSupport.ValidateYear(year ?? today.Year);
         var selected = (checks is { Length: > 0 } ? checks : AnomalyTypes.All)
             .Select(c => c.Trim().ToLowerInvariant())
             .ToHashSet();

@@ -1,3 +1,4 @@
+using System.IO.Pipelines;
 using System.Text.Json;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
@@ -8,6 +9,7 @@ using FikenHjelper.Mcp.Tools;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 namespace FikenHjelper.Tests;
 
@@ -15,6 +17,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
 {
     private readonly FakeFikenApi _api = new();
     private readonly ManualTimeProvider _time = new(new DateTimeOffset(2026, 11, 24, 10, 0, 0, TimeSpan.Zero));
+    private bool _inboxUsed;
 
     private PurchaseTools CreateTools(
         bool testCompany = true,
@@ -29,7 +32,8 @@ public sealed class McpPurchaseFlowTests : IDisposable
             .Get("companies/test-as/accounts", """[{"code":"6800","name":"Kontorrekvisita"}]""")
             .Get("companies/test-as/projects", """[{"projectId":7,"number":"7","name":"Landsleir 2026","completed":false}]""")
             .Get("companies/test-as/purchases/drafts", "[]")
-            .Get("companies/test-as/inbox/11", $$"""{"documentId":11,"name":"Faktura Rema","filename":"rema.pdf","status":{{(inboxAlreadyUsed ? "true" : "false")}}}""")
+            .On(HttpMethod.Get, "companies/test-as/inbox/11", (_, _) => FakeFikenApi.Json(
+                $$"""{"documentId":11,"name":"Faktura Rema","filename":"rema.pdf","status":{{(inboxAlreadyUsed || _inboxUsed ? "true" : "false")}}}"""))
             .On(HttpMethod.Post, "companies/test-as/purchases/drafts", (_, _) =>
                 FakeFikenApi.Created("https://api.fiken.no/api/v2/companies/test-as/purchases/drafts/99"))
             .On(HttpMethod.Post, "companies/test-as/purchases/drafts/99/attachments", (_, _) =>
@@ -59,6 +63,106 @@ public sealed class McpPurchaseFlowTests : IDisposable
         new() { Text = "Mat", Account = "6800", AmountKr = 1000m, ProjectId = 7 },
         new() { Text = "Diverse", Account = "6800", AmountKr = 249.5m }
     ];
+
+    /// <summary>
+    /// Kjører create_purchase_draft gjennom en ekte MCP-server i minnet, med en klient som svarer på
+    /// bekreftelsesdialogen (elicitation) slik <paramref name="answer"/> sier.
+    /// </summary>
+    private async Task<(CallToolResult Result, string? DialogText)> CreateViaClientWithElicitationAsync(
+        PurchaseTools tools,
+        string token,
+        Func<ElicitResult> answer)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var clientToServer = new Pipe();
+        var serverToClient = new Pipe();
+        var options = new McpServerOptions
+        {
+            ToolCollection =
+            [
+                McpServerTool.Create(
+                    (string confirmationToken, McpServer server, CancellationToken toolCt) => tools.CreatePurchaseDraft(confirmationToken, server, toolCt),
+                    new McpServerToolCreateOptions { Name = "create_purchase_draft", SerializerOptions = ToolSupport.JsonOptions })
+            ]
+        };
+        await using var server = McpServer.Create(
+            new StreamServerTransport(clientToServer.Reader.AsStream(), serverToClient.Writer.AsStream()), options);
+        var serverRun = server.RunAsync(ct);
+
+        string? dialogText = null;
+        var clientOptions = new McpClientOptions
+        {
+            Handlers = new McpClientHandlers
+            {
+                ElicitationHandler = (request, _) =>
+                {
+                    dialogText = request?.Message;
+                    return ValueTask.FromResult(answer());
+                }
+            }
+        };
+        await using (var client = await McpClient.CreateAsync(
+            new StreamClientTransport(clientToServer.Writer.AsStream(), serverToClient.Reader.AsStream()), clientOptions, cancellationToken: ct))
+        {
+            var result = await client.CallToolAsync(
+                "create_purchase_draft",
+                new Dictionary<string, object?> { ["confirmationToken"] = token },
+                cancellationToken: ct);
+            return (result, dialogText);
+        }
+    }
+
+    private static ElicitResult Answer(string action, bool? confirm = null) => new()
+    {
+        Action = action,
+        Content = confirm is { } value
+            ? new Dictionary<string, JsonElement> { ["bekreft"] = JsonSerializer.SerializeToElement(value) }
+            : null
+    };
+
+    [Fact]
+    public async Task Elicitation_Accepted_CreatesDraftAndDialogShowsLinesAccountsAndProjects()
+    {
+        var tools = CreateTools(testCompany: false, allowList: "test-as");
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42,
+            invoiceNumber: "F-1", issueDate: "2026-11-20", dueDate: "2026-12-04", kid: "12345678", ct: TestContext.Current.CancellationToken));
+        var token = preview.GetProperty("confirmationToken").GetString()!;
+
+        var (result, dialog) = await CreateViaClientWithElicitationAsync(tools, token, () => Answer("accept", confirm: true));
+
+        Assert.NotEqual(true, result.IsError);
+        Assert.Contains(_api.Calls, c => c.Method == HttpMethod.Post && c.PathAndQuery.EndsWith("/purchases/drafts", StringComparison.Ordinal));
+        Assert.NotNull(dialog);
+        Assert.Contains("Mat: konto 6800 Kontorrekvisita, prosjekt 7 Landsleir 2026", dialog);
+        Assert.Contains("Diverse: konto 6800 Kontorrekvisita, uten prosjekt", dialog);
+        Assert.Contains("KID 12345678", dialog);
+        Assert.Contains("Rema", dialog);
+    }
+
+    [Theory]
+    [InlineData("accept", false)]
+    [InlineData("decline", null)]
+    [InlineData("cancel", null)]
+    public async Task Elicitation_NotConfirmed_CreatesNothingAndConsumesToken(string action, bool? confirm)
+    {
+        var tools = CreateTools(testCompany: false, allowList: "test-as");
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42,
+            issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
+        var token = preview.GetProperty("confirmationToken").GetString()!;
+
+        var (result, _) = await CreateViaClientWithElicitationAsync(tools, token, () => Answer(action, confirm));
+
+        Assert.True(result.IsError);
+        Assert.Contains("bekreftet ikke", Text(result));
+        Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
+
+        // Samme token kan ikke brukes igjen: et avslag krever ny forhåndsvisning.
+        var again = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token, ct: TestContext.Current.CancellationToken));
+        Assert.Contains("confirmationToken", again.Message);
+    }
+
+    private static string Text(CallToolResult result) =>
+        string.Join("\n", result.Content.OfType<TextContentBlock>().Select(b => b.Text));
 
     [Fact]
     public async Task PreviewThenCreate_CreatesExactlyThePreviewedDraftAndAttachesInboxDocument()
@@ -135,11 +239,23 @@ public sealed class McpPurchaseFlowTests : IDisposable
     }
 
     [Fact]
-    public async Task DocumentUsedSincePreview_AbortsBeforeCreating()
+    public async Task DocumentAlreadyUsed_IsAValidationErrorWithoutToken()
     {
         var tools = CreateTools(inboxAlreadyUsed: true);
         var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
-        Assert.Contains(preview.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.Contains("allerede brukt"));
+
+        Assert.False(preview.GetProperty("valid").GetBoolean());
+        Assert.Contains(preview.GetProperty("errors").EnumerateArray(), e => e.GetString()!.Contains("allerede brukt"));
+        Assert.False(preview.TryGetProperty("confirmationToken", out _));
+    }
+
+    [Fact]
+    public async Task DocumentUsedSincePreview_AbortsBeforeCreating()
+    {
+        var tools = CreateTools();
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
+        Assert.True(preview.GetProperty("valid").GetBoolean());
+        _inboxUsed = true; // f.eks. brukt i Fiken eller Web mellom forhåndsvisning og opprettelse
 
         var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!, ct: TestContext.Current.CancellationToken));
         Assert.Contains("brukt som bilag", ex.Message);
@@ -222,7 +338,7 @@ public sealed class McpStdioEndToEndTests : IDisposable
         var transport = new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = "fiken-hjelper",
-            Command = "dotnet",
+            Command = DotnetHost(),
             Arguments = [serverDll],
             EnvironmentVariables = new Dictionary<string, string?>
             {
@@ -242,6 +358,23 @@ public sealed class McpStdioEndToEndTests : IDisposable
     /// Serveren må startes fra sin egen byggmappe. Testprosjektet bruker ASP.NET Core-rammeverket,
     /// så pakker som Microsoft.Extensions.Hosting kopieres ikke til testmappa.
     /// </summary>
+    /// <summary>Samme dotnet som kjører testene, så serveren får riktig runtime selv om en annen dotnet ligger først i PATH.</summary>
+    private static string DotnetHost()
+    {
+        var current = Environment.ProcessPath;
+        if (current is not null && Path.GetFileNameWithoutExtension(current).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            return current;
+        }
+
+        // Testverten kan være en egen kjørbar fil (testhost). Finn dotnet ut fra runtime-mappa:
+        // {root}/shared/Microsoft.NETCore.App/{versjon}/
+        var runtimeDir = new DirectoryInfo(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory().TrimEnd(Path.DirectorySeparatorChar));
+        var root = runtimeDir.Parent?.Parent?.Parent?.FullName;
+        var candidate = root is null ? null : Path.Combine(root, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+        return candidate is not null && File.Exists(candidate) ? candidate : "dotnet";
+    }
+
     private static string FindServerDll()
     {
         // .../tests/FikenHjelper.Tests/bin/{Configuration}/{TargetFramework}/

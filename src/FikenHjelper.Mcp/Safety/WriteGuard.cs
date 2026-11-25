@@ -67,7 +67,8 @@ public sealed class WriteGuard(McpSettings settings, FikenContextService context
             throw new McpException(decision.Reason);
         }
 
-        if (server?.ClientCapabilities?.Elicitation is not null)
+        // Bare skjema-elicitation kan vise bekreftelsesdialogen. En klient med bare URL-elicitation behandles som uten.
+        if (server?.ClientCapabilities?.Elicitation?.Form is not null)
         {
             var result = await server.ElicitAsync<ConfirmationForm>(message, cancellationToken: ct);
             if (!result.IsAccepted || result.Content?.Bekreft != true)

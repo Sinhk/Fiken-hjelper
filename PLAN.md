@@ -132,7 +132,7 @@ FikenHjelper.slnx
   - `ProjectVarianceExplainer` og `AnomalyFinder` bruker Fase 3-hjelperne `BudgetReportBuilder.TryGetResultAmount` og `PrimaryProjectId`, så fortegnet finnes ett sted.
   - Fortegnsregelen er verifisert mot ekte Fiken-data i Fase 3-tråden (2025 stemmer på øret).
 - **Gjenstår:**
-  - Test hele flyten mot testforetak på Kaladin. Kontroller MVA-type (`NONE`, netto = brutto) på kjøpsutkast, og at vedlegg via `?inboxDocumentId=` fungerer uten filinnhold.
+  - Test hele flyten mot testforetak på Windows-maskinen. Kontroller MVA-type (`NONE`, netto = brutto) på kjøpsutkast, og at vedlegg via `?inboxDocumentId=` fungerer uten filinnhold.
   - EHF-stien er bare testet med falske data, fordi testforetak trolig ikke kan motta EHF.
   - Kreditnotaer og opprettelse av nye leverandører støttes ikke (bevisst).
   - HTTP-transport kommer i Fase 5.

@@ -10,12 +10,12 @@ public sealed class FikenLookups(IFikenPurchasingClient purchasing, IFikenClient
     public const string AllAccountsRange = "1000-8999";
 
     public Task<IReadOnlyList<FikenAccount>> GetAccountsAsync(string slug, string range, CancellationToken ct, bool refresh = false) =>
-        cache.GetOrFetchAsync($"mcp:accounts:{slug}:{range}", refresh, () => purchasing.GetAccountsAsync(slug, range, ct));
+        cache.GetOrFetchAsync($"mcp:accounts:{slug}:{range}", refresh, () => purchasing.GetAccountsAsync(slug, range, ct), ct);
 
     /// <summary>Samme nøkkel som <see cref="BudgetReportService.GetProjectsAsync"/>, så cachen deles.</summary>
     public Task<IReadOnlyList<FikenProject>> GetProjectsAsync(string slug, CancellationToken ct, bool refresh = false) =>
-        cache.GetOrFetchAsync($"projects:{slug}", refresh, () => fiken.GetProjectsAsync(slug, completed: null, ct));
+        cache.GetOrFetchAsync($"projects:{slug}", refresh, () => fiken.GetProjectsAsync(slug, completed: null, ct), ct);
 
     public Task<IReadOnlyList<FikenContact>> GetSuppliersAsync(string slug, CancellationToken ct, bool refresh = false) =>
-        cache.GetOrFetchAsync($"mcp:suppliers:{slug}", refresh, () => purchasing.GetSuppliersAsync(slug, ct: ct));
+        cache.GetOrFetchAsync($"mcp:suppliers:{slug}", refresh, () => purchasing.GetSuppliersAsync(slug, ct: ct), ct);
 }

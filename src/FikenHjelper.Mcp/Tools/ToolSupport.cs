@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
 using ModelContextProtocol;
 
@@ -38,6 +39,26 @@ internal static class ToolSupport
         {
             throw new McpException(ex.Message, ex);
         }
+        catch (HttpRequestException ex)
+        {
+            throw new McpException("Fikk ikke kontakt med Fiken. Sjekk nettforbindelsen og prøv igjen.", ex);
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+        {
+            // HttpClient-timeout. Avbrudd fra klienten (uten TimeoutException) slipper gjennom som før.
+            throw new McpException("Fiken svarte ikke i tide. Prøv igjen om litt.", ex);
+        }
+    }
+
+    /// <summary>Sjekker at året er innenfor det budsjettet støtter, med norsk feilmelding.</summary>
+    public static int ValidateYear(int year, string parameterName = "year")
+    {
+        if (year < BudgetData.MinYear || year > BudgetData.MaxYear)
+        {
+            throw new McpException($"{parameterName} må være mellom {BudgetData.MinYear} og {BudgetData.MaxYear}.");
+        }
+
+        return year;
     }
 
     public static DateOnly Today(TimeProvider time) =>

@@ -36,7 +36,7 @@ public sealed class FikenContextService(
     public async Task<ActiveCompany> GetActiveCompanyAsync(CancellationToken ct)
     {
         var slug = await GetCompanySlugAsync(ct);
-        var companies = await cache.GetOrFetchAsync("mcp:companies", refresh: false, () => fiken.GetCompaniesAsync(ct: ct));
+        var companies = await cache.GetOrFetchAsync("mcp:companies", refresh: false, () => fiken.GetCompaniesAsync(ct: ct), ct);
         var company = companies.FirstOrDefault(c => string.Equals(c.Slug, slug, StringComparison.OrdinalIgnoreCase));
         return company is null
             ? new ActiveCompany(slug, null, IsTestCompany: false, Found: false)

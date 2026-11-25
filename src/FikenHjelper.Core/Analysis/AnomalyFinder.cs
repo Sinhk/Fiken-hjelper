@@ -97,7 +97,7 @@ public static class AnomalyFinder
     public static IEnumerable<Anomaly> OverdueSales(IEnumerable<FikenSale> unsettledSales, DateOnly today) =>
         unsettledSales
             .Where(s => !s.Deleted && !s.Settled && ParseDate(s.DueDate) is { } due && due < today
-                && (s.OutstandingBalance ?? 1) != 0)
+                && (s.OutstandingBalance ?? 1) > 0)
             .Select(s => new Anomaly(
                 AnomalyTypes.OverdueSales,
                 Medium,

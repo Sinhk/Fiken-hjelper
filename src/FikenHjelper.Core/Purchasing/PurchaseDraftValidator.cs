@@ -82,7 +82,7 @@ public static partial class PurchaseDraftValidator
 
             if (!string.Equals(ehf.Status, "unprocessed", StringComparison.OrdinalIgnoreCase))
             {
-                warnings.Add($"EHF-dokumentet har status «{ehf.Status}» og er kanskje allerede behandlet.");
+                errors.Add($"EHF-dokumentet har status «{ehf.Status}» og er allerede behandlet. Velg et ubehandlet dokument, eller behandle det i Fiken.");
             }
 
             if (!string.IsNullOrWhiteSpace(ehf.Currency) && !string.Equals(ehf.Currency, "NOK", StringComparison.OrdinalIgnoreCase))
@@ -93,7 +93,7 @@ public static partial class PurchaseDraftValidator
 
         if (context.InboxDocument is { Status: true })
         {
-            warnings.Add("Innboksdokumentet er allerede brukt som bilag et annet sted.");
+            errors.Add("Innboksdokumentet er allerede brukt som bilag et annet sted. Velg et annet dokument, eller sjekk i Fiken.");
         }
 
         // Leverandør

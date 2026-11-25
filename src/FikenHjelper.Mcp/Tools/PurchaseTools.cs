@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Net;
+using System.Text;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.Purchasing;
@@ -247,7 +248,7 @@ public sealed class PurchaseTools(
 
         var summary = validation.Request is null
             ? null
-            : BuildSummary(company, supplier, validation.Request, source, validation.TotalKr);
+            : BuildSummary(company, supplier, validation.Request, source, validation.TotalKr, accountNames, projectNames, validation.Warnings);
 
         string? token = null;
         DateTimeOffset? expiresAt = null;
@@ -304,16 +305,17 @@ public sealed class PurchaseTools(
             throw new McpException("Foretaket er endret siden forhåndsvisningen. Kall preview_purchase_draft på nytt.");
         }
 
-        // Skrivevern + bekreftelse direkte fra brukeren (elicitation) med oppsummeringen fra forhåndsvisningen.
-        await writeGuard.EnsureAllowedAndConfirmedAsync(server, $"Opprette dette kjøpsutkastet i Fiken?\n\n{preview.Summary}", ct);
-
+        // Tokenet forbrukes før bekreftelsen: avslår brukeren, kreves ny forhåndsvisning.
         if (!pendingDrafts.TryTake(confirmationToken, out var pending) || pending is null)
         {
             throw new McpException(invalidToken);
         }
 
+        // Skrivevern + bekreftelse direkte fra brukeren (elicitation) med oppsummeringen fra forhåndsvisningen.
+        await writeGuard.EnsureAllowedAndConfirmedAsync(server, $"Opprette dette kjøpsutkastet i Fiken?\n\n{pending.Summary}", ct);
+
         // Bilaget kan ha blitt brukt i Fiken eller Web siden forhåndsvisningen.
-        await EnsureSourceStillUnusedAsync(slug, pending.Source, ct);
+        await EnsureSourceStillUnusedAsync(slug, pending.Source, sincePreview: true, ct);
 
         CreatedResourceResult created;
         try
@@ -341,9 +343,12 @@ public sealed class PurchaseTools(
                 await purchasing.AttachDocumentToPurchaseDraftAsync(slug, draftId, pending.Source, ct);
                 attachmentStatus = $"{pending.Source} er lagt ved og markert som brukt i Fiken.";
             }
-            catch (FikenApiException ex)
+            catch (Exception ex) when (ex is FikenApiException or HttpRequestException or TaskCanceledException or TimeoutException)
             {
-                attachmentStatus = $"Utkastet ble opprettet, men vedlegget feilet: {ex.Message}. Prøv attach_document_to_purchase_draft, eller legg ved i Fiken.";
+                // Utkastet finnes uansett. Ikke kast videre, ellers ser det ut som om ingenting ble opprettet.
+                var reason = ex is FikenApiException ? ex.Message : "Fiken svarte ikke";
+                attachmentStatus = $"Utkast {draftId} ble opprettet, men vedlegget feilet: {reason}. Ikke opprett utkastet på nytt. " +
+                                   "Prøv attach_document_to_purchase_draft, eller legg ved i Fiken.";
             }
         }
 
@@ -375,47 +380,90 @@ public sealed class PurchaseTools(
 
         var slug = await context.GetCompanySlugAsync(ct);
         var drafts = await purchasing.GetPurchaseDraftsAsync(slug, ct);
-        if (drafts.All(d => d.DraftId != draftId))
-        {
-            throw new McpException($"Fant ikke kjøpsutkast {draftId}. Vedlegg kan bare legges på kjøpsutkast.");
-        }
+        var draft = drafts.FirstOrDefault(d => d.DraftId == draftId)
+            ?? throw new McpException($"Fant ikke kjøpsutkast {draftId}. Vedlegg kan bare legges på kjøpsutkast.");
 
-        await writeGuard.EnsureAllowedAndConfirmedAsync(server, $"Legge {source} ved kjøpsutkast {draftId} i Fiken? Dokumentet markeres som brukt.", ct);
-        await EnsureSourceStillUnusedAsync(slug, source, ct);
+        var documentName = await EnsureSourceStillUnusedAsync(slug, source, sincePreview: false, ct);
+        var company = await context.GetActiveCompanyAsync(ct);
+        var nb = CultureInfo.GetCultureInfo("nb-NO");
+        await writeGuard.EnsureAllowedAndConfirmedAsync(
+            server,
+            $"Legge {source} («{documentName}») ved kjøpsutkast {draftId} i «{company.Name ?? company.Slug}»?\n" +
+            $"Utkastet: {draft.Contact?.Name ?? "uten leverandør"}, fakturanr. {draft.InvoiceNumber ?? "–"}, " +
+            $"totalt {(draft.GrossAmount / 100m).ToString("N2", nb)} kr. Dokumentet markeres som brukt i Fiken.",
+            ct);
         await purchasing.AttachDocumentToPurchaseDraftAsync(slug, draftId, source, ct);
         return new { attached = true, draftId, document = source.ToString() };
     });
 
-    private async Task EnsureSourceStillUnusedAsync(string slug, PurchaseDocumentSource? source, CancellationToken ct)
+    /// <summary>Stopper hvis dokumentet allerede er brukt som bilag. Returnerer dokumentets navn.</summary>
+    private async Task<string?> EnsureSourceStillUnusedAsync(string slug, PurchaseDocumentSource? source, bool sincePreview, CancellationToken ct)
     {
+        var when = sincePreview ? " siden forhåndsvisningen" : "";
         if (source?.InboxDocumentId is { } inboxId)
         {
             var doc = await purchasing.GetInboxDocumentAsync(slug, inboxId, ct);
             if (doc.Status)
             {
-                throw new McpException($"Innboksdokument {inboxId} er brukt som bilag siden forhåndsvisningen. Ingenting er opprettet; sjekk i Fiken.");
+                throw new McpException($"Innboksdokument {inboxId} er allerede brukt som bilag{when}. Ingenting er endret; sjekk i Fiken.");
             }
+
+            return doc.Name ?? doc.Filename;
         }
-        else if (source?.EhfDocumentId is { } ehfId)
+
+        if (source?.EhfDocumentId is { } ehfId)
         {
             var ehf = await purchasing.GetEhfDocumentAsync(slug, ehfId, ct);
             if (!string.Equals(ehf.Status, "unprocessed", StringComparison.OrdinalIgnoreCase))
             {
-                throw new McpException($"EHF-dokument {ehfId} har fått status «{ehf.Status}» siden forhåndsvisningen. Ingenting er opprettet; sjekk i Fiken.");
+                throw new McpException($"EHF-dokument {ehfId} har status «{ehf.Status}»{when}. Ingenting er endret; sjekk i Fiken.");
             }
+
+            return $"{ehf.SupplierName ?? "ukjent leverandør"}, faktura {ehf.InvoiceNumber ?? "–"}";
         }
+
+        return null;
     }
 
-    private static string BuildSummary(
+    /// <summary>
+    /// Teksten brukeren bekrefter i serverens dialog. Den skal vise alt som opprettes, så tekst i et bilag
+    /// ikke kan lure AI-en til å lage noe annet enn brukeren tror.
+    /// </summary>
+    internal static string BuildSummary(
         ActiveCompany company,
         FikenContact? supplier,
         FikenPurchaseDraftRequest request,
         PurchaseDocumentSource? source,
-        decimal totalKr)
+        decimal totalKr,
+        IReadOnlyDictionary<string, string> accountNames,
+        IReadOnlyDictionary<long, string> projectNames,
+        IReadOnlyList<string> warnings)
     {
         var nb = CultureInfo.GetCultureInfo("nb-NO");
-        return $"Kjøpsutkast i «{company.Name ?? company.Slug}»: {supplier?.Name ?? "uten leverandør"}, " +
-               $"fakturanr. {request.InvoiceNumber ?? "–"}, fakturadato {request.InvoiceIssueDate ?? "–"}, forfall {request.DueDate ?? "–"}, " +
-               $"{request.Lines.Count} linje(r), totalt {totalKr.ToString("N2", nb)} kr, vedlegg: {source?.ToString() ?? "ingen"}. Ikke betalt, ikke bokført.";
+        var text = new StringBuilder();
+        text.Append(CultureInfo.InvariantCulture, $"Kjøpsutkast i «{company.Name ?? company.Slug}»: {supplier?.Name ?? "uten leverandør"}");
+        text.Append(CultureInfo.InvariantCulture, $", fakturanr. {request.InvoiceNumber ?? "–"}, fakturadato {request.InvoiceIssueDate ?? "–"}, forfall {request.DueDate ?? "–"}");
+        if (!string.IsNullOrWhiteSpace(request.Kid))
+        {
+            text.Append(CultureInfo.InvariantCulture, $", KID {request.Kid}");
+        }
+
+        text.Append(CultureInfo.InvariantCulture, $", vedlegg: {source?.ToString() ?? "ingen"}.");
+        foreach (var line in request.Lines)
+        {
+            var account = accountNames.GetValueOrDefault(line.Account) is { } accountName ? $"{line.Account} {accountName}" : line.Account;
+            var project = line.ProjectId is { } pid
+                ? $"prosjekt {pid}{(projectNames.GetValueOrDefault(pid) is { } projectName ? $" {projectName}" : "")}"
+                : "uten prosjekt";
+            text.Append(CultureInfo.InvariantCulture, $"\n- {line.Text}: konto {account}, {project}, {(line.Gross / 100m).ToString("N2", nb)} kr");
+        }
+
+        text.Append(CultureInfo.InvariantCulture, $"\nTotalt {totalKr.ToString("N2", nb)} kr. Ikke betalt, ikke bokført.");
+        foreach (var warning in warnings)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"\nAdvarsel: {warning}");
+        }
+
+        return text.ToString();
     }
 }
