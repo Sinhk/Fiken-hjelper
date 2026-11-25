@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using Microsoft.AspNetCore.Components;
@@ -12,6 +13,7 @@ public sealed partial class Settings : ComponentBase, IAsyncDisposable
     [Inject] private IFikenOAuthService OAuthService { get; set; } = default!;
     [Inject] private NavigationManager Navigation { get; set; } = default!;
     [Inject] private ILogger<Settings> Logger { get; set; } = default!;
+    [Inject] private FikenDataCache FikenCache { get; set; } = default!;
 
     [SupplyParameterFromQuery(Name = "oauth")]
     public string? OAuthQueryStatus { get; set; }
@@ -120,6 +122,7 @@ public sealed partial class Settings : ComponentBase, IAsyncDisposable
         try
         {
             await OAuthService.DisconnectAsync(token);
+            FikenCache.Clear();
             var saved = await ConfigStore.LoadSettingsAsync(token);
             hasOAuthTokens = saved.HasFikenOAuthTokens;
             oauthExpiresAtUtc = saved.FikenOAuthExpiresAtUtc;
@@ -248,6 +251,7 @@ public sealed partial class Settings : ComponentBase, IAsyncDisposable
         try
         {
             await ConfigStore.SaveSettingsAsync(formModel.ToAppSettings());
+            FikenCache.Clear();
             statusMessage = "Innstillinger lagret lokalt.";
         }
         catch (Exception ex)

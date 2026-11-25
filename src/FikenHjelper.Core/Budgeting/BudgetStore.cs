@@ -57,7 +57,7 @@ public sealed class JsonBudgetStore : IBudgetStore
         try
         {
             Directory.CreateDirectory(_directory);
-            var tempPath = _path + ".tmp";
+            var tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
             await using (var stream = File.Create(tempPath))
             {
                 await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, ct);
@@ -74,6 +74,7 @@ public sealed class JsonBudgetStore : IBudgetStore
     private static BudgetData Normalize(BudgetData data) => new()
     {
         Years = (data.Years ?? [])
+            .Where(y => y is not null && y.Year is >= BudgetData.MinYear and <= BudgetData.MaxYear)
             .GroupBy(y => y.Year)
             .Select(g => g.Last())
             .OrderByDescending(y => y.Year)
@@ -81,7 +82,7 @@ public sealed class JsonBudgetStore : IBudgetStore
             {
                 Year = y.Year,
                 Lines = (y.Lines ?? [])
-                    .Where(l => !string.IsNullOrWhiteSpace(l.Name))
+                    .Where(l => l is not null && !string.IsNullOrWhiteSpace(l.Name))
                     .Select(l => new BudgetLine
                     {
                         Name = l.Name.Trim(),

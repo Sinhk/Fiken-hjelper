@@ -3,11 +3,12 @@ using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Components.Routing;
 using MudBlazor;
 
 namespace FikenHjelper.Web.Components.Pages;
 
-public sealed partial class BudgetSetup : ComponentBase
+public sealed partial class BudgetSetup : ComponentBase, IDisposable
 {
     private const long MaxImportBytes = 10 * 1024 * 1024;
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
@@ -28,7 +29,10 @@ public sealed partial class BudgetSetup : ComponentBase
     private bool isDirty;
     private bool isSaving;
     private bool hasCompany = true;
+    private bool isLoadingProjects;
+    private bool projectsLoaded;
     private string? errorMessage;
+    private readonly CancellationTokenSource disposeCts = new();
 
     private List<FikenProject> projects = [];
     private Dictionary<long, FikenProject> projectsById = [];
@@ -40,7 +44,7 @@ public sealed partial class BudgetSetup : ComponentBase
 
     protected override async Task OnInitializedAsync()
     {
-        data = await BudgetStore.LoadAsync();
+        data = await BudgetStore.LoadAsync(disposeCts.Token);
         var initialYear = QueryYear is { } q && data.FindYear(q) is not null
             ? q
             : data.Years.Select(y => y.Year).DefaultIfEmpty(0).Max();
@@ -51,23 +55,44 @@ public sealed partial class BudgetSetup : ComponentBase
             return;
         }
 
+        isLoadingProjects = true;
         try
         {
-            var slug = await Reports.GetCompanySlugAsync();
+            var slug = await Reports.GetCompanySlugAsync(disposeCts.Token);
             hasCompany = !string.IsNullOrWhiteSpace(slug);
             if (hasCompany)
             {
-                projects = (await Reports.GetProjectsAsync(slug))
+                projects = (await Reports.GetProjectsAsync(slug, ct: disposeCts.Token))
                     .OrderBy(p => p.Completed)
                     .ThenBy(p => p.Name, StringComparer.Create(Nb, ignoreCase: true))
                     .ToList();
                 projectsById = projects.GroupBy(p => p.ProjectId).ToDictionary(g => g.Key, g => g.First());
+                projectsLoaded = true;
             }
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
         }
         catch (FikenApiException ex)
         {
-            errorMessage = ex.Message;
+            Logger.LogWarning(ex, "Fiken-feil ved henting av prosjekter");
+            errorMessage = $"Klarte ikke å hente prosjekter fra Fiken: {ex.UserMessage} Budsjettallene kan fortsatt redigeres.";
         }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å hente prosjekter fra Fiken");
+            errorMessage = "Klarte ikke å hente prosjekter fra Fiken. Budsjettallene kan fortsatt redigeres.";
+        }
+        finally
+        {
+            isLoadingProjects = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        disposeCts.Cancel();
+        disposeCts.Dispose();
     }
 
     private void SelectYearCore(int year)
@@ -94,9 +119,9 @@ public sealed partial class BudgetSetup : ComponentBase
 
     private async Task AddYearAsync()
     {
-        if (newYear is < 2000 or > 2100)
+        if (newYear is < BudgetData.MinYear or > BudgetData.MaxYear)
         {
-            Snackbar.Add("Velg et år mellom 2000 og 2100.", Severity.Warning);
+            Snackbar.Add($"Velg et år mellom {BudgetData.MinYear} og {BudgetData.MaxYear}.", Severity.Warning);
             return;
         }
 
@@ -130,21 +155,24 @@ public sealed partial class BudgetSetup : ComponentBase
         MarkDirty();
     }
 
-    private void RemoveLine(int index)
+    private void RemoveLine(BudgetLine line)
     {
-        current?.Lines.RemoveAt(index);
-        MarkDirty();
+        if (current?.Lines.Remove(line) == true)
+        {
+            MarkDirty();
+        }
     }
 
-    private void Move(int index, int delta)
+    private void Move(BudgetLine line, int delta)
     {
         if (current is null)
         {
             return;
         }
 
+        var index = current.Lines.IndexOf(line);
         var target = index + delta;
-        if (target < 0 || target >= current.Lines.Count)
+        if (index < 0 || target < 0 || target >= current.Lines.Count)
         {
             return;
         }
@@ -192,8 +220,24 @@ public sealed partial class BudgetSetup : ComponentBase
 
     private void MarkDirty() => isDirty = true;
 
+    private bool TryValidate()
+    {
+        var errors = data.Validate();
+        foreach (var error in errors)
+        {
+            Snackbar.Add(error, Severity.Warning);
+        }
+
+        return errors.Count == 0;
+    }
+
     private async Task SaveAsync()
     {
+        if (isSaving || !TryValidate())
+        {
+            return;
+        }
+
         isSaving = true;
         try
         {
@@ -267,29 +311,61 @@ public sealed partial class BudgetSetup : ComponentBase
 
     private async Task ApplyImportAsync()
     {
-        if (importPreview is null)
+        if (importPreview is null || isSaving)
+        {
+            return;
+        }
+
+        if (isDirty
+            && !await ConfirmAsync("Ulagrede endringer", "Importen lagres med en gang. Endringer du ikke har lagret, forkastes. Vil du fortsette?"))
         {
             return;
         }
 
         var chosen = importPreview.Years.Where(y => importSelection.Contains(y.Year)).ToList();
-        var replaced = chosen.Count(y => data.FindYear(y.Year) is not null);
-        if (replaced > 0
-            && !await ConfirmAsync("Erstatte eksisterende budsjett?", $"{replaced} år finnes allerede og blir erstattet av importen."))
+        if (chosen.Count == 0)
         {
             return;
         }
 
-        data.Years.RemoveAll(y => chosen.Any(c => c.Year == y.Year));
-        data.Years.AddRange(chosen);
-        data.Years.Sort((a, b) => b.Year.CompareTo(a.Year));
+        isSaving = true;
+        try
+        {
+            // Start fra det som er lagret, så ulagrede endringer i andre år ikke følger med.
+            var saved = await BudgetStore.LoadAsync(disposeCts.Token);
+            var replaced = chosen.Count(y => saved.FindYear(y.Year) is not null);
+            if (replaced > 0
+                && !await ConfirmAsync("Erstatte eksisterende budsjett?", $"{replaced} år finnes allerede og blir erstattet av importen."))
+            {
+                return;
+            }
 
-        await BudgetStore.SaveAsync(data);
-        data = await BudgetStore.LoadAsync();
-        isDirty = false;
-        importPreview = null;
-        SelectYearCore(chosen.Max(y => y.Year));
-        Snackbar.Add($"Importerte {chosen.Count} år.", Severity.Success);
+            saved.Years.RemoveAll(y => chosen.Any(c => c.Year == y.Year));
+            saved.Years.AddRange(chosen);
+            await BudgetStore.SaveAsync(saved, disposeCts.Token);
+            data = await BudgetStore.LoadAsync(disposeCts.Token);
+            isDirty = false;
+            importPreview = null;
+            SelectYearCore(chosen.Max(y => y.Year));
+            Snackbar.Add($"Importerte {chosen.Count} år.", Severity.Success);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Klarte ikke å lagre importert budsjett");
+            Snackbar.Add("Klarte ikke å lagre importen. Se loggen for detaljer.", Severity.Error);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (isDirty && !await ConfirmAsync("Ulagrede endringer", "Du har endringer som ikke er lagret. Vil du forlate siden og forkaste dem?"))
+        {
+            context.PreventNavigation();
+        }
     }
 
     private async Task<bool> ConfirmAsync(string title, string message)

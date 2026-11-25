@@ -97,7 +97,45 @@ public sealed class BudgetReportBuilderTests
         Assert.Equal(80m, report.Lines[0].Actual);
         Assert.False(report.HasFikenData);
         Assert.Null(report.FikenResult);
+        Assert.Empty(report.ProjectsLinkedToSeveralLines);
+    }
+
+    [Fact]
+    public void Build_FlagsProjectLinkedToSeveralFikenLines()
+    {
+        var budget = new BudgetYear
+        {
+            Year = 2026,
+            Lines =
+            [
+                new BudgetLine { Name = "A", ProjectIds = [Leir.ProjectId] },
+                new BudgetLine { Name = "B", ProjectIds = [Leir.ProjectId] }
+            ]
+        };
+
+        var report = BudgetReportBuilder.Build(budget, [Leir], journalEntries: []);
+
         Assert.Equal(Leir.ProjectId, Assert.Single(report.ProjectsLinkedToSeveralLines).ProjectId);
+    }
+
+    [Fact]
+    public void Build_ProjectOnManualLineIsReportedAsUnlinked()
+    {
+        var budget = new BudgetYear
+        {
+            Year = 2026,
+            Lines =
+            [
+                new BudgetLine { Name = "Manuell", ManualActual = 10m, ProjectIds = [Leir.ProjectId] },
+                new BudgetLine { Name = "Fra Fiken" }
+            ]
+        };
+        FikenJournalEntry[] entries = [Entry(1, Line("3200", -10_000, Leir.ProjectId), Line("1920:10001", 10_000))];
+
+        var report = BudgetReportBuilder.Build(budget, [Leir], entries);
+
+        Assert.Equal(Leir.ProjectId, Assert.Single(report.UnlinkedProjects).ProjectId);
+        Assert.Equal(100m, report.UnlinkedTotal);
     }
 
     [Theory]
@@ -168,8 +206,14 @@ public sealed class BudgetWorkbookTests
         overview.Cell("A4").Value = "Kryss og tvers";
         overview.Cell("B4").Value = 100000;
 
-        overview.Cell("A5").Value = "Resultat";
-        overview.Cell("B5").FormulaA1 = "SUM(B2:B4)";
+        overview.Cell("A5").Value = "Ekstra tilskudd";
+        overview.Cell("F5").Value = 15000;
+
+        overview.Cell("A6").Value = "drift";
+        overview.Cell("B6").Value = 1;
+
+        overview.Cell("A7").Value = "Resultat";
+        overview.Cell("B7").FormulaA1 = "SUM(B2:B6)";
 
         var projects = wb.AddWorksheet("Regnskap 2026");
         projects.Cell("A1").Value = "Prosjekter 2026";
@@ -211,13 +255,59 @@ public sealed class BudgetWorkbookTests
         Assert.Equal([10L, 11L], y2026.Lines[1].ProjectIds);
         Assert.Equal([12L], y2026.Lines[2].ProjectIds);
 
+        Assert.Contains(result.Warnings, w => w.Contains("2026") && w.Contains("flere ganger"));
+
         var y2024 = result.Years[1];
-        Assert.Equal(2, y2024.Lines.Count);
+        Assert.Equal(["Medlemskontingent", "Drift", "Ekstra tilskudd"], y2024.Lines.Select(l => l.Name));
         Assert.Equal(85625m, y2024.Lines[0].ManualActual);
         Assert.Equal(-26500m, y2024.Lines[1].Amount);
+        Assert.Equal(-3706m, y2024.Lines[1].ManualActual);
+        Assert.Equal(0m, y2024.Lines[2].Amount);
+        Assert.Equal(15000m, y2024.Lines[2].ManualActual);
 
         Assert.Contains(result.Warnings, w => w.Contains("Ukjent prosjekt"));
         Assert.Contains(result.Warnings, w => w.Contains("Regnskap 2024"));
+    }
+
+    [Theory]
+    [InlineData("1 500", 1500)]
+    [InlineData("-1 234,50", -1234.50)]
+    [InlineData("\u22121234,5", -1234.5)]
+    [InlineData("1.234,50", 1234.50)]
+    [InlineData("1,234.50", 1234.50)]
+    [InlineData("12,5 kr", 12.5)]
+    public void ParseNumber_HandlesNorwegianAndMixedFormats(string text, double expected)
+    {
+        Assert.Equal((decimal)expected, BudgetWorkbookImporter.ParseNumber(text));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("abc")]
+    public void ParseNumber_ReturnsNullForNonNumbers(string text)
+    {
+        Assert.Null(BudgetWorkbookImporter.ParseNumber(text));
+    }
+
+    [Fact]
+    public void Validate_ReportsMissingAndDuplicateNames()
+    {
+        var data = new BudgetData
+        {
+            Years =
+            [
+                new BudgetYear
+                {
+                    Year = 2026,
+                    Lines = [new BudgetLine { Name = "Drift" }, new BudgetLine { Name = "drift " }, new BudgetLine { Name = " " }]
+                }
+            ]
+        };
+
+        var errors = data.Validate();
+
+        Assert.Contains(errors, e => e.Contains("mangler navn"));
+        Assert.Contains(errors, e => e.Contains("Drift"));
     }
 
     [Fact]
@@ -284,21 +374,74 @@ public sealed class JsonBudgetStoreTests
     public async Task SaveAndLoad_RoundTripsAndNormalizes()
     {
         var dir = Path.Combine(Path.GetTempPath(), "fh-budget-" + Guid.NewGuid().ToString("N"));
-        var store = new JsonBudgetStore(dir);
-
-        await store.SaveAsync(new BudgetData
+        try
         {
-            Years =
-            [
-                new BudgetYear { Year = 2025, Lines = [new() { Name = " Drift ", Amount = -1, ProjectIds = [5, 5, 0] }, new() { Name = "  " }] },
-                new BudgetYear { Year = 2026 }
-            ]
-        });
+            var store = new JsonBudgetStore(dir);
 
-        var loaded = await store.LoadAsync();
-        Assert.Equal([2026, 2025], loaded.Years.Select(y => y.Year));
-        var line = Assert.Single(loaded.FindYear(2025)!.Lines);
-        Assert.Equal("Drift", line.Name);
-        Assert.Equal([5L], line.ProjectIds);
+            await store.SaveAsync(new BudgetData
+            {
+                Years =
+                [
+                    new BudgetYear { Year = 2025, Lines = [new() { Name = " Drift ", Amount = -1, ProjectIds = [5, 5, 0] }, new() { Name = "  " }] },
+                    new BudgetYear { Year = 2026 }
+                ]
+            });
+
+            var loaded = await store.LoadAsync();
+            Assert.Equal([2026, 2025], loaded.Years.Select(y => y.Year));
+            var line = Assert.Single(loaded.FindYear(2025)!.Lines);
+            Assert.Equal("Drift", line.Name);
+            Assert.Equal([5L], line.ProjectIds);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+}
+
+public sealed class FikenDataCacheTests
+{
+    [Fact]
+    public async Task ConcurrentRequestsShareOneFetch()
+    {
+        var cache = new FikenDataCache();
+        var calls = 0;
+        var release = new TaskCompletionSource();
+        async Task<IReadOnlyList<int>> Fetch()
+        {
+            Interlocked.Increment(ref calls);
+            await release.Task;
+            return [1, 2];
+        }
+
+        var first = cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        var second = cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        release.SetResult();
+
+        Assert.Equal([1, 2], await first);
+        Assert.Equal([1, 2], await second);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task RefreshAndClearFetchAgain()
+    {
+        var cache = new FikenDataCache();
+        var calls = 0;
+        Task<IReadOnlyList<int>> Fetch() => Task.FromResult<IReadOnlyList<int>>([Interlocked.Increment(ref calls)]);
+
+        await cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        await cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        Assert.Equal(1, calls);
+
+        await cache.GetOrFetchAsync("k", refresh: true, Fetch);
+        Assert.Equal(2, calls);
+
+        cache.Clear();
+        Assert.Equal([3], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
     }
 }

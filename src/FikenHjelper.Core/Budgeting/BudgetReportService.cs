@@ -78,25 +78,47 @@ public sealed class FikenDataCache(TimeProvider? time = null)
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, (DateTimeOffset FetchedAt, object Value)> _entries = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
 
     public async Task<IReadOnlyList<T>> GetOrFetchAsync<T>(
         string key,
         bool refresh,
         Func<Task<IReadOnlyList<T>>> fetch)
     {
-        var now = _time.GetUtcNow();
-        if (!refresh
-            && _entries.TryGetValue(key, out var cached)
-            && now - cached.FetchedAt < Lifetime
-            && cached.Value is IReadOnlyList<T> value)
+        if (!refresh && TryGetFresh<T>(key) is { } hit)
         {
-            return value;
+            return hit;
         }
 
-        var fresh = await fetch();
-        _entries[key] = (now, fresh);
-        return fresh;
+        // Én henting per nøkkel om gangen, så samtidige forespørsler (side + eksport) deler resultatet.
+        var gate = _gates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        var requestedAt = _time.GetUtcNow();
+        await gate.WaitAsync();
+        try
+        {
+            if (_entries.TryGetValue(key, out var cached)
+                && (!refresh || cached.FetchedAt >= requestedAt)
+                && TryGetFresh<T>(key) is { } shared)
+            {
+                return shared;
+            }
+
+            var fresh = await fetch();
+            _entries[key] = (_time.GetUtcNow(), fresh);
+            return fresh;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
+
+    private IReadOnlyList<T>? TryGetFresh<T>(string key) =>
+        _entries.TryGetValue(key, out var cached)
+        && _time.GetUtcNow() - cached.FetchedAt < Lifetime
+        && cached.Value is IReadOnlyList<T> value
+            ? value
+            : null;
 
     public void Clear() => _entries.Clear();
 }

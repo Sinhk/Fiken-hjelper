@@ -164,16 +164,32 @@ app.MapGet("/budsjett/eksport", async (
     CancellationToken ct) =>
 {
     var lastYear = year ?? DateTime.Today.Year;
-    var count = Math.Clamp(years ?? 3, 1, 10);
-    var comparison = await reports.BuildComparisonAsync(
-        Enumerable.Range(0, count).Select(i => lastYear - i),
-        refresh: false,
-        ct);
+    if (lastYear is < BudgetData.MinYear or > BudgetData.MaxYear)
+    {
+        return Results.BadRequest($"Året må være mellom {BudgetData.MinYear} og {BudgetData.MaxYear}.");
+    }
+
+    var count = Math.Clamp(years ?? 3, 1, Math.Min(10, lastYear - BudgetData.MinYear + 1));
+    BudgetComparison comparison;
+    try
+    {
+        comparison = await reports.BuildComparisonAsync(
+            Enumerable.Range(0, count).Select(i => lastYear - i),
+            refresh: false,
+            ct);
+    }
+    catch (FikenApiException ex)
+    {
+        return Results.Problem(ex.UserMessage, statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
+    }
+
     var bytes = BudgetWorkbookExporter.Export(comparison);
+    var firstYear = lastYear - count + 1;
+    var period = firstYear == lastYear ? $"{lastYear}" : $"{firstYear}-{lastYear}";
     return Results.File(
         bytes,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        $"Budsjett og regnskap {lastYear - count + 1}-{lastYear}.xlsx");
+        $"Budsjett og regnskap {period}.xlsx");
 });
 
 app.MapStaticAssets();

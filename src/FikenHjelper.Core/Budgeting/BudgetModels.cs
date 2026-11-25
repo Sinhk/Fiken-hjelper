@@ -3,9 +3,41 @@ namespace FikenHjelper.Core.Budgeting;
 /// <summary>Alle årsbudsjetter, lagret lokalt i <c>budgets.json</c>.</summary>
 public sealed class BudgetData
 {
+    public const int MinYear = 2000;
+    public const int MaxYear = 2100;
+
     public List<BudgetYear> Years { get; set; } = [];
 
     public BudgetYear? FindYear(int year) => Years.FirstOrDefault(y => y.Year == year);
+
+    /// <summary>
+    /// Finner poster som ville gått tapt eller blitt slått sammen ved lagring:
+    /// poster uten navn og flere poster med samme navn i samme år.
+    /// </summary>
+    public IReadOnlyList<string> Validate()
+    {
+        var errors = new List<string>();
+        foreach (var year in Years)
+        {
+            if (year.Lines.Any(l => string.IsNullOrWhiteSpace(l.Name)))
+            {
+                errors.Add($"{year.Year}: En eller flere poster mangler navn.");
+            }
+
+            var duplicates = year.Lines
+                .Where(l => !string.IsNullOrWhiteSpace(l.Name))
+                .GroupBy(l => l.Name.Trim(), StringComparer.CurrentCultureIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .Select(g => $"«{g.Key}»");
+            var list = string.Join(", ", duplicates);
+            if (list.Length > 0)
+            {
+                errors.Add($"{year.Year}: Flere poster har samme navn: {list}.");
+            }
+        }
+
+        return errors;
+    }
 }
 
 public sealed class BudgetYear

@@ -1,6 +1,7 @@
 @page "/budsjett"
 @rendermode InteractiveServer
 @using System.Globalization
+@implements IDisposable
 @inject BudgetReportService Reports
 @inject IBudgetStore BudgetStore
 @inject ILogger<Budget> Logger
@@ -33,7 +34,7 @@
                     Oppdater fra Fiken
                 </MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
-                           Href="@ExportUrl" UserAttributes="downloadAttributes">
+                           Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="isLoading">
                     Last ned Excel
                 </MudButton>
                 <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit" Href="budsjett/oppsett">
@@ -98,7 +99,7 @@
                 <MudItem xs="6" md="3">
                     <MudPaper Outlined Class="pa-3">
                         <MudText Typo="Typo.caption">Kontrollpunkter @main.Year</MudText>
-                        <MudText Typo="Typo.h6" Color="@(ControlIssueCount(main) == 0 ? Color.Success : Color.Warning)">
+                        <MudText Typo="Typo.h6" Color="@(!main.HasFikenData ? Color.Default : ControlIssueCount(main) == 0 ? Color.Success : Color.Warning)">
                             @(main.HasFikenData ? ControlIssueCount(main).ToString(Nb) : "–")
                         </MudText>
                     </MudPaper>
@@ -323,12 +324,13 @@
     private bool isLoading;
     private string? errorMessage;
     private readonly HashSet<string> expanded = new(StringComparer.CurrentCultureIgnoreCase);
+    private readonly CancellationTokenSource disposeCts = new();
 
     private string ExportUrl => $"budsjett/eksport?year={lastYear}&years={yearCount}";
 
     protected override async Task OnInitializedAsync()
     {
-        var budget = await BudgetStore.LoadAsync();
+        var budget = await BudgetStore.LoadAsync(disposeCts.Token);
         var budgetYears = budget.Years.Select(y => y.Year).ToList();
         selectableYears = budgetYears
             .Append(DateTime.Today.Year)
@@ -350,14 +352,19 @@
         StateHasChanged();
         try
         {
-            hasCompany = !string.IsNullOrWhiteSpace(await Reports.GetCompanySlugAsync());
+            hasCompany = !string.IsNullOrWhiteSpace(await Reports.GetCompanySlugAsync(disposeCts.Token));
             comparison = await Reports.BuildComparisonAsync(
                 Enumerable.Range(0, yearCount).Select(i => lastYear - i),
-                refresh);
+                refresh,
+                disposeCts.Token);
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
         }
         catch (FikenApiException ex)
         {
-            errorMessage = ex.Message;
+            Logger.LogWarning(ex, "Fiken-feil ved henting av budsjettrapport");
+            errorMessage = ex.UserMessage;
         }
         catch (Exception ex)
         {
@@ -406,4 +413,10 @@
 
     private static Color VarianceColor(decimal variance) =>
         variance < 0 ? Color.Error : variance > 0 ? Color.Success : Color.Default;
+
+    public void Dispose()
+    {
+        disposeCts.Cancel();
+        disposeCts.Dispose();
+    }
 }

@@ -65,7 +65,9 @@ public static class BudgetReportBuilder
         }
 
         var hasFikenData = journalEntries is not null;
+        // Poster med manuelt regnskapstall bruker ikke prosjektene sine, så de teller ikke som kobling.
         var linkedCount = budget.Lines
+            .Where(l => !l.ManualActual.HasValue)
             .SelectMany(l => l.ProjectIds.Distinct())
             .GroupBy(id => id)
             .ToDictionary(g => g.Key, g => g.Count());

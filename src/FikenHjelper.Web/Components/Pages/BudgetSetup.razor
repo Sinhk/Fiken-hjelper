@@ -3,6 +3,7 @@
 
 <PageTitle>Rediger budsjett – Fiken-hjelper</PageTitle>
 <MudProviders />
+<NavigationLock ConfirmExternalNavigation="isDirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
 <MudStack Spacing="4">
     <MudPaper Class="pa-4" Outlined>
@@ -84,12 +85,12 @@
                             </td>
                             <td>
                                 <MudNumericField T="decimal" Value="line.Amount" ValueChanged="v => { line.Amount = v; MarkDirty(); }"
-                                                 Culture="Nb" Format="N0" HideSpinButtons Margin="Margin.Dense"
+                                                 Culture="Nb" Format="#,##0.##" HideSpinButtons Margin="Margin.Dense"
                                                  Class="fh-num-input" aria-label="@($"Budsjett for {line.Name}")" />
                             </td>
                             <td>
                                 <MudNumericField T="decimal?" Value="line.ManualActual" ValueChanged="v => { line.ManualActual = v; MarkDirty(); }"
-                                                 Culture="Nb" Format="N0" HideSpinButtons Clearable Margin="Margin.Dense"
+                                                 Culture="Nb" Format="#,##0.##" HideSpinButtons Clearable Margin="Margin.Dense"
                                                  Placeholder="Fra Fiken" Class="fh-num-input" aria-label="@($"Manuelt regnskap for {line.Name}")" />
                             </td>
                             <td>
@@ -114,7 +115,7 @@
                                         </MudSelectItem>
                                     }
                                 </MudSelect>
-                                @foreach (var missing in line.ProjectIds.Where(id => !projectsById.ContainsKey(id)))
+                                @foreach (var missing in projectsLoaded ? line.ProjectIds.Where(id => !projectsById.ContainsKey(id)) : [])
                                 {
                                     <MudChip T="string" Size="Size.Small" Color="Color.Warning" OnClose="_ => RemoveProject(line, missing)">
                                         Ukjent prosjekt @missing
@@ -123,11 +124,11 @@
                             </td>
                             <td>
                                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="@(index == 0)"
-                                               OnClick="() => Move(index, -1)" aria-label="Flytt opp" />
+                                               OnClick="() => Move(line, -1)" aria-label="Flytt opp" />
                                 <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="@(index == current.Lines.Count - 1)"
-                                               OnClick="() => Move(index, 1)" aria-label="Flytt ned" />
+                                               OnClick="() => Move(line, 1)" aria-label="Flytt ned" />
                                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
-                                               OnClick="() => RemoveLine(index)" aria-label="@($"Slett {line.Name}")" />
+                                               OnClick="() => RemoveLine(line)" aria-label="@($"Slett {line.Name}")" />
                             </td>
                         </tr>
                     }
@@ -170,8 +171,8 @@
         <MudFileUpload T="IBrowserFile" Accept=".xlsx" FilesChanged="ReadImportFileAsync" MaxFileSize="MaxImportBytes">
             <CustomContent>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.UploadFile"
-                           OnClick="@context.OpenFilePickerAsync" Disabled="isImporting">
-                    Velg .xlsx-fil
+                           OnClick="@context.OpenFilePickerAsync" Disabled="@(isImporting || isLoadingProjects)">
+                    @(isLoadingProjects ? "Henter prosjekter fra Fiken …" : "Velg .xlsx-fil")
                 </MudButton>
             </CustomContent>
         </MudFileUpload>
@@ -209,7 +210,7 @@
             }
 
             <MudStack Row Spacing="2" Class="mt-2">
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyImportAsync" Disabled="@(importSelection.Count == 0)">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyImportAsync" Disabled="@(importSelection.Count == 0 || isSaving)">
                     Importer valgte år
                 </MudButton>
                 <MudButton Variant="Variant.Text" OnClick="() => importPreview = null">Avbryt</MudButton>

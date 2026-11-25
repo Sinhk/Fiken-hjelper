@@ -28,6 +28,8 @@ public static partial class BudgetWorkbookImporter
     private static partial Regex ActualHeader();
 
     private const int MaxHeaderRow = 5;
+    private const int MaxZipEntries = 10_000;
+    private const long MaxUncompressedBytes = 200L * 1024 * 1024;
 
     public static BudgetImportResult Import(Stream xlsx, IReadOnlyList<FikenProject> fikenProjects)
     {
@@ -56,7 +58,10 @@ public static partial class BudgetWorkbookImporter
             foreach (var (year, col) in budgetCols)
             {
                 var budget = ReadNumber(overview.Cell(row, col));
-                if (budget is null)
+                var actual = actualCols.TryGetValue(year, out var actualCol)
+                    ? ReadNumber(overview.Cell(row, actualCol))
+                    : null;
+                if (budget is null && actual is null)
                 {
                     continue;
                 }
@@ -67,13 +72,17 @@ public static partial class BudgetWorkbookImporter
                     years[year] = budgetYear;
                 }
 
+                if (budgetYear.Lines.Any(l => Normalize(l.Name) == Normalize(name)))
+                {
+                    warnings.Add($"{year}: Posten «{name}» står flere ganger i oversikten. Bare den første er tatt med.");
+                    continue;
+                }
+
                 budgetYear.Lines.Add(new BudgetLine
                 {
                     Name = name,
-                    Amount = budget.Value,
-                    ManualActual = actualCols.TryGetValue(year, out var actualCol)
-                        ? ReadNumber(overview.Cell(row, actualCol))
-                        : null
+                    Amount = budget ?? 0m,
+                    ManualActual = actual
                 });
             }
         }
@@ -198,21 +207,51 @@ public static partial class BudgetWorkbookImporter
     private static decimal? ReadNumber(IXLCell cell)
     {
         var value = cell.HasFormula ? cell.CachedValue : cell.Value;
+        if (cell.HasFormula && value.IsBlank)
+        {
+            // Filer lagret uten beregnede formelverdier: prøv å regne ut formelen selv.
+            try
+            {
+                value = cell.Value;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         if (value.IsNumber)
         {
             return Math.Round((decimal)value.GetNumber(), 2);
         }
 
-        if (value.IsText)
+        return value.IsText ? ParseNumber(value.GetText()) : null;
+    }
+
+    /// <summary>
+    /// Tolker tall skrevet som tekst. Komma er desimalskille (norsk ark), med mindre både punktum og
+    /// komma forekommer. Da er det siste av dem desimalskillet og det andre tusenskille.
+    /// </summary>
+    public static decimal? ParseNumber(string raw)
+    {
+        var text = new string(raw.Where(c => !char.IsWhiteSpace(c)).ToArray())
+            .Replace('\u2212', '-')
+            .Replace("kr", string.Empty, StringComparison.OrdinalIgnoreCase);
+        if (text.Length == 0)
         {
-            var text = value.GetText().Replace(" ", string.Empty).Replace(' '.ToString(), string.Empty);
-            if (decimal.TryParse(text.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed))
-            {
-                return parsed;
-            }
+            return null;
         }
 
-        return null;
+        var lastComma = text.LastIndexOf(',');
+        var lastDot = text.LastIndexOf('.');
+        if (lastComma >= 0 && lastDot >= 0)
+        {
+            text = text.Replace(lastComma > lastDot ? "." : ",", string.Empty);
+        }
+
+        return decimal.TryParse(text.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
     }
 
     /// <summary>
@@ -225,6 +264,11 @@ public static partial class BudgetWorkbookImporter
         using (var source = new ZipArchive(xlsx, ZipArchiveMode.Read, leaveOpen: true))
         using (var target = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
         {
+            if (source.Entries.Count > MaxZipEntries || source.Entries.Sum(e => e.Length) > MaxUncompressedBytes)
+            {
+                throw new InvalidDataException("Regnearket er for stort til å importeres.");
+            }
+
             foreach (var entry in source.Entries)
             {
                 var copy = target.CreateEntry(entry.FullName, CompressionLevel.Fastest);
@@ -388,10 +432,27 @@ public static class BudgetWorkbookExporter
             }
 
             row = WriteKeyValue(ws, row, "Resultat i Fiken (resultatkonti 3000–8799)", report.FikenResult);
-            row = WriteKeyValue(ws, row, "Sum regnskap i rapporten", report.TotalActual);
+            row = WriteKeyValue(ws, row, "Fordelt på budsjettposter (uten manuelle tall)",
+                report.Lines.Where(l => !l.IsManualActual).Sum(l => l.Actual));
             row = WriteKeyValue(ws, row, "Ufordelte posteringer (uten prosjekt)", report.UnallocatedTotal);
             row = WriteKeyValue(ws, row, "Prosjekter uten budsjettpost", report.UnlinkedTotal);
             row++;
+
+            if (report.ProjectsLinkedToSeveralLines.Count > 0)
+            {
+                ws.Cell(row++, 1).Value = "Prosjekter koblet til flere poster (telles flere ganger): "
+                    + string.Join(", ", report.ProjectsLinkedToSeveralLines.Select(p => p.Name));
+            }
+
+            if (report.PostingsWithSeveralProjects > 0)
+            {
+                ws.Cell(row++, 1).Value = $"{report.PostingsWithSeveralProjects} posteringslinje(r) har flere prosjekter. Bare det første prosjektet er brukt.";
+            }
+
+            if (report.ProjectsLinkedToSeveralLines.Count > 0 || report.PostingsWithSeveralProjects > 0)
+            {
+                row++;
+            }
 
             if (report.UnlinkedProjects.Count > 0)
             {
