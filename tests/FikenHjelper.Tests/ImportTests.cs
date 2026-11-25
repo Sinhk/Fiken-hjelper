@@ -79,6 +79,38 @@ public sealed class CsvTableReaderTests
         Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse("Navn;Gruppe\n\"Ola Test;Molde\nKari;Aukra\n"));
     }
 
+    [Theory]
+    // CsvHelper melder bare første feil per rad. Et løst anførselstegn først i raden skal ikke skjule
+    // at et senere felt aldri lukkes og sluker resten av filen.
+    [InlineData("Navn;Kommentar;Notat\nOla;12\" panne;\"uavsluttet tekst\nKari;ok;ok\n")]
+    [InlineData("Navn;Kommentar;Notat\nOla;12\" panne;\"uavsluttet \"\"sitat\"\"\nKari;ok;ok\n")]
+    [InlineData("Navn;Gruppe\nOla;\"Molde\n")]
+    public void Parse_UnclosedQuoteAfterStrayQuote_Throws(string csv)
+    {
+        Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse(csv));
+    }
+
+    [Theory]
+    // Alle felt sitert (som i Min speiding): et manglende avsluttende anførselstegn lukkes av neste siterte felt,
+    // så neste rad havner i feltet. Det skal gi feil, ikke stille datatap.
+    [InlineData("\"Navn\",\"Gruppe\",\"Notat\"\n\"Ola\",\"Molde\",\"mangler slutt\n\"Kari\",\"Aukra\",\"ok\"\n\"Per\",\"Molde\",\"ok\"\n")]
+    [InlineData("\"Navn\",\"Gruppe\n\"Ola\",\"Molde\"\n")]
+    [InlineData("Navn;Gruppe;Notat\nOla;Molde;\"mangler slutt\nKari;\"Aukra\";ok\nPer;Molde;ok\n")]
+    [InlineData("\"Navn\",\"Notat\",\"X\"\n\"Ola\",\"12\" panne, ekstra\",\"ok\"\n")]
+    [InlineData("Navn;Gruppe\nOla;\"Molde\" sør\nKari;Aukra\n")]
+    public void Parse_TextAfterClosingQuote_Throws(string csv)
+    {
+        Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse(csv));
+    }
+
+    [Fact]
+    public void Parse_QuotedLastFieldWithEscapedQuotes_IsNotUnclosed()
+    {
+        var table = CsvTableReader.Parse("Navn;Notat\nOla;\"Sa \"\"hei\"\"\"");
+
+        Assert.Equal("Sa \"hei\"", table.Rows[0][1]);
+    }
+
     [Fact]
     public void Parse_StripsBomInString()
     {
@@ -103,6 +135,18 @@ public sealed class CsvTableReaderTests
         Assert.Equal(",", table.DetectedDelimiter);
         Assert.Equal(["Navn", "Allergi; diett"], table.Headers);
         Assert.Equal("Nøtter; gluten", table.Rows[0][1]);
+    }
+
+    [Fact]
+    public void DetectDelimiter_CommaFileWithQuotedSemicolonsAndStrayQuotes_PicksComma()
+    {
+        // Løse anførselstegn («12" utstyr») er ufarlige og skal ikke veie like tungt som et sitert felt
+        // som ødelegges av feil skilletegn.
+        var table = CsvTableReader.Parse("\"Navn\",\"A;B;C\",12\" utstyr\n\"Ola\",\"1;2;3\",14\" panne\n");
+
+        Assert.Equal(",", table.DetectedDelimiter);
+        Assert.Equal(["Navn", "A;B;C", "12\" utstyr"], table.Headers);
+        Assert.Equal("1;2;3", table.Rows[0][1]);
     }
 
     [Fact]
@@ -738,20 +782,20 @@ public sealed class JsonImportProfileStoreTests : IDisposable
     public async Task SaveLoadReplaceAndDelete()
     {
         var store = new JsonImportProfileStore(_dir);
-        Assert.Empty(await store.LoadAllAsync());
+        Assert.Empty(await store.LoadAllAsync(TestContext.Current.CancellationToken));
 
-        await store.SaveAsync(new ImportProfile { Name = "Min speiding individuell", FullNameColumn = "Navn", EmailColumns = ["E-post", "E-post (2)"] });
-        await store.SaveAsync(new ImportProfile { Name = "Annen", FullNameColumn = "Name" });
-        await store.SaveAsync(new ImportProfile { Name = "min speiding individuell ", FullNameColumn = "Navn", GroupColumn = "Gruppe" });
+        await store.SaveAsync(new ImportProfile { Name = "Min speiding individuell", FullNameColumn = "Navn", EmailColumns = ["E-post", "E-post (2)"] }, TestContext.Current.CancellationToken);
+        await store.SaveAsync(new ImportProfile { Name = "Annen", FullNameColumn = "Name" }, TestContext.Current.CancellationToken);
+        await store.SaveAsync(new ImportProfile { Name = "min speiding individuell ", FullNameColumn = "Navn", GroupColumn = "Gruppe" }, TestContext.Current.CancellationToken);
 
-        var reloaded = await new JsonImportProfileStore(_dir).LoadAllAsync();
+        var reloaded = await new JsonImportProfileStore(_dir).LoadAllAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, reloaded.Count);
         var profile = reloaded.Single(p => p.FullNameColumn == "Navn");
         Assert.Equal("Gruppe", profile.GroupColumn);
         Assert.Empty(profile.EmailColumns);
 
-        await store.DeleteAsync("ANNEN");
-        Assert.Single(await store.LoadAllAsync());
+        await store.DeleteAsync("ANNEN", TestContext.Current.CancellationToken);
+        Assert.Single(await store.LoadAllAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(Path.Combine(_dir, JsonImportProfileStore.FileName)));
     }
 

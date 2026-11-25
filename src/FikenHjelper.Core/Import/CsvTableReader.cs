@@ -1,7 +1,5 @@
-using System.Globalization;
 using System.Text;
 using CsvHelper;
-using CsvHelper.Configuration;
 
 namespace FikenHjelper.Core.Import;
 
@@ -33,7 +31,7 @@ public static class CsvTableReader
     {
         text = text.TrimStart('﻿');
         var delimiter = DetectDelimiter(text);
-        var (records, _) = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true);
+        var (records, _, _) = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true);
 
         // Første ikke-tomme rad er overskriften.
         if (records.Count == 0)
@@ -78,18 +76,19 @@ public static class CsvTableReader
     }
 
     /// <summary>
-    /// Velger skilletegnet for de første radene: færrest felt med ødelagte anførselstegn først (et komma-skilt felt
-    /// som «"Allergi; diett"» blir ødelagt hvis det leses med semikolon), deretter flest rader med samme antall
-    /// kolonner som overskriften (minst to), deretter flest kolonner, deretter semikolon før komma før tab.
+    /// Velger skilletegnet for de første radene: færrest rader med ødelagt sitering først (et komma-skilt felt
+    /// som «"Allergi; diett"» blir ødelagt hvis det leses med semikolon), deretter færrest rader med løse
+    /// anførselstegn (som i «12" panne»), deretter flest rader med samme antall kolonner som overskriften
+    /// (minst to), deretter flest kolonner, deretter semikolon før komma før tab.
     /// </summary>
     internal static string DetectDelimiter(string text)
     {
         var best = ",";
-        var bestScore = (BadFields: int.MaxValue, Consistent: -1, Columns: 0);
+        var bestScore = (BrokenRecords: int.MaxValue, StrayQuoteRecords: int.MaxValue, Consistent: -1, Columns: 0);
 
         foreach (var candidate in CandidateDelimiters)
         {
-            var (records, badFields) = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
+            var (records, brokenRecords, strayQuoteRecords) = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
             if (records.Count == 0 || records[0].Length < 2)
             {
                 continue;
@@ -97,10 +96,8 @@ public static class CsvTableReader
 
             var columns = records[0].Length;
             var consistent = records.Count(r => r.Length == columns);
-            var score = (BadFields: badFields, Consistent: consistent, Columns: columns);
-            if (score.BadFields < bestScore.BadFields
-                || (score.BadFields == bestScore.BadFields && score.Consistent > bestScore.Consistent)
-                || (score.BadFields == bestScore.BadFields && score.Consistent == bestScore.Consistent && score.Columns > bestScore.Columns))
+            var score = (BrokenRecords: brokenRecords, StrayQuoteRecords: strayQuoteRecords, Consistent: consistent, Columns: columns);
+            if (IsBetter(score, bestScore))
             {
                 best = candidate;
                 bestScore = score;
@@ -108,56 +105,129 @@ public static class CsvTableReader
         }
 
         return best;
+
+        static bool IsBetter(
+            (int BrokenRecords, int StrayQuoteRecords, int Consistent, int Columns) score,
+            (int BrokenRecords, int StrayQuoteRecords, int Consistent, int Columns) best)
+        {
+            if (score.BrokenRecords != best.BrokenRecords)
+            {
+                return score.BrokenRecords < best.BrokenRecords;
+            }
+
+            if (score.StrayQuoteRecords != best.StrayQuoteRecords)
+            {
+                return score.StrayQuoteRecords < best.StrayQuoteRecords;
+            }
+
+            if (score.Consistent != best.Consistent)
+            {
+                return score.Consistent > best.Consistent;
+            }
+
+            return score.Columns > best.Columns;
+        }
     }
 
-    /// <summary>Leser ikke-tomme rader og teller felt CsvHelper melder som ødelagte (BadDataFound).</summary>
-    private static (List<string[]> Records, int BadFields) ReadRecords(string text, string delimiter, int? maxRecords, bool throwOnBadData)
+    /// <summary>
+    /// Leser ikke-tomme rader. Teller rader med ødelagt sitering (se <see cref="HasBrokenQuoting"/>) og rader med
+    /// løse anførselstegn i uquotede felt hver for seg.
+    /// </summary>
+    private static (List<string[]> Records, int BrokenRecords, int StrayQuoteRecords) ReadRecords(
+        string text, string delimiter, int? maxRecords, bool throwOnBadData)
     {
-        var unclosedQuote = false;
-        var badFields = 0;
-        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+        var brokenRecords = 0;
+        var strayQuoteRecords = 0;
+        var options = new CsvReaderOptions
         {
-            Delimiter = delimiter,
-            HasHeaderRecord = false,
-            IgnoreBlankLines = true,
-            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Et sitert felt som
-            // aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet for stille datatap.
-            BadDataFound = args =>
+            Separator = delimiter[0],
+            HasHeader = false,
+            SkipEmptyLines = true,
+            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Ødelagt sitering
+            // sjekkes selv per felt (HasBrokenQuoting), siden CsvHelper bare melder første feil i hver rad.
+            MalformedData = CsvMalformedDataHandling.Recover,
+            OnMalformedRecord = record =>
             {
-                badFields++;
-                unclosedQuote |= args.Field.TrimStart().StartsWith('"');
+                if (record.Reason == CsvMalformedReason.StrayQuote)
+                {
+                    strayQuoteRecords++;
+                }
             }
         };
 
         var records = new List<string[]>();
-        using var reader = new StringReader(text);
-        using var parser = new CsvParser(reader, config);
+        using var reader = CsvReader.FromText(text, options);
         try
         {
-            while ((maxRecords is null || records.Count < maxRecords) && parser.Read())
+            while ((maxRecords is null || records.Count < maxRecords) && reader.Read())
             {
-                var record = parser.Record ?? [];
+                var record = new string[reader.FieldCount];
+                var broken = false;
+                for (var i = 0; i < record.Length; i++)
+                {
+                    record[i] = reader.GetString(i);
+                    broken |= HasBrokenQuoting(reader.GetRawSpan(i));
+                }
+
+                if (broken)
+                {
+                    if (throwOnBadData)
+                    {
+                        throw new InvalidDataException(
+                            "Filen har et anførselstegn som ikke er lukket riktig. Sjekk at riktig fil og format er valgt.");
+                    }
+
+                    brokenRecords++;
+                }
+
                 if (record.Any(c => !string.IsNullOrWhiteSpace(c)))
                 {
                     records.Add(record);
                 }
             }
         }
-        catch (CsvHelperException ex) when (throwOnBadData)
+        catch (CsvFormatException ex) when (throwOnBadData)
         {
             throw new InvalidDataException("Filen kunne ikke leses som CSV. Sjekk at riktig fil og format er valgt.", ex);
         }
-        catch (CsvHelperException)
+        catch (CsvFormatException)
         {
             // Ved gjenkjenning av skilletegn regnes et lesebrudd som ødelagte data.
-            badFields++;
+            brokenRecords++;
         }
 
-        if (unclosedQuote && throwOnBadData)
+        return (records, brokenRecords, strayQuoteRecords);
+    }
+
+    /// <summary>
+    /// Om et sitert felt (rå bytes slik det står i filen) er ødelagt: det lukkes aldri, eller det følger tekst etter
+    /// det avsluttende anførselstegnet. Begge deler betyr at feltet har slukt tekst det ikke skulle hatt, f.eks. når
+    /// avsluttende «"» mangler i en fil der alle felt er sitert, slik at neste rad havner i feltet. «""» er et
+    /// escapet anførselstegn. Uquotede felt med løse anførselstegn («12" panne») er ikke ødelagt.
+    /// </summary>
+    private static bool HasBrokenQuoting(ReadOnlySpan<byte> raw)
+    {
+        if (raw.IsEmpty || raw[0] != (byte)'"')
         {
-            throw new InvalidDataException("Filen har et anførselstegn som ikke er lukket. Sjekk at riktig fil og format er valgt.");
+            return false;
         }
 
-        return (records, badFields);
+        for (var i = 1; i < raw.Length; i++)
+        {
+            if (raw[i] != (byte)'"')
+            {
+                continue;
+            }
+
+            if (i + 1 < raw.Length && raw[i + 1] == (byte)'"')
+            {
+                i++;
+                continue;
+            }
+
+            return i != raw.Length - 1;
+        }
+
+        return true;
     }
 }

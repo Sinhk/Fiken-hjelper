@@ -16,7 +16,7 @@ public sealed class LocalConfigStoreTests : IDisposable
                 FikenCompanySlug: "krets-slug"),
             _tempDir);
 
-        var initial = await store.LoadSettingsAsync();
+        var initial = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("secret-from-user-secrets", initial.FikenApiToken);
         Assert.Equal("krets-slug", initial.FikenCompanySlug);
 
@@ -28,9 +28,9 @@ public sealed class LocalConfigStoreTests : IDisposable
             DefaultDaysUntilDueDate = 21,
             DefaultBankAccountNumber = "12345678903",
             DefaultOurReference = "Kasserer"
-        });
+        }, TestContext.Current.CancellationToken);
 
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("secret-from-user-secrets", loaded.FikenApiToken);
         Assert.Equal("custom-slug", loaded.FikenCompanySlug);
         Assert.Equal("3210", loaded.DefaultIncomeAccount);
@@ -42,10 +42,10 @@ public sealed class LocalConfigStoreTests : IDisposable
     {
         var store = new LocalConfigStore(dataDirectory: _tempDir);
 
-        await store.SaveGroupMappingAsync("Molde speidergruppe", 5001);
-        await store.SaveEventAsync(new SavedMinSpeidingEvent("Kretsleir", "444", "abc", "q-key"));
+        await store.SaveGroupMappingAsync("Molde speidergruppe", 5001, TestContext.Current.CancellationToken);
+        await store.SaveEventAsync(new SavedMinSpeidingEvent("Kretsleir", "444", "abc", "q-key"), TestContext.Current.CancellationToken);
 
-        var mappings = await store.LoadMappingsAsync();
+        var mappings = await store.LoadMappingsAsync(TestContext.Current.CancellationToken);
         Assert.True(mappings.GroupNameToContactId.TryGetValue("MOLDE SPEIDERGRUPPE", out var id));
         Assert.Equal(5001, id);
         Assert.Single(mappings.SavedEvents);
@@ -53,8 +53,8 @@ public sealed class LocalConfigStoreTests : IDisposable
         Assert.Equal("abc", mappings.SavedEvents[0].ApiKey);
         Assert.Equal("q-key", mappings.SavedEvents[0].QuestionsApiKey);
 
-        await store.RemoveGroupMappingAsync("molde speidergruppe");
-        var afterRemove = await store.LoadMappingsAsync();
+        await store.RemoveGroupMappingAsync("molde speidergruppe", TestContext.Current.CancellationToken);
+        var afterRemove = await store.LoadMappingsAsync(TestContext.Current.CancellationToken);
         Assert.Empty(afterRemove.GroupNameToContactId);
     }
 
@@ -71,7 +71,7 @@ public sealed class LocalConfigStoreTests : IDisposable
     {
         var store = new LocalConfigStore(dataDirectory: _tempDir);
 
-        Assert.Null(await store.LoadEventDraftStateAsync("12345"));
+        Assert.Null(await store.LoadEventDraftStateAsync("12345", TestContext.Current.CancellationToken));
 
         var state = new SavedEventDraftState
         {
@@ -114,9 +114,9 @@ public sealed class LocalConfigStoreTests : IDisposable
             }
         };
 
-        await store.SaveEventDraftStateAsync(state);
+        await store.SaveEventDraftStateAsync(state, TestContext.Current.CancellationToken);
 
-        var loaded = await store.LoadEventDraftStateAsync("12345");
+        var loaded = await store.LoadEventDraftStateAsync("12345", TestContext.Current.CancellationToken);
         Assert.NotNull(loaded);
         Assert.Equal("12345", loaded.ProjectId);
         Assert.Equal(777, loaded.FikenProjectId);
@@ -143,8 +143,8 @@ public sealed class LocalConfigStoreTests : IDisposable
         Assert.Equal("Aukra speidergruppe", ov.CustomGroupName);
         Assert.Equal(5001, loaded.ManualRecipientContactIds["GROUP:MOLDE SPEIDERGRUPPE"]);
 
-        await store.DeleteEventDraftStateAsync("12345");
-        Assert.Null(await store.LoadEventDraftStateAsync("12345"));
+        await store.DeleteEventDraftStateAsync("12345", TestContext.Current.CancellationToken);
+        Assert.Null(await store.LoadEventDraftStateAsync("12345", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -153,15 +153,15 @@ public sealed class LocalConfigStoreTests : IDisposable
         var store = new LocalConfigStore(null, _tempDir);
         var draftsDir = Path.Combine(_tempDir, "drafts");
         Directory.CreateDirectory(draftsDir);
-        await File.WriteAllTextAsync(Path.Combine(draftsDir, "12345.json"), "{ \"billingMode\": \"PerParticipant\", ");
+        await File.WriteAllTextAsync(Path.Combine(draftsDir, "12345.json"), "{ \"billingMode\": \"PerParticipant\", ", TestContext.Current.CancellationToken);
 
-        Assert.Null(await store.LoadEventDraftStateAsync("12345"));
+        Assert.Null(await store.LoadEventDraftStateAsync("12345", TestContext.Current.CancellationToken));
         Assert.False(File.Exists(Path.Combine(draftsDir, "12345.json")));
         Assert.Single(Directory.GetFiles(draftsDir, "12345.json.corrupt-*"));
 
         // Saving again works normally afterwards.
-        await store.SaveEventDraftStateAsync(new SavedEventDraftState { ProjectId = "12345", FikenCompanySlug = " krets " });
-        var reloaded = await store.LoadEventDraftStateAsync("12345");
+        await store.SaveEventDraftStateAsync(new SavedEventDraftState { ProjectId = "12345", FikenCompanySlug = " krets " }, TestContext.Current.CancellationToken);
+        var reloaded = await store.LoadEventDraftStateAsync("12345", TestContext.Current.CancellationToken);
         Assert.NotNull(reloaded);
         Assert.Equal("krets", reloaded!.FikenCompanySlug);
     }
@@ -174,9 +174,10 @@ public sealed class LocalConfigStoreTests : IDisposable
         Directory.CreateDirectory(draftsDir);
         await File.WriteAllTextAsync(
             Path.Combine(draftsDir, "777.json"),
-            """{ "projectId": "777", "categoryPricesNok": { "fee:101": 450 } }""");
+            """{ "projectId": "777", "categoryPricesNok": { "fee:101": 450 } }""",
+            TestContext.Current.CancellationToken);
 
-        var legacy = await store.LoadEventDraftStateAsync("777");
+        var legacy = await store.LoadEventDraftStateAsync("777", TestContext.Current.CancellationToken);
         Assert.NotNull(legacy);
         Assert.Equal(0, legacy!.FormatVersion);
 
@@ -184,7 +185,7 @@ public sealed class LocalConfigStoreTests : IDisposable
         {
             ProjectId = "777",
             FormatVersion = SavedEventDraftState.CurrentFormatVersion
-        });
-        Assert.Equal(SavedEventDraftState.CurrentFormatVersion, (await store.LoadEventDraftStateAsync("777"))!.FormatVersion);
+        }, TestContext.Current.CancellationToken);
+        Assert.Equal(SavedEventDraftState.CurrentFormatVersion, (await store.LoadEventDraftStateAsync("777", TestContext.Current.CancellationToken))!.FormatVersion);
     }
 }

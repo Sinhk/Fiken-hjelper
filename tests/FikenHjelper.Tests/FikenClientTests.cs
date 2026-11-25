@@ -37,7 +37,7 @@ public sealed class FikenClientTests
             Path.Combine(Path.GetTempPath(), "fh-test-" + Guid.NewGuid().ToString("N")));
 
         var client = new FikenClient(http, store);
-        var customers = await client.GetCustomersAsync("romsdal-krets");
+        var customers = await client.GetCustomersAsync("romsdal-krets", TestContext.Current.CancellationToken);
 
         Assert.Equal(2, customers.Count);
         Assert.Contains(seenUrls, u => u.Contains("page=0&pageSize=100"));
@@ -79,7 +79,7 @@ public sealed class FikenClientTests
             CustomerId: 1001,
             ProjectId: 777);
 
-        var result = await client.CreateInvoiceDraftAsync("romsdal-krets", reqBody);
+        var result = await client.CreateInvoiceDraftAsync("romsdal-krets", reqBody, TestContext.Current.CancellationToken);
 
         Assert.Equal(987654, result.Id);
         Assert.NotNull(capturedJson);
@@ -202,10 +202,10 @@ public sealed class FikenClientTests
 
         var tasks = new[]
         {
-            http1.GetAsync("companies"),
-            http2.GetAsync("companies"),
-            http1.GetAsync("companies"),
-            http2.GetAsync("companies")
+            http1.GetAsync("companies", TestContext.Current.CancellationToken),
+            http2.GetAsync("companies", TestContext.Current.CancellationToken),
+            http1.GetAsync("companies", TestContext.Current.CancellationToken),
+            http2.GetAsync("companies", TestContext.Current.CancellationToken)
         };
 
         var responses = await Task.WhenAll(tasks);
