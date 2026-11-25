@@ -90,14 +90,17 @@ public sealed class CsvTableReaderTests
         Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse(csv));
     }
 
-    [Fact]
-    public void Parse_TextAfterClosingQuote_IsKeptWithoutSwallowingRows()
+    [Theory]
+    // Alle felt sitert (som i Min speiding): et manglende avsluttende anførselstegn lukkes av neste siterte felt,
+    // så neste rad havner i feltet. Det skal gi feil, ikke stille datatap.
+    [InlineData("\"Navn\",\"Gruppe\",\"Notat\"\n\"Ola\",\"Molde\",\"mangler slutt\n\"Kari\",\"Aukra\",\"ok\"\n\"Per\",\"Molde\",\"ok\"\n")]
+    [InlineData("\"Navn\",\"Gruppe\n\"Ola\",\"Molde\"\n")]
+    [InlineData("Navn;Gruppe;Notat\nOla;Molde;\"mangler slutt\nKari;\"Aukra\";ok\nPer;Molde;ok\n")]
+    [InlineData("\"Navn\",\"Notat\",\"X\"\n\"Ola\",\"12\" panne, ekstra\",\"ok\"\n")]
+    [InlineData("Navn;Gruppe\nOla;\"Molde\" sør\nKari;Aukra\n")]
+    public void Parse_TextAfterClosingQuote_Throws(string csv)
     {
-        var table = CsvTableReader.Parse("Navn;Gruppe\nOla;\"Molde\" sør\nKari;Aukra\n");
-
-        Assert.Equal(2, table.Rows.Count);
-        Assert.Equal("Molde sør", table.Rows[0][1]);
-        Assert.Equal("Kari", table.Rows[1][0]);
+        Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse(csv));
     }
 
     [Fact]

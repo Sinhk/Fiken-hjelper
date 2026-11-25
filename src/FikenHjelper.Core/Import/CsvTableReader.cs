@@ -130,13 +130,12 @@ public static class CsvTableReader
     }
 
     /// <summary>
-    /// Leser ikke-tomme rader. Teller rader med ødelagt sitering (et sitert felt med tekst etter avsluttende
-    /// anførselstegn, eller som aldri lukkes) og rader med løse anførselstegn i uquotede felt hver for seg.
+    /// Leser ikke-tomme rader. Teller rader med ødelagt sitering (se <see cref="HasBrokenQuoting"/>) og rader med
+    /// løse anførselstegn i uquotede felt hver for seg.
     /// </summary>
     private static (List<string[]> Records, int BrokenRecords, int StrayQuoteRecords) ReadRecords(
         string text, string delimiter, int? maxRecords, bool throwOnBadData)
     {
-        var unclosedQuote = false;
         var brokenRecords = 0;
         var strayQuoteRecords = 0;
         var options = new CsvReaderOptions
@@ -144,23 +143,15 @@ public static class CsvTableReader
             Separator = delimiter[0],
             HasHeader = false,
             SkipEmptyLines = true,
-            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst, og «"ab"c» leses som
-            // «abc». Et sitert felt som aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet
-            // for stille datatap (se IsUnterminatedQuotedField).
+            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Ødelagt sitering
+            // sjekkes selv per felt (HasBrokenQuoting), siden CsvHelper bare melder første feil i hver rad.
             MalformedData = CsvMalformedDataHandling.Recover,
-            // CsvHelper melder bare den første feilen i hver rad.
             OnMalformedRecord = record =>
             {
                 if (record.Reason == CsvMalformedReason.StrayQuote)
                 {
                     strayQuoteRecords++;
                 }
-                else
-                {
-                    brokenRecords++;
-                }
-
-                unclosedQuote |= record.Reason == CsvMalformedReason.UnterminatedQuote;
             }
         };
 
@@ -171,20 +162,22 @@ public static class CsvTableReader
             while ((maxRecords is null || records.Count < maxRecords) && reader.Read())
             {
                 var record = new string[reader.FieldCount];
+                var broken = false;
                 for (var i = 0; i < record.Length; i++)
                 {
                     record[i] = reader.GetString(i);
+                    broken |= HasBrokenQuoting(reader.GetRawSpan(i));
                 }
 
-                if (record.Length > 0 && IsUnterminatedQuotedField(reader.GetRawSpan(record.Length - 1)))
+                if (broken)
                 {
-                    if (!unclosedQuote)
+                    if (throwOnBadData)
                     {
-                        // Skjult bak en tidligere feil i samme rad, f.eks. et løst anførselstegn.
-                        brokenRecords++;
+                        throw new InvalidDataException(
+                            "Filen har et anførselstegn som ikke er lukket riktig. Sjekk at riktig fil og format er valgt.");
                     }
 
-                    unclosedQuote = true;
+                    brokenRecords++;
                 }
 
                 if (record.Any(c => !string.IsNullOrWhiteSpace(c)))
@@ -203,20 +196,16 @@ public static class CsvTableReader
             brokenRecords++;
         }
 
-        if (unclosedQuote && throwOnBadData)
-        {
-            throw new InvalidDataException("Filen har et anførselstegn som ikke er lukket. Sjekk at riktig fil og format er valgt.");
-        }
-
         return (records, brokenRecords, strayQuoteRecords);
     }
 
     /// <summary>
-    /// Om et felt (rå bytes slik det står i filen) starter med anførselstegn uten at det lukkes igjen. Et slikt felt
-    /// sluker resten av filen og blir alltid det siste. CsvHelper melder bare første feil per rad, så denne sjekken
-    /// fanger også tilfeller der et løst anførselstegn tidligere i raden skjuler det. «""» er et escapet anførselstegn.
+    /// Om et sitert felt (rå bytes slik det står i filen) er ødelagt: det lukkes aldri, eller det følger tekst etter
+    /// det avsluttende anførselstegnet. Begge deler betyr at feltet har slukt tekst det ikke skulle hatt, f.eks. når
+    /// avsluttende «"» mangler i en fil der alle felt er sitert, slik at neste rad havner i feltet. «""» er et
+    /// escapet anførselstegn. Uquotede felt med løse anførselstegn («12" panne») er ikke ødelagt.
     /// </summary>
-    private static bool IsUnterminatedQuotedField(ReadOnlySpan<byte> raw)
+    private static bool HasBrokenQuoting(ReadOnlySpan<byte> raw)
     {
         if (raw.IsEmpty || raw[0] != (byte)'"')
         {
@@ -236,7 +225,7 @@ public static class CsvTableReader
                 continue;
             }
 
-            return false;
+            return i != raw.Length - 1;
         }
 
         return true;
