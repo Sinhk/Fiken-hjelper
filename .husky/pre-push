@@ -1,5 +1,16 @@
 #!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
+# pre-push: sjekker med gitleaks alle commits som skal pushes og ikke finnes på
+# noen remote fra før. Slås av med HUSKY=0.
+if [ "$HUSKY" = "0" ] || [ "$HUSKY" = "false" ]; then exit 0; fi
 
 sh "$(dirname "$0")/scripts/require-gitleaks.sh" || exit 1
-dotnet husky run --group pre-push
+
+# Git sender én linje per ref som pushes: <lokal ref> <lokal sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    *[!0]*) ;;          # vanlig push
+    *) continue ;;      # sletting av en branch på remote
+  esac
+  gitleaks git --log-opts="$local_sha --not --remotes" --redact --no-banner --verbose || exit 1
+done
+exit 0

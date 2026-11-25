@@ -24,7 +24,7 @@ Gjelder alle agenter (Claude Code, Antigravity m.fl.). `CLAUDE.md` importerer de
 - Bruk modne, aktivt vedlikeholdte open source-pakker med åpen lisens framfor å skrive egne parsere eller infrastruktur. Eksempler: CsvHelper for CSV, ClosedXML for Excel, MudBlazor for UI-komponenter. Skriv bare den tynne limkoden rundt.
 - Brukergrensesnitt, feilmeldinger og dokumentasjon skrives på norsk bokmål.
 - Kjør `dotnet build`, `dotnet test` og `dotnet format --verify-no-changes` før commit. CI (`.github/workflows/ci.yml`) kjører de samme sjekkene på alle PR-er mot `main`, og bygget feiler på kompilatoradvarsler.
-- Git-hooks (Husky.Net, `.husky/`) installeres ved første `dotnet build`. `pre-commit` sjekker staged filer for hemmeligheter med gitleaks og kjører `dotnet format` på endrede `.cs`-filer. `pre-push` sjekker commits som ikke er pushet med gitleaks. gitleaks må være installert (`winget install gitleaks` / `brew install gitleaks`).
+- Git-hooks (Husky.Net, `.husky/`) installeres ved første `dotnet build`. `pre-commit` sjekker staged filer for hemmeligheter med gitleaks og kjører `dotnet format` på endrede `.cs`-filer. `pre-push` sjekker commits som ikke er pushet med gitleaks. gitleaks må være installert (`winget install --id Gitleaks.Gitleaks -e` / `brew install gitleaks`).
 - Ikke hopp over hookene med `--no-verify`. Stopper gitleaks på noe som er falsk alarm, spør brukeren før det legges i `.gitleaksignore`.
 
 ## Eksportfiler fra Min speiding

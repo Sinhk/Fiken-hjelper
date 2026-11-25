@@ -28,18 +28,6 @@
          "include": [
             "**/*.cs"
          ]
-      },
-      {
-         "name": "gitleaks-unpushed",
-         "group": "pre-push",
-         "command": "gitleaks",
-         "args": [
-            "git",
-            "--log-opts=HEAD --not --remotes",
-            "--redact",
-            "--no-banner",
-            "--verbose"
-         ]
       }
    ]
 }
