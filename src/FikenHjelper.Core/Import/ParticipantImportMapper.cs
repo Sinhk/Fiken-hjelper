@@ -19,6 +19,9 @@ public static class ParticipantImportMapper
 {
     public const string ProjectIdPrefix = "import:";
     public const string DefaultCategoryLabel = "Deltakeravgift";
+
+    // Understrek lages aldri av Slugify, så nøkkelen kan ikke kollidere med en kategori som heter f.eks. «Avgift».
+    private const string DefaultCategoryKeyPrefix = ProjectIdPrefix + "_avgift";
     private const string UnknownGroupName = "Uten gruppe";
     private const string SourceLabel = "Fil";
     private const int MaxQuantityPerRow = 500;
@@ -156,8 +159,7 @@ public static class ParticipantImportMapper
                 GroupName: groupName,
                 GroupId: PositiveOrNull(ImportValueParser.ParseLong(Cell(table, row, col.GroupId))),
                 CategoryLabel: rawCategory.Length > 0 ? rawCategory : null,
-                AmountNok: amount ?? (rawCategory.Length > 0 ? ImportValueParser.ExtractAmountFromLabel(rawCategory) : null),
-                HasAmountColumnValue: amount.HasValue,
+                AmountNok: ResolveAmount(amount, rawCategory),
                 Quantity: (int)Math.Max(1, quantity),
                 Cancelled: cancelled,
                 Confirmed: col.Confirmed < 0 || ImportValueParser.ParseFlag(Cell(table, row, col.Confirmed)),
@@ -260,8 +262,8 @@ public static class ParticipantImportMapper
             if (row.CategoryLabel is null)
             {
                 result.Add(row.AmountNok is { } amount
-                    ? ($"{ProjectIdPrefix}avgift:{FormatKeyAmount(amount)}", $"{DefaultCategoryLabel} {FormatNok(amount)}")
-                    : ($"{ProjectIdPrefix}{ImportValueParser.Slugify(DefaultCategoryLabel)}", DefaultCategoryLabel));
+                    ? ($"{DefaultCategoryKeyPrefix}:{FormatKeyAmount(amount)}", $"{DefaultCategoryLabel} {FormatNok(amount)}")
+                    : (DefaultCategoryKeyPrefix, DefaultCategoryLabel));
                 continue;
             }
 
@@ -373,6 +375,22 @@ public static class ParticipantImportMapper
     private static bool IsPlainAmount(string value)
         => value.Length > 0 && !value.Any(char.IsLetter) && ImportValueParser.ParseAmountNok(value).HasValue;
 
+    /// <summary>
+    /// Samme prioritet som <c>MinSpeidingParser.DetectPriceNok</c>: et beløp over 0 vinner, ellers prisen i
+    /// avgiftsnavnet, ellers 0 fra beløpskolonnen. Min speidings fullrapport har ofte «Antall» = «0,00» også når
+    /// avgiften koster noe.
+    /// </summary>
+    private static decimal? ResolveAmount(decimal? columnAmount, string rawCategory)
+    {
+        if (columnAmount is { } amount && amount != 0m)
+        {
+            return amount;
+        }
+
+        var fromLabel = rawCategory.Length > 0 ? ImportValueParser.ExtractAmountFromLabel(rawCategory) : null;
+        return fromLabel ?? columnAmount;
+    }
+
     /// <summary>Celleverdi, der Min speidings plassholder «-» for tomt felt regnes som tom.</summary>
     private static string Cell(TabularData table, IReadOnlyList<string> row, int index)
     {
@@ -398,7 +416,6 @@ public static class ParticipantImportMapper
         long? GroupId,
         string? CategoryLabel,
         decimal? AmountNok,
-        bool HasAmountColumnValue,
         int Quantity,
         bool Cancelled,
         bool Confirmed,

@@ -96,6 +96,16 @@ public sealed class CsvTableReaderTests
     }
 
     [Fact]
+    public void DetectDelimiter_CommaFileWithQuotedSemicolons_PicksComma()
+    {
+        var table = CsvTableReader.Parse("\"Navn\",\"Allergi; diett\"\n\"Ola Test\",\"Nøtter; gluten\"\n");
+
+        Assert.Equal(",", table.DetectedDelimiter);
+        Assert.Equal(["Navn", "Allergi; diett"], table.Headers);
+        Assert.Equal("Nøtter; gluten", table.Rows[0][1]);
+    }
+
+    [Fact]
     public void Parse_EmptyFile_Throws()
     {
         Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse("\r\n \r\n"));
@@ -129,6 +139,12 @@ public sealed class ImportValueParserTests
     [InlineData("1\u00A0250 kr", 1250)]
     [InlineData("Speider (1\u00A0250 kr)", 1250)]
     [InlineData("Speider (1.250 kr)", 1250)]
+    [InlineData("Lederkurs: 700.00", 700)]
+    [InlineData("Sommerleir: 1 500.00", 1500)]
+    [InlineData("Sommerleir: 1.500,00", 1500)]
+    [InlineData("Sommerleir: 1,500.00", 1500)]
+    [InlineData("Sommerleir: 1.500", 1500)]
+    [InlineData("Sommerleir: 1500,5", 1500.5)]
     public void ParseAmountNok_ParsesNorwegianFormats(string input, double expected)
     {
         Assert.Equal((decimal)expected, ImportValueParser.ParseAmountNok(input));
@@ -180,6 +196,22 @@ public sealed class ImportValueParserTests
 
 public sealed class ImportProfileSuggesterTests
 {
+    [Theory]
+    [InlineData("Generelt - Har du allergier?", false)]
+    [InlineData("Generelt - Trenger du medisiner?", false)]
+    [InlineData("Generelt - Helseopplysninger", false)]
+    [InlineData("Generelt - Status for politiattest", false)]
+    [InlineData("Generelt - Mors navn", false)]
+    [InlineData("Generelt - Foreldres tlf", false)]
+    [InlineData("Generelt - Pårørende ved ulykke", false)]
+    [InlineData("Generelt - Hva heter patruljen din?", true)]
+    [InlineData("Generelt - Hva var morsomst i fjor?", true)]
+    public void Suggest_SensitiveFormQuestionsAreNotIncluded(string header, bool included)
+    {
+        var profile = ImportProfileSuggester.Suggest(["Navn", header]);
+        Assert.Equal(included, profile.ExtraColumns.Contains(header));
+    }
+
     [Fact]
     public void Suggest_MinSpeidingIndividualExport()
     {
@@ -200,8 +232,11 @@ public sealed class ImportProfileSuggesterTests
         Assert.Null(profile.ConfirmedColumn);
         Assert.Equal(["E-post", "E-post (2)", "Generelt - E-postadresse"], profile.EmailColumns);
 
-        // Skjemaspørsmål tas med, sensitive kolonner og e-post-svaret gjør det ikke.
-        Assert.Contains("Generelt - Har deltakeren allergier eller diettbehov vi må ta hensyn til?", profile.ExtraColumns);
+        // Skjemaspørsmål tas med, sensitive kolonner (helse, kontaktinfo) og e-post-svaret gjør det ikke.
+        Assert.Contains("Generelt - Hvilket kurs skal du delta på?", profile.ExtraColumns);
+        Assert.Contains("Generelt - Hva heter patruljen din?", profile.ExtraColumns);
+        Assert.DoesNotContain("Generelt - Har deltakeren allergier eller diettbehov vi må ta hensyn til?", profile.ExtraColumns);
+        Assert.DoesNotContain("Generelt - Beskrivelse av allergi/diettbehov", profile.ExtraColumns);
         Assert.DoesNotContain("Generelt - E-postadresse", profile.ExtraColumns);
         Assert.DoesNotContain("Fødselsdato", profile.ExtraColumns);
         Assert.DoesNotContain("Generelt - Mobilnummer", profile.ExtraColumns);
@@ -334,7 +369,7 @@ public sealed class ParticipantImportMapperTests
         Assert.True(ola.Confirmed);
         Assert.True(ola.Attended);
         Assert.Equal("ola@example.no", ola.Email); // fra skjemaets e-postsvar når «E-post» er tom
-        Assert.Equal("Nøtter", ola.Answers["Beskrivelse av allergi/diettbehov"]);
+        Assert.False(ola.Answers.ContainsKey("Beskrivelse av allergi/diettbehov")); // helseopplysning, tas ikke med
         Assert.Equal("Peff-kurs", ola.Answers["Hvilket kurs skal du delta på?"]);
         Assert.Equal("Molde speidergruppe", ola.GroupName);
         Assert.Equal("Fil", ola.AvailableGroups.Single().SourceLabel);
@@ -401,6 +436,34 @@ public sealed class ParticipantImportMapperTests
 
         Assert.Contains(ev.FeeCategories, c => c.Label == "Speider" && c.SuggestedPriceNok == 450m && c.ParticipantCount == 2);
         Assert.Contains(ev.FeeCategories, c => c.Label == "Standardpris" && c.SuggestedPriceNok == 0m && c.ParticipantCount == 1);
+    }
+
+    [Fact]
+    public void Map_GroupReport_ZeroAmountFallsBackToPriceInFeeLabel()
+    {
+        // Fullrapporten har ofte «Antall» = «0,00» selv om avgiften koster noe; prisen i avgiftsnavnet vinner da,
+        // som i MinSpeidingParser.DetectPriceNok.
+        var table = GroupReport(
+            ImportTestData.GroupReportRow("1501", "Molde", "900040", "Ola Test", "Lederkurs: 700.00", amount: "0,00"),
+            ImportTestData.GroupReportRow("1501", "Molde", "900041", "Kari Test", "Standardpris", amount: "0,00"),
+            ImportTestData.GroupReportRow("1501", "Molde", "900042", "Per Test", "Lederkurs: 700.00", amount: "650,00"));
+
+        var participants = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test").Event.Participants;
+
+        Assert.Equal(700m, participants.Single(p => p.MemberNo == 900040).DetectedPriceNok);
+        Assert.Equal(0m, participants.Single(p => p.MemberNo == 900041).DetectedPriceNok);
+        Assert.Equal(650m, participants.Single(p => p.MemberNo == 900042).DetectedPriceNok);
+    }
+
+    [Fact]
+    public void Map_DefaultCategoryKeyDoesNotCollideWithCategoryNamedAvgift()
+    {
+        var table = CsvTableReader.Parse("Navn;Kategori;Pris\nA Test;;450\nB Test;Avgift;450\nC Test;Avgift;300\n");
+
+        var ev = ParticipantImportMapper.Map(table, ImportProfileSuggester.Suggest(table.Headers), "Test").Event;
+
+        Assert.Equal(3, ev.FeeCategories.Count);
+        Assert.Equal(3, ev.Participants.Select(p => p.FeeCategoryKey).Distinct().Count());
     }
 
     [Fact]

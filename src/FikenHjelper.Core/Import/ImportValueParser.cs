@@ -14,7 +14,7 @@ public static partial class ImportValueParser
 
     private static readonly HashSet<string> FalseValues = new(StringComparer.OrdinalIgnoreCase)
     {
-        "nei", "n", "no", "false", "usann", "0", "-", "–"
+        "nei", "n", "no", "false", "usann", "0", "-", "–", "—"
     };
 
     public static bool ParseBool(string? value)
@@ -74,7 +74,7 @@ public static partial class ImportValueParser
         }
 
         var colon = ColonAmount().Match(text);
-        if (colon.Success && ParseNumber(colon.Groups["n"].Value) is { } c)
+        if (colon.Success && ParseNumberWithLastDecimal(colon.Groups["n"].Value) is { } c)
         {
             return c;
         }
@@ -145,6 +145,37 @@ public static partial class ImportValueParser
                && d <= long.MaxValue
             ? (long)d
             : null;
+    }
+
+    /// <summary>
+    /// Tolker tall der det siste skilletegnet («.» eller «,») er desimalskille hvis det følges av 1–2 sifre;
+    /// alle andre skilletegn og mellomrom er tusenskille. «700.00», «1 500.00», «1.500,00», «1,500.00» og «1.500».
+    /// </summary>
+    internal static decimal? ParseNumberWithLastDecimal(string value)
+    {
+        var text = value.Trim();
+        var negative = text.StartsWith('-');
+        if (negative)
+        {
+            text = text[1..];
+        }
+
+        var lastSeparator = text.LastIndexOfAny(['.', ',']);
+        string integerPart = text, fraction = string.Empty;
+        if (lastSeparator >= 0 && text.Length - lastSeparator - 1 is 1 or 2)
+        {
+            integerPart = text[..lastSeparator];
+            fraction = text[(lastSeparator + 1)..];
+        }
+
+        var digits = new string(integerPart.Where(char.IsAsciiDigit).ToArray());
+        if (digits.Length == 0 || !fraction.All(char.IsAsciiDigit)
+            || !decimal.TryParse(fraction.Length > 0 ? $"{digits}.{fraction}" : digits, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var number))
+        {
+            return null;
+        }
+
+        return negative ? -number : number;
     }
 
     /// <summary>Normaliserer en overskrift for synonymsøk: små bokstaver, æøå → ae/o/a, kun bokstaver/tall.</summary>
@@ -238,7 +269,7 @@ public static partial class ImportValueParser
     private static partial Regex PrefixAmount();
 
     // Min speiding eksporterer avgiften som «<Navn>: <beløp>», f.eks. «Lederkurs: 700.00».
-    [GeneratedRegex(@":\s*(?<n>-?\d+(?:[.,]\d{1,2})?)\s*$")]
+    [GeneratedRegex(@":\s*(?<n>-?\d{1,3}(?:[ .,]\d{3})+(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*$")]
     private static partial Regex ColonAmount();
 
     [GeneratedRegex(@"(?i)\bfree\b")]

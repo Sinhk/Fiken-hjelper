@@ -33,9 +33,7 @@ public static class CsvTableReader
     {
         text = text.TrimStart('﻿');
         var delimiter = DetectDelimiter(text);
-        var records = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true)
-            .Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c)))
-            .ToList();
+        var (records, _) = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true);
 
         // Første ikke-tomme rad er overskriften.
         if (records.Count == 0)
@@ -80,17 +78,18 @@ public static class CsvTableReader
     }
 
     /// <summary>
-    /// Velger skilletegnet som gir flest av de første radene med samme antall kolonner som overskriften
-    /// (minst to kolonner). Ved likt resultat vinner flest kolonner, deretter semikolon før komma før tab.
+    /// Velger skilletegnet for de første radene: færrest felt med ødelagte anførselstegn først (et komma-skilt felt
+    /// som «"Allergi; diett"» blir ødelagt hvis det leses med semikolon), deretter flest rader med samme antall
+    /// kolonner som overskriften (minst to), deretter flest kolonner, deretter semikolon før komma før tab.
     /// </summary>
     internal static string DetectDelimiter(string text)
     {
         var best = ",";
-        var bestScore = (Consistent: -1, Columns: 0);
+        var bestScore = (BadFields: int.MaxValue, Consistent: -1, Columns: 0);
 
         foreach (var candidate in CandidateDelimiters)
         {
-            var records = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
+            var (records, badFields) = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
             if (records.Count == 0 || records[0].Length < 2)
             {
                 continue;
@@ -98,20 +97,24 @@ public static class CsvTableReader
 
             var columns = records[0].Length;
             var consistent = records.Count(r => r.Length == columns);
-            if (consistent > bestScore.Consistent
-                || (consistent == bestScore.Consistent && columns > bestScore.Columns))
+            var score = (BadFields: badFields, Consistent: consistent, Columns: columns);
+            if (score.BadFields < bestScore.BadFields
+                || (score.BadFields == bestScore.BadFields && score.Consistent > bestScore.Consistent)
+                || (score.BadFields == bestScore.BadFields && score.Consistent == bestScore.Consistent && score.Columns > bestScore.Columns))
             {
                 best = candidate;
-                bestScore = (consistent, columns);
+                bestScore = score;
             }
         }
 
         return best;
     }
 
-    private static List<string[]> ReadRecords(string text, string delimiter, int? maxRecords, bool throwOnBadData)
+    /// <summary>Leser ikke-tomme rader og teller felt CsvHelper melder som ødelagte (BadDataFound).</summary>
+    private static (List<string[]> Records, int BadFields) ReadRecords(string text, string delimiter, int? maxRecords, bool throwOnBadData)
     {
         var unclosedQuote = false;
+        var badFields = 0;
         var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
             Delimiter = delimiter,
@@ -119,7 +122,11 @@ public static class CsvTableReader
             IgnoreBlankLines = true,
             // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Et sitert felt som
             // aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet for stille datatap.
-            BadDataFound = args => unclosedQuote |= args.Field.TrimStart().StartsWith('"')
+            BadDataFound = args =>
+            {
+                badFields++;
+                unclosedQuote |= args.Field.TrimStart().StartsWith('"');
+            }
         };
 
         var records = new List<string[]>();
@@ -142,7 +149,8 @@ public static class CsvTableReader
         }
         catch (CsvHelperException)
         {
-            // Ved gjenkjenning av skilletegn teller vi bare radene som lot seg lese.
+            // Ved gjenkjenning av skilletegn regnes et lesebrudd som ødelagte data.
+            badFields++;
         }
 
         if (unclosedQuote && throwOnBadData)
@@ -150,6 +158,6 @@ public static class CsvTableReader
             throw new InvalidDataException("Filen har et anførselstegn som ikke er lukket. Sjekk at riktig fil og format er valgt.");
         }
 
-        return records;
+        return (records, badFields);
     }
 }

@@ -29,7 +29,15 @@ public static partial class ImportProfileSuggester
     private static readonly string[] TotalAmountKeys = ["totalbelop", "sum", "total", "totalt"];
 
     // Skjemaspørsmål som typisk inneholder sensitive personopplysninger tas ikke med som standard.
-    private static readonly string[] SensitiveQuestionWords = ["mobil", "telefon", "fodsel", "adresse", "personnummer", "foresatt"];
+    // Sammenlignes mot starten av hvert ord i overskriften, så «allergier» og «diettbehov» treffes,
+    // mens f.eks. «morsomt» ikke treffer «mor».
+    private static readonly string[] SensitiveWordStems =
+    [
+        "mobil", "telefon", "tlf", "fodsel", "adresse", "personnummer", "foresatt", "foreldre", "parorende",
+        "allergi", "diett", "helse", "medisin", "sykdom", "politiattest"
+    ];
+
+    private static readonly string[] SensitiveWholeWords = ["mor", "mors", "far", "fars"];
     private static readonly string[] RegistrationDateKeys = ["pameldtdato", "pameldingsdato", "registreringsdato"];
     private static readonly string[] ExtraKeys = ["kommentar", "merknad", "comment"];
 
@@ -86,7 +94,7 @@ public static partial class ImportProfileSuggester
         profile.ExtraColumns = headers
             .Where(h => !mapped.Contains(h))
             .Where(h => FormQuestionPrefix().IsMatch(h) || ExtraKeys.Contains(ImportValueParser.NormalizeKey(h)))
-            .Where(h => !SensitiveQuestionWords.Any(w => ImportValueParser.NormalizeKey(h).Contains(w, StringComparison.Ordinal)))
+            .Where(h => !IsSensitive(h))
             .ToList();
 
         return profile;
@@ -161,6 +169,12 @@ public static partial class ImportProfileSuggester
         return null;
     }
 
+    private static bool IsSensitive(string header)
+        => WordSplitter().Split(header)
+            .Select(ImportValueParser.NormalizeKey)
+            .Where(w => w.Length > 0)
+            .Any(w => SensitiveWholeWords.Contains(w) || SensitiveWordStems.Any(stem => w.StartsWith(stem, StringComparison.Ordinal)));
+
     private static string StripDuplicateSuffix(string header) => DuplicateSuffix().Replace(header, string.Empty);
 
     private static bool IsGuardianColumn(string header)
@@ -170,6 +184,9 @@ public static partial class ImportProfileSuggester
             || key.Contains("mors", StringComparison.Ordinal)
             || key.Contains("fars", StringComparison.Ordinal);
     }
+
+    [GeneratedRegex(@"[^\p{L}\p{Nd}]+")]
+    private static partial Regex WordSplitter();
 
     [GeneratedRegex(@"\s\(\d+\)$")]
     private static partial Regex DuplicateSuffix();
