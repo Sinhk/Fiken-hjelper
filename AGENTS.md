@@ -33,7 +33,7 @@ Disse konvensjonene går ikke fram av kolonnenavnene:
   - Det finnes to kolonner som begge heter `E-post`.
   - `Deltakeravgift` står som `<Navn>: <beløp>`, f.eks. `Lederkurs: 700.00`.
   - `Totalbeløp` er et rent tall.
-  - Svar på påmeldingsskjemaet kommer som kolonner med navn `<Skjema> - <Spørsmål>`, f.eks. `Generelt - Mobilnummer`.
+  - Svar på påmeldingsskjemaet kommer som kolonner med navn `<Skjema> - <Spørsmål>`, f.eks. `Generelt - Mobilnummer`. De varierer per arrangement og trengs ikke i appen.
 - Gruppe-/fullrapport (`projectParticipantsReportFull_*.csv`):
   - `Antall` inneholder et beløp (`0,00`), ikke et antall plasser.
   - `Bekreftet` inneholder tidspunktet for bekreftelsen (`2026-11-15 06:15`), ikke Ja/Nei.
