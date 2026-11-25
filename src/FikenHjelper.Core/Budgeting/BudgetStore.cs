@@ -58,12 +58,19 @@ public sealed class JsonBudgetStore : IBudgetStore
         {
             Directory.CreateDirectory(_directory);
             var tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
-            await using (var stream = File.Create(tempPath))
+            try
             {
-                await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, ct);
-            }
+                await using (var stream = File.Create(tempPath))
+                {
+                    await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, ct);
+                }
 
-            File.Move(tempPath, _path, overwrite: true);
+                File.Move(tempPath, _path, overwrite: true);
+            }
+            finally
+            {
+                File.Delete(tempPath);
+            }
         }
         finally
         {

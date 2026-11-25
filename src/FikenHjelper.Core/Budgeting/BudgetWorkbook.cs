@@ -229,27 +229,55 @@ public static partial class BudgetWorkbookImporter
     }
 
     /// <summary>
-    /// Tolker tall skrevet som tekst. Komma er desimalskille (norsk ark), med mindre både punktum og
-    /// komma forekommer. Da er det siste av dem desimalskillet og det andre tusenskille.
+    /// Tolker tall skrevet som tekst i et norsk ark, f.eks. «1 500», «−1 234,50», «kr 1 500,-» og «10.000».
+    /// Komma er desimalskille. Når både punktum og komma forekommer, er det siste av dem desimalskillet.
+    /// Et skilletegn som forekommer flere ganger, eller et enkelt punktum med nøyaktig tre sifre etter,
+    /// er tusenskille.
     /// </summary>
     public static decimal? ParseNumber(string raw)
     {
         var text = new string(raw.Where(c => !char.IsWhiteSpace(c)).ToArray())
             .Replace('\u2212', '-')
-            .Replace("kr", string.Empty, StringComparison.OrdinalIgnoreCase);
+            .Replace("kr.", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("kr", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("NOK", string.Empty, StringComparison.OrdinalIgnoreCase);
+        if (text.EndsWith(",-", StringComparison.Ordinal) || text.EndsWith(".-", StringComparison.Ordinal))
+        {
+            text = text[..^2];
+        }
+
         if (text.Length == 0)
         {
             return null;
         }
 
-        var lastComma = text.LastIndexOf(',');
-        var lastDot = text.LastIndexOf('.');
-        if (lastComma >= 0 && lastDot >= 0)
+        var commas = text.Count(c => c == ',');
+        var dots = text.Count(c => c == '.');
+        if (commas > 0 && dots > 0)
         {
-            text = text.Replace(lastComma > lastDot ? "." : ",", string.Empty);
+            var decimalSeparator = text.LastIndexOf(',') > text.LastIndexOf('.') ? ',' : '.';
+            var groupSeparator = decimalSeparator == ',' ? '.' : ',';
+            if (text.Count(c => c == decimalSeparator) > 1)
+            {
+                return null;
+            }
+
+            text = text.Replace(groupSeparator.ToString(), string.Empty).Replace(',', '.');
+        }
+        else if (commas > 1 || dots > 1)
+        {
+            text = text.Replace(",", string.Empty).Replace(".", string.Empty);
+        }
+        else if (dots == 1 && text.Length - text.IndexOf('.') - 1 == 3)
+        {
+            text = text.Replace(".", string.Empty);
+        }
+        else
+        {
+            text = text.Replace(',', '.');
         }
 
-        return decimal.TryParse(text.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+        return decimal.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : null;
     }
@@ -261,14 +289,32 @@ public static partial class BudgetWorkbookImporter
     internal static MemoryStream RemoveInvalidRelationships(Stream xlsx)
     {
         var output = new MemoryStream();
+        try
+        {
+            CopySanitized(xlsx, output);
+        }
+        catch
+        {
+            output.Dispose();
+            throw;
+        }
+
+        output.Position = 0;
+        return output;
+    }
+
+    private static void CopySanitized(Stream xlsx, MemoryStream output)
+    {
         using (var source = new ZipArchive(xlsx, ZipArchiveMode.Read, leaveOpen: true))
         using (var target = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
         {
-            if (source.Entries.Count > MaxZipEntries || source.Entries.Sum(e => e.Length) > MaxUncompressedBytes)
+            if (source.Entries.Count > MaxZipEntries)
             {
-                throw new InvalidDataException("Regnearket er for stort til å importeres.");
+                throw new InvalidDataException(TooLargeMessage);
             }
 
+            // Telles mens vi pakker ut. Størrelsen i ZIP-hodet kan ikke stoles på.
+            var remaining = MaxUncompressedBytes;
             foreach (var entry in source.Entries)
             {
                 var copy = target.CreateEntry(entry.FullName, CompressionLevel.Fastest);
@@ -277,11 +323,14 @@ public static partial class BudgetWorkbookImporter
 
                 if (!entry.FullName.EndsWith(".rels", StringComparison.OrdinalIgnoreCase))
                 {
-                    input.CopyTo(dest);
+                    remaining = CopyLimited(input, dest, remaining);
                     continue;
                 }
 
-                var doc = XDocument.Load(input);
+                using var rels = new MemoryStream();
+                remaining = CopyLimited(input, rels, remaining);
+                rels.Position = 0;
+                var doc = XDocument.Load(rels);
                 doc.Root?.Elements()
                     .Where(e => e.Name.LocalName == "Relationship"
                                 && (e.Attribute("Id") is null || e.Attribute("Target") is null))
@@ -289,9 +338,26 @@ public static partial class BudgetWorkbookImporter
                 doc.Save(dest, System.Xml.Linq.SaveOptions.DisableFormatting);
             }
         }
+    }
 
-        output.Position = 0;
-        return output;
+    private const string TooLargeMessage = "Regnearket er for stort til å importeres.";
+
+    private static long CopyLimited(Stream input, Stream output, long remaining)
+    {
+        var buffer = new byte[81920];
+        int read;
+        while ((read = input.Read(buffer)) > 0)
+        {
+            remaining -= read;
+            if (remaining < 0)
+            {
+                throw new InvalidDataException(TooLargeMessage);
+            }
+
+            output.Write(buffer, 0, read);
+        }
+
+        return remaining;
     }
 
     private static string Normalize(string value) => value.Trim().ToLower(CultureInfo.GetCultureInfo("nb-NO"));

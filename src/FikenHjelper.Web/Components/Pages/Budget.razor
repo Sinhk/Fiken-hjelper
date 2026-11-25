@@ -63,9 +63,12 @@
 
         @if (comparison is null)
         {
-            <MudText Color="Color.Secondary">
-                @(isLoading ? "Henter posteringer fra Fiken. Det kan ta litt tid første gang …" : "Laster …")
-            </MudText>
+            @if (string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <MudText Color="Color.Secondary">
+                    @(isLoading ? "Henter posteringer fra Fiken. Det kan ta litt tid første gang …" : "Laster …")
+                </MudText>
+            }
         }
         else if (comparison.Rows.Count == 0)
         {

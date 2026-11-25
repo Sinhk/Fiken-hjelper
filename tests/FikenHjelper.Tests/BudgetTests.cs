@@ -1,6 +1,7 @@
 using ClosedXML.Excel;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
+using Microsoft.Extensions.Time.Testing;
 
 namespace FikenHjelper.Tests;
 
@@ -276,6 +277,16 @@ public sealed class BudgetWorkbookTests
     [InlineData("1.234,50", 1234.50)]
     [InlineData("1,234.50", 1234.50)]
     [InlineData("12,5 kr", 12.5)]
+    [InlineData("10.000", 10000)]
+    [InlineData("1.234", 1234)]
+    [InlineData("1.234.567", 1234567)]
+    [InlineData("1,234,567", 1234567)]
+    [InlineData("kr. 1 500", 1500)]
+    [InlineData("kr 1 500,-", 1500)]
+    [InlineData("1 500,-", 1500)]
+    [InlineData("12.5", 12.5)]
+    [InlineData("1,5", 1.5)]
+    [InlineData("-10.000,25", -10000.25)]
     public void ParseNumber_HandlesNorwegianAndMixedFormats(string text, double expected)
     {
         Assert.Equal((decimal)expected, BudgetWorkbookImporter.ParseNumber(text));
@@ -284,6 +295,8 @@ public sealed class BudgetWorkbookTests
     [Theory]
     [InlineData("")]
     [InlineData("abc")]
+    [InlineData("kr")]
+    [InlineData("1,2,3.4.5")]
     public void ParseNumber_ReturnsNullForNonNumbers(string text)
     {
         Assert.Null(BudgetWorkbookImporter.ParseNumber(text));
@@ -428,20 +441,96 @@ public sealed class FikenDataCacheTests
     }
 
     [Fact]
-    public async Task RefreshAndClearFetchAgain()
+    public async Task RefreshFetchesAgainEvenWhenClockHasNotMoved()
     {
-        var cache = new FikenDataCache();
+        var time = new FakeTimeProvider();
+        var cache = new FikenDataCache(time);
         var calls = 0;
         Task<IReadOnlyList<int>> Fetch() => Task.FromResult<IReadOnlyList<int>>([Interlocked.Increment(ref calls)]);
 
         await cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        Assert.Equal([1], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+
+        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: true, Fetch));
+        Assert.Equal([3], await cache.GetOrFetchAsync("k", refresh: true, Fetch));
+    }
+
+    [Fact]
+    public async Task ExpiresAfterLifetime()
+    {
+        var time = new FakeTimeProvider();
+        var cache = new FikenDataCache(time);
+        var calls = 0;
+        Task<IReadOnlyList<int>> Fetch() => Task.FromResult<IReadOnlyList<int>>([Interlocked.Increment(ref calls)]);
+
         await cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        time.Advance(TimeSpan.FromMinutes(14));
+        Assert.Equal([1], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+        time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+    }
+
+    [Fact]
+    public async Task ConcurrentRefreshSharesFetchThatStartedAfterRequest()
+    {
+        var cache = new FikenDataCache(new FakeTimeProvider());
+        var calls = 0;
+        var release = new TaskCompletionSource();
+        async Task<IReadOnlyList<int>> Fetch()
+        {
+            var n = Interlocked.Increment(ref calls);
+            await release.Task;
+            return [n];
+        }
+
+        var first = cache.GetOrFetchAsync("k", refresh: true, Fetch);
+        var second = cache.GetOrFetchAsync("k", refresh: true, Fetch);
+        release.SetResult();
+
+        Assert.Equal([1], await first);
+        Assert.Equal([1], await second);
         Assert.Equal(1, calls);
+    }
 
-        await cache.GetOrFetchAsync("k", refresh: true, Fetch);
-        Assert.Equal(2, calls);
+    [Fact]
+    public async Task ClearDuringFetchDoesNotStoreStaleResult()
+    {
+        var cache = new FikenDataCache(new FakeTimeProvider());
+        var calls = 0;
+        var release = new TaskCompletionSource();
+        async Task<IReadOnlyList<int>> Slow()
+        {
+            var n = Interlocked.Increment(ref calls);
+            await release.Task;
+            return [n];
+        }
 
+        var pending = cache.GetOrFetchAsync("k", refresh: false, Slow);
         cache.Clear();
-        Assert.Equal([3], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+        release.SetResult();
+        Assert.Equal([1], await pending);
+
+        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: false, Slow));
+    }
+
+    [Fact]
+    public async Task WaitingForGateHonoursCancellation()
+    {
+        var cache = new FikenDataCache(new FakeTimeProvider());
+        var release = new TaskCompletionSource();
+        async Task<IReadOnlyList<int>> Slow()
+        {
+            await release.Task;
+            return [1];
+        }
+
+        var pending = cache.GetOrFetchAsync("k", refresh: false, Slow);
+        using var cts = new CancellationTokenSource();
+        var waiting = cache.GetOrFetchAsync("k", refresh: false, Slow, cts.Token);
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        release.SetResult();
+        Assert.Equal([1], await pending);
     }
 }

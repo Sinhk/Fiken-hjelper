@@ -112,6 +112,7 @@ app.MapGet("/fiken/oauth/callback", async (
     string? error,
     FikenOAuthStateStore stateStore,
     IFikenOAuthService oauthService,
+    FikenDataCache fikenCache,
     ILogger<Program> logger,
     CancellationToken ct) =>
 {
@@ -139,6 +140,7 @@ app.MapGet("/fiken/oauth/callback", async (
             pending.RedirectUri,
             state,
             ct);
+        fikenCache.Clear();
         return Results.Redirect("/innstillinger?oauth=connected");
     }
     catch (FikenApiException ex)
@@ -161,6 +163,7 @@ app.MapGet("/budsjett/eksport", async (
     int? year,
     int? years,
     BudgetReportService reports,
+    ILogger<BudgetReportService> logger,
     CancellationToken ct) =>
 {
     var lastYear = year ?? DateTime.Today.Year;
@@ -181,6 +184,11 @@ app.MapGet("/budsjett/eksport", async (
     catch (FikenApiException ex)
     {
         return Results.Problem(ex.UserMessage, statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
+    }
+    catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+    {
+        logger.LogWarning(ex, "Fiken svarte ikke ved eksport av budsjett");
+        return Results.Problem("Fiken svarte ikke. Prøv igjen om litt.", statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
     }
 
     var bytes = BudgetWorkbookExporter.Export(comparison);

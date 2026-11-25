@@ -56,6 +56,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         }
 
         isLoadingProjects = true;
+        StateHasChanged();
         try
         {
             var slug = await Reports.GetCompanySlugAsync(disposeCts.Token);
