@@ -33,8 +33,11 @@ public sealed record ProjectSplitIssue(
 /// </summary>
 public static class ProjectSplits
 {
-    /// <summary>Hvor mye summen av andelene kan avvike fra 100 %.</summary>
-    public const decimal Tolerance = 0.01m;
+    /// <summary>
+    /// Hvor mye summen av andelene kan avvike fra 100 %. Null: summen må være nøyaktig 100, ellers ville
+    /// rapporten (som gir resten til siste post) og avviksforklaringen (som bruker andelen) gi ulike tall.
+    /// </summary>
+    public const decimal Tolerance = 0m;
 
     /// <summary>Postene hvert prosjekt er koblet til, i postrekkefølge. Poster med manuelt regnskapstall er ikke med.</summary>
     public static IReadOnlyDictionary<long, IReadOnlyList<BudgetLine>> LinksByProject(BudgetYear year)

@@ -141,7 +141,7 @@ public sealed class BudgetTools(
         var previous = previousEntries is null
             ? null
             : ProjectVarianceExplainer.Explain(y - 1, previousFractions, previousEntries, null, accounts, 0);
-        if (fractions.Values.Any(f => f != 1m))
+        if (fractions.Values.Concat(previousFractions.Values).Any(f => f != 1m))
         {
             notes.Add("Noen prosjekter er fordelt på flere budsjettposter. Beløpene er postens andel (sharePercent), ikke hele prosjektet.");
         }

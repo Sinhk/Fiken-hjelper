@@ -101,8 +101,8 @@
                                     @foreach (var id in line.ProjectIds.Where(id => !projectsLoaded || projectsById.ContainsKey(id)))
                                     {
                                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                                                 OnClose="_ => RemoveProject(line, id)" title="@UsedByOtherTitle(id, line)"
-                                                 Color="@(UsedByOther(id, line) is null ? Color.Default : Color.Warning)">
+                                                 OnClose="_ => RemoveProject(line, id)" title="@ProjectChipWarning(id, line)"
+                                                 Color="@(ProjectChipWarning(id, line) is null ? Color.Default : Color.Warning)">
                                             @ProjectName(id)
                                             @if (SharedShare(line, id) is { } share)
                                             {

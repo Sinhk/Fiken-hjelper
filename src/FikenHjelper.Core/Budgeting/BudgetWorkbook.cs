@@ -16,7 +16,8 @@ public sealed record BudgetImportResult(
 }
 
 /// <summary>Én budsjettpost i ett år som et prosjektnavn i arket hører til.</summary>
-public sealed record ProjectImportTarget(int Year, string LineName);
+/// <remarks><see cref="Amount"/> er summen fra kolonnen «Sum» i arket, til fordelingsnøkkel.</remarks>
+public sealed record ProjectImportTarget(int Year, string LineName, decimal? Amount = null);
 
 /// <summary>
 /// Et prosjektnavn fra arkene «Regnskap ÅÅÅÅ» som ikke finnes eksakt i Fiken, med de mest like
@@ -167,15 +168,36 @@ public static partial class BudgetWorkbookImporter
     /// Bruk gjerne kopier av årene fra importen (<see cref="BudgetYear.Copy"/>), så forhåndsvisningen
     /// ikke endres hvis lagringen feiler.
     /// </summary>
-    public static void ApplySuggestions(
+    /// <returns>Meldinger om fordelingsnøkler for prosjekter som havner på flere poster samme år.</returns>
+    public static IReadOnlyList<string> ApplySuggestions(
         IReadOnlyList<BudgetYear> years,
         IEnumerable<(ProjectImportSuggestion Suggestion, long ProjectId)> choices)
     {
         ArgumentNullException.ThrowIfNull(years);
         ArgumentNullException.ThrowIfNull(choices);
 
+        var warnings = new List<string>();
         foreach (var (suggestion, projectId) in choices)
         {
+            foreach (var group in suggestion.Targets.GroupBy(t => t.Year))
+            {
+                var budgetYear = years.FirstOrDefault(y => y.Year == group.Key);
+                if (budgetYear is null)
+                {
+                    continue;
+                }
+
+                var linked = group
+                    .Select(t => (Line: budgetYear.Lines.FirstOrDefault(l => Normalize(l.Name) == Normalize(t.LineName)), t.Amount))
+                    .Where(x => x.Line is not null)
+                    .Select(x => (x.Line!, x.Amount))
+                    .ToList();
+                if (linked.Count > 1)
+                {
+                    SplitFromAmounts(budgetYear, projectId, suggestion.SheetName, linked, warnings);
+                }
+            }
+
             foreach (var target in suggestion.Targets)
             {
                 var line = years
@@ -187,6 +209,8 @@ public static partial class BudgetWorkbookImporter
                 }
             }
         }
+
+        return warnings;
     }
 
     private static void ImportProjectSheet(
@@ -223,6 +247,7 @@ public static partial class BudgetWorkbookImporter
                 continue;
             }
 
+            var amount = ReadNumber(sheet.Cell(row, 2));
             if (!projectsByName.TryGetValue(Normalize(projectName), out var ids))
             {
                 // Avgjøres etter at alle år er lest, så samme navn i flere år gir ett forslag.
@@ -233,10 +258,14 @@ public static partial class BudgetWorkbookImporter
                     pending[key] = entry;
                 }
 
-                var target = new ProjectImportTarget(budgetYear.Year, line.Name);
-                if (!entry.Targets.Contains(target))
+                var index = entry.Targets.FindIndex(t => t.Year == budgetYear.Year && Normalize(t.LineName) == Normalize(line.Name));
+                if (index < 0)
                 {
-                    entry.Targets.Add(target);
+                    entry.Targets.Add(new ProjectImportTarget(budgetYear.Year, line.Name, amount));
+                }
+                else
+                {
+                    entry.Targets[index] = entry.Targets[index] with { Amount = entry.Targets[index].Amount + amount };
                 }
 
                 continue;
@@ -247,7 +276,6 @@ public static partial class BudgetWorkbookImporter
                 warnings.Add($"{budgetYear.Year}: Flere Fiken-prosjekter heter «{projectName}». Alle er koblet til «{line.Name}», så sjekk koblingen.");
             }
 
-            var amount = ReadNumber(sheet.Cell(row, 2));
             foreach (var id in ids)
             {
                 if (!line.ProjectIds.Contains(id))
@@ -267,23 +295,35 @@ public static partial class BudgetWorkbookImporter
 
         foreach (var (id, (name, perLine)) in amounts.Where(kv => kv.Value.PerLine.Count > 1))
         {
-            var lines = budgetYear.Lines.Where(perLine.ContainsKey).ToList();
-            var shares = SharesFromAmounts(lines.Select(l => perLine[l]).ToList());
-            var lineNames = string.Join(", ", lines.Select(l => $"«{l.Name}»"));
-            if (shares is null)
-            {
-                warnings.Add($"{budgetYear.Year}: Prosjektet «{name}» er koblet til {lineNames}, men beløpene i arket gir ingen fordelingsnøkkel. Legg den inn under «Prosjekter → poster».");
-                continue;
-            }
-
-            for (var i = 0; i < lines.Count; i++)
-            {
-                lines[i].SetShare(id, shares[i]);
-            }
-
-            var split = string.Join(", ", lines.Select((l, i) => $"«{l.Name}» {shares[i].ToString("0.##", CultureInfo.GetCultureInfo("nb-NO"))} %"));
-            warnings.Add($"{budgetYear.Year}: Prosjektet «{name}» er fordelt ut fra beløpene i arket: {split}. Sjekk fordelingen.");
+            SplitFromAmounts(budgetYear, id, name, perLine.Select(kv => (kv.Key, kv.Value)).ToList(), warnings);
         }
+    }
+
+    /// <summary>Setter fordelingsnøkkel ut fra beløpene i arket, eller varsler når beløpene ikke gir noen.</summary>
+    private static void SplitFromAmounts(
+        BudgetYear budgetYear,
+        long projectId,
+        string name,
+        IReadOnlyList<(BudgetLine Line, decimal? Amount)> perLine,
+        List<string> warnings)
+    {
+        // Postrekkefølge, så den siste posten (som får resten ved avrunding) er den samme hver gang.
+        var lines = budgetYear.Lines.Where(l => perLine.Any(p => ReferenceEquals(p.Line, l))).ToList();
+        var shares = SharesFromAmounts(lines.Select(l => perLine.Where(p => ReferenceEquals(p.Line, l)).Sum(p => p.Amount)).ToList());
+        var lineNames = string.Join(", ", lines.Select(l => $"«{l.Name}»"));
+        if (shares is null)
+        {
+            warnings.Add($"{budgetYear.Year}: Prosjektet «{name}» er koblet til {lineNames}, men beløpene i arket gir ingen fordelingsnøkkel. Legg den inn under «Prosjekter → poster».");
+            return;
+        }
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            lines[i].SetShare(projectId, shares[i]);
+        }
+
+        var split = string.Join(", ", lines.Select((l, i) => $"«{l.Name}» {shares[i].ToString("0.##", CultureInfo.GetCultureInfo("nb-NO"))} %"));
+        warnings.Add($"{budgetYear.Year}: Prosjektet «{name}» er fordelt ut fra beløpene i arket: {split}. Sjekk fordelingen.");
     }
 
     /// <summary>
@@ -307,7 +347,9 @@ public static partial class BudgetWorkbookImporter
         var total = values.Sum();
         var shares = values.Select(v => Math.Round(v / total * 100m, 2, MidpointRounding.AwayFromZero)).ToList();
         shares[^1] = 100m - shares.Take(shares.Count - 1).Sum();
-        return shares;
+
+        // Et svært lite beløp ved siden av et stort gir 0 % etter avrunding, og 0 % er ikke en gyldig andel.
+        return shares.All(s => s > 0) ? shares : null;
     }
 
     private static (IXLWorksheet Sheet, int HeaderRow, Dictionary<int, int> BudgetCols, Dictionary<int, int> ActualCols)? FindOverview(XLWorkbook workbook)
@@ -646,7 +688,7 @@ public static class BudgetWorkbookExporter
                         // Prosjektet er fordelt på flere poster: vis andelen og hele prosjektets resultat.
                         if (project.Share is { } share)
                         {
-                            ws.Cell(row, 5).Value = share / 100m;
+                            ws.Cell(row, 5).Value = share;
                         }
 
                         ws.Cell(row, 6).Value = full;
@@ -659,7 +701,8 @@ public static class BudgetWorkbookExporter
 
         ws.Row(1).Style.Font.Bold = true;
         ws.Column(4).Style.NumberFormat.Format = AmountFormat;
-        ws.Column(5).Style.NumberFormat.Format = "0.##%";
+        // Andelen står i prosent (40 = 40 %). «General» unngår komma bak hele tall, som «0.##» ville gitt.
+        ws.Column(5).Style.NumberFormat.Format = "General\" %\"";
         ws.Column(6).Style.NumberFormat.Format = AmountFormat;
         if (row > 2)
         {

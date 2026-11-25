@@ -156,7 +156,7 @@ public sealed class ProjectSplitTests
         var ws = wb.Worksheet("Prosjekter");
         Assert.Equal("Andel", ws.Cell(1, 5).GetString());
         Assert.Equal(400m, (decimal)ws.Cell(2, 4).GetDouble());
-        Assert.Equal(0.4, ws.Cell(2, 5).GetDouble(), 10);
+        Assert.Equal(40m, (decimal)ws.Cell(2, 5).GetDouble());
         Assert.Equal(1000m, (decimal)ws.Cell(2, 6).GetDouble());
     }
 
@@ -177,6 +177,52 @@ public sealed class ProjectSplitTests
         Assert.Null(BudgetWorkbookImporter.SharesFromAmounts([100m, null]));
         Assert.Null(BudgetWorkbookImporter.SharesFromAmounts([100m, 0m]));
         Assert.Null(BudgetWorkbookImporter.SharesFromAmounts([100m, -50m]));
+
+        // 4 kr ved siden av 100 000 kr blir 0 % etter avrunding, og det er ikke en gyldig andel.
+        Assert.Null(BudgetWorkbookImporter.SharesFromAmounts([100_000m, 4m]));
+    }
+
+    [Fact]
+    public void ApplySuggestions_SplitsSuggestedProjectOnSeveralLinesFromAmounts()
+    {
+        using var wb = new XLWorkbook();
+        var overview = wb.AddWorksheet("Oversikt");
+        overview.Cell("B1").Value = "Budsjett 2026";
+        overview.Cell("A2").Value = "Leir";
+        overview.Cell("B2").Value = 1000;
+        overview.Cell("A3").Value = "Kurs";
+        overview.Cell("B3").Value = 500;
+
+        var sheet = wb.AddWorksheet("Regnskap 2026");
+        sheet.Cell("A1").Value = "Prosjekt";
+        sheet.Cell("B1").Value = "Sum";
+        sheet.Cell("C1").Value = "Budsjettpost";
+        sheet.Cell("A2").Value = "Landsleirr";
+        sheet.Cell("B2").Value = 20000;
+        sheet.Cell("C2").Value = "Leir";
+        sheet.Cell("A3").Value = "Landsleirr";
+        sheet.Cell("B3").Value = 10000;
+        sheet.Cell("C3").Value = "Leir";
+        sheet.Cell("A4").Value = "Landsleirr";
+        sheet.Cell("B4").Value = 10000;
+        sheet.Cell("C4").Value = "Kurs";
+
+        using var stream = new MemoryStream();
+        wb.SaveAs(stream);
+        stream.Position = 0;
+
+        var result = BudgetWorkbookImporter.Import(stream, [Leir, Kurs]);
+        var suggestion = Assert.Single(result.Suggestions);
+        Assert.Equal(30000m, suggestion.Targets.Single(t => t.LineName == "Leir").Amount);
+
+        var years = result.Years.Select(y => y.Copy()).ToList();
+        var messages = BudgetWorkbookImporter.ApplySuggestions(years, [(suggestion, Leir.ProjectId)]);
+
+        var lines = years.Single().Lines;
+        Assert.Equal(75m, lines[0].ShareOf(Leir.ProjectId));
+        Assert.Equal(25m, lines[1].ShareOf(Leir.ProjectId));
+        Assert.All(lines, l => Assert.Contains(Leir.ProjectId, l.ProjectIds));
+        Assert.Contains(messages, m => m.Contains("75 %"));
     }
 
     [Fact]

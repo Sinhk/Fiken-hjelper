@@ -19,7 +19,7 @@ public sealed class AnomalyTools(
     public const int StaleDraftDays = 30;
 
     [McpServerTool(Name = "find_accounting_anomalies", Title = "Finn avvik og glemte oppgaver", ReadOnly = true, Idempotent = true, OpenWorld = true)]
-    [Description("Kontrollerer regnskapet for et år: posteringer uten prosjekt, prosjekter som ikke er koblet til budsjettet (eller er koblet flere ganger), forfalte ubetalte kjøp og salg, kjøp uten vedlegg, gamle ubehandlede bilag i innboks/EHF, gamle kjøpsutkast og posteringer etter prosjektets sluttdato.")]
+    [Description("Kontrollerer regnskapet for et år: posteringer uten prosjekt, prosjekter som ikke er koblet til budsjettet, prosjekter fordelt på flere budsjettposter uten gyldig fordelingsnøkkel, forfalte ubetalte kjøp og salg, kjøp uten vedlegg, gamle ubehandlede bilag i innboks/EHF, gamle kjøpsutkast og posteringer etter prosjektets sluttdato.")]
     public Task<object> FindAccountingAnomalies(
         [Description("År. Standard: inneværende år.")] int? year = null,
         [Description("Hvilke sjekker som skal kjøres (standard alle): ufordelte_posteringer, ukoblede_prosjekter, ugyldig_fordeling, forfalte_kjop, forfalte_salg, kjop_uten_vedlegg, gammel_innboks, gamle_kjopsutkast, postering_etter_prosjektslutt.")] string[]? checks = null,
@@ -30,6 +30,8 @@ public sealed class AnomalyTools(
         var y = ToolSupport.ValidateYear(year ?? today.Year);
         var selected = (checks is { Length: > 0 } ? checks : AnomalyTypes.All)
             .Select(c => c.Trim().ToLowerInvariant())
+            // Gammelt navn på sjekken, før prosjekter kunne fordeles på flere poster.
+            .Select(c => c == "prosjekt_i_flere_poster" ? AnomalyTypes.InvalidProjectSplits : c)
             .ToHashSet();
         var unknown = selected.Except(AnomalyTypes.All).ToList();
         if (unknown.Count > 0)

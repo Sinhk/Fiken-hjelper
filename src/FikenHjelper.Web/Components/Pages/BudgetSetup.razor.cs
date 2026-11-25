@@ -299,6 +299,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         var result = await dialog.Result;
         if (result is { Canceled: false, Data: List<long> ids } && !ids.SequenceEqual(line.ProjectIds))
         {
+            foreach (var removed in line.ProjectIds.Except(ids))
+            {
+                line.SetShare(removed, null);
+            }
+
             line.ProjectIds = ids;
             MarkDirty();
         }
@@ -414,8 +419,25 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
     private string? UsedByOther(long projectId, BudgetLine line) =>
         current?.Lines.FirstOrDefault(l => !ReferenceEquals(l, line) && l.ProjectIds.Contains(projectId))?.Name;
 
-    private string? UsedByOtherTitle(long projectId, BudgetLine line) =>
-        UsedByOther(projectId, line) is { } other ? $"Også koblet til «{other}»" : null;
+    /// <summary>
+    /// Advarsel for et prosjekt i en post: koblet til flere poster uten gyldig fordelingsnøkkel, eller koblet
+    /// til en annen post når denne har manuelt regnskapstall. Null når alt er i orden.
+    /// </summary>
+    private string? ProjectChipWarning(long projectId, BudgetLine line)
+    {
+        if (current is null || UsedByOther(projectId, line) is not { } other)
+        {
+            return null;
+        }
+
+        var links = ProjectSplits.LinksByProject(current).GetValueOrDefault(projectId) ?? [];
+        if (links.Count > 1)
+        {
+            return ProjectSplits.Check(projectId, links) is null ? null : "Fordelingsnøkkelen går ikke opp i 100 %. Rett den med «Fordel …».";
+        }
+
+        return $"Også koblet til «{other}»";
+    }
 
     private string ProjectName(long id) =>
         projectsById.TryGetValue(id, out var p) ? p.Name : $"Prosjekt {id}";
@@ -580,7 +602,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
                 return;
             }
 
-            BudgetWorkbookImporter.ApplySuggestions(
+            var splitMessages = BudgetWorkbookImporter.ApplySuggestions(
                 chosen,
                 acceptedSuggestions.Select(s => (s, suggestionChoices[s])));
             var notLinked = importPreview.Suggestions
@@ -602,6 +624,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
                     $"Disse prosjektnavnene ble ikke koblet: {string.Join(", ", notLinked)}. Koble dem manuelt, f.eks. under «Prosjekter → poster».",
                     Severity.Warning,
                     o => o.RequireInteraction = true);
+            }
+
+            if (splitMessages.Count > 0)
+            {
+                Snackbar.Add(string.Join(" ", splitMessages), Severity.Info, o => o.RequireInteraction = true);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
