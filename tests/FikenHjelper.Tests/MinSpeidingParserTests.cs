@@ -171,7 +171,8 @@ public sealed class MinSpeidingParserTests
             "12345",
             participantsApiKey: "secret-key",
             questionsApiKey: "questions-secret",
-            baseUrlOverride: "https://min.speiding.no/api");
+            baseUrlOverride: "https://min.speiding.no/api",
+            ct: TestContext.Current.CancellationToken);
 
         Assert.False(result.QuestionsEndpointAvailable);
         Assert.Equal(2, requests.Count);
@@ -206,7 +207,8 @@ public sealed class MinSpeidingParserTests
             "12345",
             participantsApiKey: "secret-key",
             questionsApiKey: null,
-            baseUrlOverride: "https://min.speiding.no/api");
+            baseUrlOverride: "https://min.speiding.no/api",
+            ct: TestContext.Current.CancellationToken);
 
         Assert.False(result.QuestionsEndpointAvailable);
         var req = Assert.Single(requests);

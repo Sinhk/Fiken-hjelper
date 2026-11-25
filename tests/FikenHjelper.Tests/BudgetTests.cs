@@ -404,9 +404,9 @@ public sealed class JsonBudgetStoreTests
                     new BudgetYear { Year = 2025, Lines = [new() { Name = " Drift ", Amount = -1, ProjectIds = [5, 5, 0] }, new() { Name = "  " }] },
                     new BudgetYear { Year = 2026 }
                 ]
-            });
+            }, TestContext.Current.CancellationToken);
 
-            var loaded = await store.LoadAsync();
+            var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
             Assert.Equal([2026, 2025], loaded.Years.Select(y => y.Year));
             var line = Assert.Single(loaded.FindYear(2025)!.Lines);
             Assert.Equal("Drift", line.Name);
@@ -437,8 +437,8 @@ public sealed class FikenDataCacheTests
             return [1, 2];
         }
 
-        var first = cache.GetOrFetchAsync("k", refresh: false, Fetch);
-        var second = cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        var first = cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken);
+        var second = cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken);
         release.SetResult();
 
         Assert.Equal([1, 2], await first);
@@ -454,11 +454,11 @@ public sealed class FikenDataCacheTests
         var calls = 0;
         Task<IReadOnlyList<int>> Fetch() => Task.FromResult<IReadOnlyList<int>>([Interlocked.Increment(ref calls)]);
 
-        await cache.GetOrFetchAsync("k", refresh: false, Fetch);
-        Assert.Equal([1], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+        await cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken);
+        Assert.Equal([1], await cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken));
 
-        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: true, Fetch));
-        Assert.Equal([3], await cache.GetOrFetchAsync("k", refresh: true, Fetch));
+        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: true, Fetch, ct: TestContext.Current.CancellationToken));
+        Assert.Equal([3], await cache.GetOrFetchAsync("k", refresh: true, Fetch, ct: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -469,11 +469,11 @@ public sealed class FikenDataCacheTests
         var calls = 0;
         Task<IReadOnlyList<int>> Fetch() => Task.FromResult<IReadOnlyList<int>>([Interlocked.Increment(ref calls)]);
 
-        await cache.GetOrFetchAsync("k", refresh: false, Fetch);
+        await cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken);
         time.Advance(TimeSpan.FromMinutes(14));
-        Assert.Equal([1], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+        Assert.Equal([1], await cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken));
         time.Advance(TimeSpan.FromMinutes(2));
-        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: false, Fetch));
+        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: false, Fetch, ct: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -489,8 +489,8 @@ public sealed class FikenDataCacheTests
             return [n];
         }
 
-        var first = cache.GetOrFetchAsync("k", refresh: true, Fetch);
-        var second = cache.GetOrFetchAsync("k", refresh: true, Fetch);
+        var first = cache.GetOrFetchAsync("k", refresh: true, Fetch, ct: TestContext.Current.CancellationToken);
+        var second = cache.GetOrFetchAsync("k", refresh: true, Fetch, ct: TestContext.Current.CancellationToken);
         release.SetResult();
 
         Assert.Equal([1], await first);
@@ -511,12 +511,12 @@ public sealed class FikenDataCacheTests
             return [n];
         }
 
-        var pending = cache.GetOrFetchAsync("k", refresh: false, Slow);
+        var pending = cache.GetOrFetchAsync("k", refresh: false, Slow, ct: TestContext.Current.CancellationToken);
         cache.Clear();
         release.SetResult();
         Assert.Equal([1], await pending);
 
-        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: false, Slow));
+        Assert.Equal([2], await cache.GetOrFetchAsync("k", refresh: false, Slow, ct: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -530,7 +530,7 @@ public sealed class FikenDataCacheTests
             return [1];
         }
 
-        var pending = cache.GetOrFetchAsync("k", refresh: false, Slow);
+        var pending = cache.GetOrFetchAsync("k", refresh: false, Slow, ct: TestContext.Current.CancellationToken);
         using var cts = new CancellationTokenSource();
         var waiting = cache.GetOrFetchAsync("k", refresh: false, Slow, cts.Token);
         await cts.CancelAsync();

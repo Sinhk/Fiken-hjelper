@@ -59,7 +59,7 @@ public sealed class FikenOAuthServiceTests : IDisposable
         {
             FikenOAuthClientId = "public-client-id",
             FikenOAuthClientSecret = ""
-        });
+        }, TestContext.Current.CancellationToken);
 
         string? capturedForm = null;
         bool hadAuthHeader = false;
@@ -83,7 +83,8 @@ public sealed class FikenOAuthServiceTests : IDisposable
             "auth-code-1",
             "verifier-1",
             "http://localhost:5066/fiken/oauth/callback",
-            "state-1");
+            "state-1",
+            TestContext.Current.CancellationToken);
 
         Assert.False(hadAuthHeader);
         Assert.NotNull(capturedForm);
@@ -94,7 +95,7 @@ public sealed class FikenOAuthServiceTests : IDisposable
         Assert.Equal("verifier-1", parsed["code_verifier"]);
         Assert.Equal("acc-1", tokenRes.AccessToken);
 
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("acc-1", loaded.FikenOAuthAccessToken);
         Assert.Equal("ref-1", loaded.FikenOAuthRefreshToken);
         Assert.NotNull(loaded.FikenOAuthExpiresAtUtc);
@@ -108,7 +109,7 @@ public sealed class FikenOAuthServiceTests : IDisposable
         {
             FikenOAuthClientId = "conf-id",
             FikenOAuthClientSecret = "conf-secret"
-        });
+        }, TestContext.Current.CancellationToken);
 
         string? authScheme = null;
         string? authParam = null;
@@ -135,7 +136,8 @@ public sealed class FikenOAuthServiceTests : IDisposable
             "auth-code-2",
             "verifier-2",
             "https://localhost:7193/fiken/oauth/callback",
-            "state-2");
+            "state-2",
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("Basic", authScheme);
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("conf-id:conf-secret")), authParam);
@@ -152,11 +154,12 @@ public sealed class FikenOAuthServiceTests : IDisposable
         await store.SaveSettingsAsync(new AppSettings
         {
             FikenOAuthClientId = "public-client-id"
-        });
+        }, TestContext.Current.CancellationToken);
         await store.SaveFikenOAuthTokensAsync(
             "fresh-token",
             "refresh-1",
-            DateTimeOffset.UtcNow.AddHours(2));
+            DateTimeOffset.UtcNow.AddHours(2),
+            TestContext.Current.CancellationToken);
 
         var refreshCallCount = 0;
         var handler = new StubHttpHandler(async (_, ct) =>
@@ -176,7 +179,7 @@ public sealed class FikenOAuthServiceTests : IDisposable
         using var oauth = new FikenOAuthService(http, store);
 
         // Fresh token: no HTTP refresh should occur
-        var cached = await oauth.GetValidAccessTokenAsync();
+        var cached = await oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken);
         Assert.Equal("fresh-token", cached);
         Assert.Equal(0, refreshCallCount);
 
@@ -184,18 +187,19 @@ public sealed class FikenOAuthServiceTests : IDisposable
         await store.SaveFikenOAuthTokensAsync(
             "expiring-token",
             "refresh-1",
-            DateTimeOffset.UtcNow.AddSeconds(30));
+            DateTimeOffset.UtcNow.AddSeconds(30),
+            TestContext.Current.CancellationToken);
 
         var tokens = await Task.WhenAll(
-            oauth.GetValidAccessTokenAsync(),
-            oauth.GetValidAccessTokenAsync(),
-            oauth.GetValidAccessTokenAsync(),
-            oauth.GetValidAccessTokenAsync());
+            oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken),
+            oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken),
+            oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken),
+            oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken));
 
         Assert.Equal(1, refreshCallCount);
         Assert.All(tokens, t => Assert.Equal("rotated-access", t));
 
-        var savedAfter = await store.LoadSettingsAsync();
+        var savedAfter = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("rotated-access", savedAfter.FikenOAuthAccessToken);
         Assert.Equal("rotated-refresh", savedAfter.FikenOAuthRefreshToken);
     }
@@ -207,11 +211,12 @@ public sealed class FikenOAuthServiceTests : IDisposable
         await store.SaveSettingsAsync(new AppSettings
         {
             FikenOAuthClientId = "public-client-id"
-        });
+        }, TestContext.Current.CancellationToken);
         await store.SaveFikenOAuthTokensAsync(
             "stale-token",
             "refresh-1",
-            DateTimeOffset.UtcNow.AddHours(1));
+            DateTimeOffset.UtcNow.AddHours(1),
+            TestContext.Current.CancellationToken);
 
         var oauthHandler = new StubHttpHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -249,7 +254,7 @@ public sealed class FikenOAuthServiceTests : IDisposable
         using var fikenHttp = new HttpClient(fikenHandler) { BaseAddress = new Uri(FikenClient.DefaultBaseAddress) };
         var fikenClient = new FikenClient(fikenHttp, store, oauthService);
 
-        var companies = await fikenClient.GetCompaniesAsync();
+        var companies = await fikenClient.GetCompaniesAsync(ct: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, apiCalls);
         Assert.Single(companies);
@@ -261,15 +266,15 @@ public sealed class FikenOAuthServiceTests : IDisposable
     {
         var store = new LocalConfigStore(dataDirectory: _tempDir);
         var expires = DateTimeOffset.UtcNow.AddHours(6);
-        await store.SaveFikenOAuthTokensAsync("keep-access", "keep-refresh", expires);
+        await store.SaveFikenOAuthTokensAsync("keep-access", "keep-refresh", expires, TestContext.Current.CancellationToken);
 
         await store.SaveSettingsAsync(new AppSettings
         {
             FikenOAuthClientId = "client-123",
             FikenCompanySlug = "nytt-foretak"
-        });
+        }, TestContext.Current.CancellationToken);
 
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("client-123", loaded.FikenOAuthClientId);
         Assert.Equal("nytt-foretak", loaded.FikenCompanySlug);
         Assert.Equal("keep-access", loaded.FikenOAuthAccessToken);

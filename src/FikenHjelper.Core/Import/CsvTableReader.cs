@@ -1,7 +1,5 @@
-using System.Globalization;
 using System.Text;
 using CsvHelper;
-using CsvHelper.Configuration;
 
 namespace FikenHjelper.Core.Import;
 
@@ -110,44 +108,49 @@ public static class CsvTableReader
         return best;
     }
 
-    /// <summary>Leser ikke-tomme rader og teller felt CsvHelper melder som ødelagte (BadDataFound).</summary>
+    /// <summary>Leser ikke-tomme rader og teller rader CsvHelper melder som ødelagte (OnMalformedRecord).</summary>
     private static (List<string[]> Records, int BadFields) ReadRecords(string text, string delimiter, int? maxRecords, bool throwOnBadData)
     {
         var unclosedQuote = false;
         var badFields = 0;
-        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+        var options = new CsvReaderOptions
         {
-            Delimiter = delimiter,
-            HasHeaderRecord = false,
-            IgnoreBlankLines = true,
+            Separator = delimiter[0],
+            HasHeader = false,
+            SkipEmptyLines = true,
             // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Et sitert felt som
             // aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet for stille datatap.
-            BadDataFound = args =>
+            MalformedData = CsvMalformedDataHandling.Recover,
+            OnMalformedRecord = record =>
             {
                 badFields++;
-                unclosedQuote |= args.Field.TrimStart().StartsWith('"');
+                unclosedQuote |= record.Reason is CsvMalformedReason.UnterminatedQuote or CsvMalformedReason.TextAfterClosingQuote;
             }
         };
 
         var records = new List<string[]>();
-        using var reader = new StringReader(text);
-        using var parser = new CsvParser(reader, config);
+        using var reader = CsvReader.FromText(text, options);
         try
         {
-            while ((maxRecords is null || records.Count < maxRecords) && parser.Read())
+            while ((maxRecords is null || records.Count < maxRecords) && reader.Read())
             {
-                var record = parser.Record ?? [];
+                var record = new string[reader.FieldCount];
+                for (var i = 0; i < record.Length; i++)
+                {
+                    record[i] = reader.GetString(i);
+                }
+
                 if (record.Any(c => !string.IsNullOrWhiteSpace(c)))
                 {
                     records.Add(record);
                 }
             }
         }
-        catch (CsvHelperException ex) when (throwOnBadData)
+        catch (CsvFormatException ex) when (throwOnBadData)
         {
             throw new InvalidDataException("Filen kunne ikke leses som CSV. Sjekk at riktig fil og format er valgt.", ex);
         }
-        catch (CsvHelperException)
+        catch (CsvFormatException)
         {
             // Ved gjenkjenning av skilletegn regnes et lesebrudd som ødelagte data.
             badFields++;

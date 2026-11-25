@@ -33,15 +33,16 @@ public sealed class ServiceDefaultsTelemetryTests
 
         await using var app = builder.Build();
         app.MapGet("/fiken/oauth/callback", () => "ok");
-        await app.StartAsync();
+        await app.StartAsync(TestContext.Current.CancellationToken);
 
         // Bruk appens egen IHttpClientFactory, slik at utgående kall går gjennom ServiceDefaults-oppsettet.
         var http = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient();
         var body = await http.GetStringAsync(
-            $"{app.Urls.First()}/fiken/oauth/callback?code=SECRET-CODE-123&state=SECRET-STATE-456");
+            $"{app.Urls.First()}/fiken/oauth/callback?code=SECRET-CODE-123&state=SECRET-STATE-456",
+            TestContext.Current.CancellationToken);
         Assert.Equal("ok", body);
 
-        await app.StopAsync();
+        await app.StopAsync(TestContext.Current.CancellationToken);
 
         var serverActivity = Assert.Single(stopped, a => a.Kind == ActivityKind.Server);
         var clientActivity = Assert.Single(stopped, a => a.Kind == ActivityKind.Client);

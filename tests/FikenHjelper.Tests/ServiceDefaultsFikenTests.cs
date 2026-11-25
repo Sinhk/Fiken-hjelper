@@ -29,7 +29,7 @@ public sealed class ServiceDefaultsFikenTests
 
         var client = host.Services.GetRequiredService<IFikenClient>();
 
-        await Assert.ThrowsAsync<FikenApiException>(() => client.GetCompaniesAsync());
+        await Assert.ThrowsAsync<FikenApiException>(() => client.GetCompaniesAsync(ct: TestContext.Current.CancellationToken));
         Assert.Equal(1, callCount);
     }
 
@@ -45,7 +45,7 @@ public sealed class ServiceDefaultsFikenTests
 
         var client = host.Services.GetRequiredService<IFikenClient>();
 
-        await Assert.ThrowsAsync<FikenApiException>(() => client.GetCompaniesAsync());
+        await Assert.ThrowsAsync<FikenApiException>(() => client.GetCompaniesAsync(ct: TestContext.Current.CancellationToken));
         Assert.Equal(3, callCount); // 1 forsøk + 2 egne 429-retries i FikenRateLimitHandler
     }
 

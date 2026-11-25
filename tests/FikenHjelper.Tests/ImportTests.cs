@@ -738,20 +738,20 @@ public sealed class JsonImportProfileStoreTests : IDisposable
     public async Task SaveLoadReplaceAndDelete()
     {
         var store = new JsonImportProfileStore(_dir);
-        Assert.Empty(await store.LoadAllAsync());
+        Assert.Empty(await store.LoadAllAsync(TestContext.Current.CancellationToken));
 
-        await store.SaveAsync(new ImportProfile { Name = "Min speiding individuell", FullNameColumn = "Navn", EmailColumns = ["E-post", "E-post (2)"] });
-        await store.SaveAsync(new ImportProfile { Name = "Annen", FullNameColumn = "Name" });
-        await store.SaveAsync(new ImportProfile { Name = "min speiding individuell ", FullNameColumn = "Navn", GroupColumn = "Gruppe" });
+        await store.SaveAsync(new ImportProfile { Name = "Min speiding individuell", FullNameColumn = "Navn", EmailColumns = ["E-post", "E-post (2)"] }, TestContext.Current.CancellationToken);
+        await store.SaveAsync(new ImportProfile { Name = "Annen", FullNameColumn = "Name" }, TestContext.Current.CancellationToken);
+        await store.SaveAsync(new ImportProfile { Name = "min speiding individuell ", FullNameColumn = "Navn", GroupColumn = "Gruppe" }, TestContext.Current.CancellationToken);
 
-        var reloaded = await new JsonImportProfileStore(_dir).LoadAllAsync();
+        var reloaded = await new JsonImportProfileStore(_dir).LoadAllAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, reloaded.Count);
         var profile = reloaded.Single(p => p.FullNameColumn == "Navn");
         Assert.Equal("Gruppe", profile.GroupColumn);
         Assert.Empty(profile.EmailColumns);
 
-        await store.DeleteAsync("ANNEN");
-        Assert.Single(await store.LoadAllAsync());
+        await store.DeleteAsync("ANNEN", TestContext.Current.CancellationToken);
+        Assert.Single(await store.LoadAllAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(Path.Combine(_dir, JsonImportProfileStore.FileName)));
     }
 
