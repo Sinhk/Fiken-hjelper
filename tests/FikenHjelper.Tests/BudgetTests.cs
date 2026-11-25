@@ -1,3 +1,4 @@
+using System.Globalization;
 using ClosedXML.Excel;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
@@ -293,7 +294,20 @@ public sealed class BudgetWorkbookTests
     [InlineData("1234.567", 1234.567)]
     public void ParseNumber_HandlesNorwegianAndMixedFormats(string text, double expected)
     {
-        Assert.Equal((decimal)expected, BudgetWorkbookImporter.ParseNumber(text));
+        // Via teksten: fra .NET 11 gir (decimal)double den eksakte binærverdien (1234,5670000000000072…).
+        Assert.Equal(decimal.Parse(expected.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture), BudgetWorkbookImporter.ParseNumber(text));
+    }
+
+    [Theory]
+    [InlineData(1.015, "1.02")]
+    [InlineData(2.675, "2.68")]
+    [InlineData(1250.005, "1250.00")]
+    [InlineData(99.995, "100.00")]
+    [InlineData(0.30000000000000004, "0.30")]
+    [InlineData(-13500, "-13500")]
+    public void ToAmount_RoundsTheValueShownInTheCell(double cellValue, string expected)
+    {
+        Assert.Equal(decimal.Parse(expected, CultureInfo.InvariantCulture), BudgetWorkbookImporter.ToAmount(cellValue));
     }
 
     [Theory]
