@@ -134,6 +134,7 @@ public sealed class LocalConfigStore : ILocalConfigStore
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly AppSettingsDefaults _defaults;
     private readonly string _configPath;
+    private readonly string _configLockPath;
     private readonly string _mappingsPath;
 
     public string DataDirectory { get; }
@@ -147,6 +148,7 @@ public sealed class LocalConfigStore : ILocalConfigStore
                 "FikenHjelper")
             : dataDirectory;
         _configPath = Path.Combine(DataDirectory, "config.json");
+        _configLockPath = Path.Combine(DataDirectory, "config.lock");
         _mappingsPath = Path.Combine(DataDirectory, "mappings.json");
     }
 
@@ -172,6 +174,8 @@ public sealed class LocalConfigStore : ILocalConfigStore
         await _gate.WaitAsync(ct);
         try
         {
+            // Låsfila hindrer at en annen prosess skriver nye tokens mellom lesing og skriving her.
+            using var configLock = await CrossProcessFileLock.AcquireAsync(_configLockPath, ct);
             var existing = await ReadJsonAsync<AppSettings>(_configPath, ct);
 
             var copy = settings.Clone();
@@ -215,6 +219,7 @@ public sealed class LocalConfigStore : ILocalConfigStore
         await _gate.WaitAsync(ct);
         try
         {
+            using var configLock = await CrossProcessFileLock.AcquireAsync(_configLockPath, ct);
             var settings = await ReadJsonAsync<AppSettings>(_configPath, ct) ?? new AppSettings();
             ApplyDefaults(settings);
 
@@ -238,6 +243,7 @@ public sealed class LocalConfigStore : ILocalConfigStore
         await _gate.WaitAsync(ct);
         try
         {
+            using var configLock = await CrossProcessFileLock.AcquireAsync(_configLockPath, ct);
             var settings = await ReadJsonAsync<AppSettings>(_configPath, ct);
             if (settings is null)
             {
@@ -655,27 +661,67 @@ public sealed class LocalConfigStore : ILocalConfigStore
         }
     }
 
+    private const int MaxFileAttempts = 10;
+    private static readonly TimeSpan FileRetryDelay = TimeSpan.FromMilliseconds(30);
+
     private static async Task<T?> ReadJsonAsync<T>(string path, CancellationToken ct)
     {
-        if (!File.Exists(path))
+        for (var attempt = 1; ; attempt++)
         {
-            return default;
-        }
+            if (!File.Exists(path))
+            {
+                return default;
+            }
 
-        await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, ct);
+            try
+            {
+                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, ct);
+            }
+            catch (IOException) when (attempt < MaxFileAttempts)
+            {
+                // Windows: fila kan være låst et øyeblikk mens en annen prosess bytter den ut.
+                await Task.Delay(FileRetryDelay, ct);
+            }
+            catch (UnauthorizedAccessException) when (attempt < MaxFileAttempts)
+            {
+                await Task.Delay(FileRetryDelay, ct);
+            }
+        }
     }
 
     private async Task WriteJsonAsync<T>(string path, T value, CancellationToken ct)
     {
         var directory = Path.GetDirectoryName(path) ?? DataDirectory;
         Directory.CreateDirectory(directory);
-        var tempPath = path + ".tmp";
-        await using (var stream = File.Create(tempPath))
+        // Unikt navn, så to prosesser som skriver samtidig ikke deler temp-fil.
+        var tempPath = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+        try
         {
-            await JsonSerializer.SerializeAsync(stream, value, JsonOptions, ct);
-        }
+            await using (var stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, value, JsonOptions, ct);
+            }
 
-        File.Move(tempPath, path, overwrite: true);
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    File.Move(tempPath, path, overwrite: true);
+                    break;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < MaxFileAttempts)
+                {
+                    await Task.Delay(FileRetryDelay, ct);
+                }
+            }
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
     }
 }

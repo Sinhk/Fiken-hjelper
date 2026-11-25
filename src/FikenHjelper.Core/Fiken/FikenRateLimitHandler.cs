@@ -1,48 +1,120 @@
 using System.Net;
+using FikenHjelper.Core.Config;
 
 namespace FikenHjelper.Core.Fiken;
 
 /// <summary>
 /// Thread-safe singleton coordinator enforcing Fiken API v2 limits:
 /// maximum 1 concurrent request and minimum spacing between requests.
+/// Med en låsfil gjelder grensene også på tvers av prosesser (f.eks. Web og MCP-serveren samtidig):
+/// låsen holdes under hele kallet, og tidspunktet for siste kall lagres i fila.
 /// </summary>
 public sealed class FikenRateLimiter : IDisposable
 {
+    public const string LockFileName = "fiken-api.lock";
+    public static readonly TimeSpan DefaultMinimumSpacing = TimeSpan.FromMilliseconds(260);
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeSpan _minimumSpacing;
+    private readonly string? _lockFilePath;
     private DateTimeOffset _nextAllowedRequestUtc = DateTimeOffset.MinValue;
+    private CrossProcessFileLock? _currentFileLock;
 
     public FikenRateLimiter()
-        : this(TimeSpan.FromMilliseconds(260))
+        : this(DefaultMinimumSpacing)
     {
     }
 
     public FikenRateLimiter(TimeSpan minimumSpacing)
+        : this(minimumSpacing, lockFilePath: null)
+    {
+    }
+
+    public FikenRateLimiter(TimeSpan minimumSpacing, string? lockFilePath)
     {
         _minimumSpacing = minimumSpacing < TimeSpan.Zero ? TimeSpan.Zero : minimumSpacing;
+        _lockFilePath = string.IsNullOrWhiteSpace(lockFilePath) ? null : lockFilePath;
     }
+
+    /// <summary>Rate limiter som deler grensene med andre prosesser som bruker samme datamappe.</summary>
+    public static FikenRateLimiter CreateShared(string dataDirectory) =>
+        new(DefaultMinimumSpacing, Path.Combine(dataDirectory, LockFileName));
+
+    /// <summary>
+    /// Hvor lenge vi venter på låsfila. Må være lengre enn ett kall kan vare (HttpClient-timeout),
+    /// ellers får en ventende prosess tidsavbrudd selv om den andre prosessen bare har et tregt kall.
+    /// </summary>
+    public static readonly TimeSpan FileLockTimeout = TimeSpan.FromMinutes(3);
 
     public async Task<IDisposable> AcquireSlotAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
+        if (_lockFilePath is not null)
+        {
+            try
+            {
+                _currentFileLock = await CrossProcessFileLock.AcquireAsync(_lockFilePath, cancellationToken, FileLockTimeout);
+            }
+            catch
+            {
+                _gate.Release();
+                throw;
+            }
+        }
+
         return new SlotLease(this);
     }
 
     public async Task WaitForSpacingAsync(CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (_nextAllowedRequestUtc > now)
+        var nextAllowed = _nextAllowedRequestUtc;
+        if (_currentFileLock is { } fileLock)
         {
-            await Task.Delay(_nextAllowedRequestUtc - now, cancellationToken);
+            var sharedTicks = fileLock.ReadInt64();
+            // Ignorer ugyldig innhold i låsfila i stedet for å feile på hvert kall.
+            if (sharedTicks > 0 && sharedTicks <= DateTimeOffset.MaxValue.UtcTicks)
+            {
+                var shared = new DateTimeOffset(sharedTicks, TimeSpan.Zero);
+                if (shared > nextAllowed)
+                {
+                    nextAllowed = shared;
+                }
+            }
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (nextAllowed > now)
+        {
+            // Beskytter mot en klokke som er stilt bakover: aldri vent mer enn ett mellomrom.
+            var wait = nextAllowed - now;
+            if (wait > _minimumSpacing)
+            {
+                wait = _minimumSpacing;
+            }
+
+            await Task.Delay(wait, cancellationToken);
         }
     }
 
     public void RecordRequestCompleted()
     {
         _nextAllowedRequestUtc = DateTimeOffset.UtcNow + _minimumSpacing;
+        _currentFileLock?.WriteInt64(_nextAllowedRequestUtc.UtcTicks);
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose()
+    {
+        _currentFileLock?.Dispose();
+        _gate.Dispose();
+    }
+
+    private void ReleaseSlot()
+    {
+        var fileLock = _currentFileLock;
+        _currentFileLock = null;
+        fileLock?.Dispose();
+        _gate.Release();
+    }
 
     private sealed class SlotLease(FikenRateLimiter owner) : IDisposable
     {
@@ -52,7 +124,7 @@ public sealed class FikenRateLimiter : IDisposable
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                owner._gate.Release();
+                owner.ReleaseSlot();
             }
         }
     }
@@ -64,6 +136,9 @@ public sealed class FikenRateLimiter : IDisposable
 public sealed class FikenRateLimitHandler : DelegatingHandler
 {
     private const int MaxRateLimitRetries = 2;
+
+    /// <summary>Lengste ventetid ved 429 før kallet prøves på nytt. Lengre ventetid gir 429 tilbake til kalleren.</summary>
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(10);
     private readonly FikenRateLimiter _limiter;
     private readonly bool _ownsLimiter;
 
@@ -83,8 +158,6 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        using var _ = await _limiter.AcquireSlotAsync(cancellationToken);
-
         byte[]? bufferedContent = null;
         string? bufferedMediaType = null;
         if (request.Content is not null)
@@ -95,11 +168,32 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
 
         for (var attempt = 0; ; attempt++)
         {
-            await _limiter.WaitForSpacingAsync(cancellationToken);
+            HttpResponseMessage? response = null;
+            // Plassen (og låsfila) holdes per forsøk, ikke under ventetiden ved 429, så andre prosesser slipper til.
+            using (await _limiter.AcquireSlotAsync(cancellationToken))
+            {
+                await _limiter.WaitForSpacingAsync(cancellationToken);
 
-            using var outgoing = CloneRequest(request, bufferedContent, bufferedMediaType);
-            var response = await base.SendAsync(outgoing, cancellationToken);
-            _limiter.RecordRequestCompleted();
+                using var outgoing = CloneRequest(request, bufferedContent, bufferedMediaType);
+                try
+                {
+                    response = await base.SendAsync(outgoing, cancellationToken);
+
+                    // Les hele svaret mens plassen holdes: HttpClient leser ellers innholdet etter at handleren har
+                    // returnert, og da kunne et nytt kall (også fra en annen prosess) startet samtidig.
+                    await response.Content.LoadIntoBufferAsync(cancellationToken);
+                }
+                catch
+                {
+                    response?.Dispose();
+                    throw;
+                }
+                finally
+                {
+                    // Mellomrommet gjelder også etter feil og tidsavbrudd.
+                    _limiter.RecordRequestCompleted();
+                }
+            }
 
             if (response.StatusCode != HttpStatusCode.TooManyRequests || attempt >= MaxRateLimitRetries)
             {
@@ -107,6 +201,11 @@ public sealed class FikenRateLimitHandler : DelegatingHandler
             }
 
             var retryDelay = ResolveRetryDelay(response);
+            if (retryDelay > MaxRetryDelay)
+            {
+                return response;
+            }
+
             response.Dispose();
             if (retryDelay > TimeSpan.Zero)
             {

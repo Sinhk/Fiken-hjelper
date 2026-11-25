@@ -264,7 +264,7 @@ public sealed class FikenClient : IFikenClient
         if (response.StatusCode == HttpStatusCode.Unauthorized && auth.UsedOAuth && _oauthService is not null)
         {
             response.Dispose();
-            var freshToken = await _oauthService.GetValidAccessTokenAsync(forceRefresh: true, ct);
+            var freshToken = await _oauthService.GetValidAccessTokenAsync(forceRefresh: true, ct, rejectedAccessToken: auth.Token);
             var refreshedAuth = auth with { Token = freshToken };
 
             using var retryRequest = requestFactory(refreshedAuth.Token);

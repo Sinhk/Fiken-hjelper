@@ -15,9 +15,14 @@ public interface IFikenOAuthService
         string state,
         CancellationToken ct = default);
 
+    /// <param name="rejectedAccessToken">
+    /// Tokenet Fiken nettopp avviste (ved <paramref name="forceRefresh"/>). Har en annen prosess allerede fornyet,
+    /// brukes det nye tokenet uten ny fornyelse.
+    /// </param>
     Task<string> GetValidAccessTokenAsync(
         bool forceRefresh = false,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? rejectedAccessToken = null);
 
     Task DisconnectAsync(CancellationToken ct = default);
 }
