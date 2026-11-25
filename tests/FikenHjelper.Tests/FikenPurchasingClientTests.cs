@@ -19,7 +19,7 @@ public sealed class FikenPurchasingClientTests
             [
                 new FikenPurchaseDraftLineRequest("Mat", "NONE", "6800", 12550, 12550, 7),
                 new FikenPurchaseDraftLineRequest("Telt", "NONE", "6540", 1000, 1000, null)
-            ]));
+            ]), TestContext.Current.CancellationToken);
 
         Assert.Equal(555, result.Id);
         var call = Assert.Single(api.Calls);
@@ -49,7 +49,7 @@ public sealed class FikenPurchasingClientTests
             FakeFikenApi.Created("https://api.fiken.no/api/v2/companies/test-as/purchases/drafts/555/attachments/abc"));
         var client = api.CreateClient();
 
-        await client.AttachDocumentToPurchaseDraftAsync("test-as", 555, new PurchaseDocumentSource(inboxId, ehfId));
+        await client.AttachDocumentToPurchaseDraftAsync("test-as", 555, new PurchaseDocumentSource(inboxId, ehfId), TestContext.Current.CancellationToken);
 
         var call = Assert.Single(api.Calls);
         Assert.Equal($"/api/v2/companies/test-as/purchases/drafts/555/attachments?{expectedQuery}", call.PathAndQuery);
@@ -63,7 +63,7 @@ public sealed class FikenPurchasingClientTests
         var client = api.CreateClient();
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            client.AttachDocumentToPurchaseDraftAsync("test-as", 1, new PurchaseDocumentSource(1, 2)));
+            client.AttachDocumentToPurchaseDraftAsync("test-as", 1, new PurchaseDocumentSource(1, 2), TestContext.Current.CancellationToken));
         Assert.Empty(api.Calls);
     }
 
@@ -79,12 +79,12 @@ public sealed class FikenPurchasingClientTests
             .Get("companies/test-as/contacts", "[]");
         var client = api.CreateClient();
 
-        await client.GetInboxDocumentsAsync("test-as", "unused", "faktura");
-        await client.GetEhfDocumentsAsync("test-as", "unprocessed", new DateOnly(2026, 1, 1));
-        await client.GetPurchasesAsync("test-as", contactId: 42, dateFrom: new DateOnly(2024, 1, 1), paid: false);
-        await client.GetSalesAsync("test-as", settled: false);
-        await client.GetAccountsAsync("test-as", "4000-7999");
-        await client.GetSuppliersAsync("test-as", organizationNumber: "987654321");
+        await client.GetInboxDocumentsAsync("test-as", "unused", "faktura", TestContext.Current.CancellationToken);
+        await client.GetEhfDocumentsAsync("test-as", "unprocessed", new DateOnly(2026, 1, 1), TestContext.Current.CancellationToken);
+        await client.GetPurchasesAsync("test-as", contactId: 42, dateFrom: new DateOnly(2024, 1, 1), paid: false, ct: TestContext.Current.CancellationToken);
+        await client.GetSalesAsync("test-as", settled: false, ct: TestContext.Current.CancellationToken);
+        await client.GetAccountsAsync("test-as", "4000-7999", TestContext.Current.CancellationToken);
+        await client.GetSuppliersAsync("test-as", organizationNumber: "987654321", ct: TestContext.Current.CancellationToken);
 
         var urls = api.Calls.Select(c => Uri.UnescapeDataString(c.PathAndQuery)).ToList();
         Assert.Contains(urls, u => u.StartsWith("/api/v2/companies/test-as/inbox?status=unused&sortBy=createdDate desc&name=faktura&page=0"));
@@ -105,7 +105,7 @@ public sealed class FikenPurchasingClientTests
               "lines":[{"description":"a","netPrice":10000,"vat":2500,"account":"6800","vatType":"HIGH"},
                        {"description":"b","netPrice":500,"vat":0,"account":"6800","vatType":"NONE","projectId":7}]}]
             """);
-        var purchases = await api.CreateClient().GetPurchasesAsync("test-as");
+        var purchases = await api.CreateClient().GetPurchasesAsync("test-as", ct: TestContext.Current.CancellationToken);
 
         var purchase = Assert.Single(purchases);
         Assert.Equal(13000, purchase.GrossAmount);
@@ -133,7 +133,7 @@ public sealed class FikenPurchasingClientTests
         var client = api.CreateClient();
 
         var ex = await Assert.ThrowsAsync<FikenApiException>(() =>
-            client.DownloadDocumentAsync("https://example.com/steal", 1024));
+            client.DownloadDocumentAsync("https://example.com/steal", 1024, TestContext.Current.CancellationToken));
 
         Assert.Equal(HttpStatusCode.BadRequest, ex.StatusCode);
         Assert.Empty(api.Calls);
@@ -150,7 +150,7 @@ public sealed class FikenPurchasingClientTests
         var client = api.CreateClient();
 
         var ex = await Assert.ThrowsAsync<FikenApiException>(() =>
-            client.DownloadDocumentAsync("https://api.fiken.no/api/v2/files/big.pdf", 1024));
+            client.DownloadDocumentAsync("https://api.fiken.no/api/v2/files/big.pdf", 1024, TestContext.Current.CancellationToken));
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, ex.StatusCode);
     }
 }

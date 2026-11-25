@@ -66,7 +66,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
         var tools = CreateTools();
 
         var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42,
-            invoiceNumber: "F-1", issueDate: "2026-11-20", dueDate: "2026-12-04"));
+            invoiceNumber: "F-1", issueDate: "2026-11-20", dueDate: "2026-12-04", ct: TestContext.Current.CancellationToken));
 
         Assert.True(preview.GetProperty("valid").GetBoolean());
         Assert.True(preview.GetProperty("writeAllowed").GetBoolean());
@@ -75,7 +75,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(token));
         Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
 
-        var created = ToJson(await tools.CreatePurchaseDraft(token!));
+        var created = ToJson(await tools.CreatePurchaseDraft(token!, ct: TestContext.Current.CancellationToken));
         Assert.Equal(99, created.GetProperty("draftId").GetInt64());
 
         var posts = _api.Calls.Where(c => c.Method == HttpMethod.Post).ToList();
@@ -89,7 +89,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
         Assert.Equal("/api/v2/companies/test-as/purchases/drafts/99/attachments?inboxDocumentId=11", posts[1].PathAndQuery);
 
         // Tokenet kan bare brukes én gang.
-        await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!));
+        await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!, ct: TestContext.Current.CancellationToken));
         Assert.Equal(2, _api.Calls.Count(c => c.Method == HttpMethod.Post));
     }
 
@@ -98,14 +98,14 @@ public sealed class McpPurchaseFlowTests : IDisposable
     {
         var tools = CreateTools(testCompany: false);
 
-        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20"));
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
         Assert.True(preview.GetProperty("valid").GetBoolean());
         Assert.False(preview.GetProperty("writeAllowed").GetBoolean());
         Assert.Equal(JsonValueKind.Null, preview.TryGetProperty("confirmationToken", out var t) ? t.ValueKind : JsonValueKind.Null);
 
-        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft("whatever"));
+        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft("whatever", ct: TestContext.Current.CancellationToken));
         Assert.Contains("Mcp__AllowDraftsForCompany", ex.Message);
-        await Assert.ThrowsAsync<McpException>(() => tools.AttachDocumentToPurchaseDraft(99, inboxDocumentId: 11));
+        await Assert.ThrowsAsync<McpException>(() => tools.AttachDocumentToPurchaseDraft(99, inboxDocumentId: 11, ct: TestContext.Current.CancellationToken));
         Assert.DoesNotContain(_api.Calls, c => c.Method != HttpMethod.Get);
     }
 
@@ -113,13 +113,13 @@ public sealed class McpPurchaseFlowTests : IDisposable
     public async Task RealCompanyOnAllowList_RequiresElicitationUnlessExplicitlyWaived()
     {
         var tools = CreateTools(testCompany: false, allowList: "annet-as, TEST-AS");
-        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20"));
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
         Assert.True(preview.GetProperty("writeAllowed").GetBoolean());
         var token = preview.GetProperty("confirmationToken").GetString();
         Assert.False(string.IsNullOrEmpty(token));
 
         // Uten bekreftelsesdialog (server = null betyr ingen elicitation) avvises opprettelsen i ekte foretak.
-        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!));
+        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!, ct: TestContext.Current.CancellationToken));
         Assert.Contains("elicitation", ex.Message);
         Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
     }
@@ -128,9 +128,9 @@ public sealed class McpPurchaseFlowTests : IDisposable
     public async Task RealCompanyOnAllowList_WithElicitationWaived_CanCreate()
     {
         var tools = CreateTools(testCompany: false, allowList: "test-as", allowWithoutElicitation: true);
-        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20"));
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
 
-        var created = ToJson(await tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!));
+        var created = ToJson(await tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!, ct: TestContext.Current.CancellationToken));
         Assert.Equal(99, created.GetProperty("draftId").GetInt64());
     }
 
@@ -138,10 +138,10 @@ public sealed class McpPurchaseFlowTests : IDisposable
     public async Task DocumentUsedSincePreview_AbortsBeforeCreating()
     {
         var tools = CreateTools(inboxAlreadyUsed: true);
-        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42, issueDate: "2026-11-20"));
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), inboxDocumentId: 11, supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
         Assert.Contains(preview.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.Contains("allerede brukt"));
 
-        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!));
+        var ex = await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(preview.GetProperty("confirmationToken").GetString()!, ct: TestContext.Current.CancellationToken));
         Assert.Contains("brukt som bilag", ex.Message);
         Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
     }
@@ -153,7 +153,7 @@ public sealed class McpPurchaseFlowTests : IDisposable
         var preview = ToJson(await tools.PreviewPurchaseDraft(
             [new PurchaseLineArgument { Text = "x", Account = "9999", AmountKr = 10.001m }],
             supplierContactId: 42,
-            issueDate: "2026-11-20"));
+            issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
 
         Assert.False(preview.GetProperty("valid").GetBoolean());
         Assert.True(preview.GetProperty("errors").GetArrayLength() >= 2);
@@ -165,12 +165,12 @@ public sealed class McpPurchaseFlowTests : IDisposable
     {
         var pending = new PendingDraftStore(_time);
         var tools = CreateTools(pending: pending);
-        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20"));
+        var preview = ToJson(await tools.PreviewPurchaseDraft(Lines(), supplierContactId: 42, issueDate: "2026-11-20", ct: TestContext.Current.CancellationToken));
         var token = preview.GetProperty("confirmationToken").GetString();
 
         _time.Now += PendingDraftStore.Lifetime + TimeSpan.FromSeconds(1);
 
-        await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!));
+        await Assert.ThrowsAsync<McpException>(() => tools.CreatePurchaseDraft(token!, ct: TestContext.Current.CancellationToken));
         Assert.DoesNotContain(_api.Calls, c => c.Method == HttpMethod.Post);
     }
 
@@ -218,7 +218,7 @@ public sealed class McpStdioEndToEndTests : IDisposable
 
     private async Task<McpClient> StartAsync()
     {
-        var serverDll = typeof(McpInstructions).Assembly.Location;
+        var serverDll = FindServerDll();
         var transport = new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = "fiken-hjelper",
@@ -238,12 +238,28 @@ public sealed class McpStdioEndToEndTests : IDisposable
         return await McpClient.CreateAsync(transport);
     }
 
+    /// <summary>
+    /// Serveren må startes fra sin egen byggmappe. Testprosjektet bruker ASP.NET Core-rammeverket,
+    /// så pakker som Microsoft.Extensions.Hosting kopieres ikke til testmappa.
+    /// </summary>
+    private static string FindServerDll()
+    {
+        // .../tests/FikenHjelper.Tests/bin/{Configuration}/{TargetFramework}/
+        var testOutput = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+        var framework = testOutput.Name;
+        var configuration = testOutput.Parent!.Name;
+        var repoRoot = testOutput.Parent.Parent!.Parent!.Parent!.Parent!.FullName;
+        var serverDll = Path.Combine(repoRoot, "src", "FikenHjelper.Mcp", "bin", configuration, framework, "FikenHjelper.Mcp.dll");
+        Assert.True(File.Exists(serverDll), $"Fant ikke den bygde MCP-serveren: {serverDll}");
+        return serverDll;
+    }
+
     [Fact]
     public async Task ListsToolsWithCorrectAnnotations_PromptsAndInstructions()
     {
         await using var client = await StartAsync();
 
-        var tools = await client.ListToolsAsync();
+        var tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
         var names = tools.Select(t => t.Name).ToHashSet();
         foreach (var expected in new[]
                  {
@@ -270,7 +286,7 @@ public sealed class McpStdioEndToEndTests : IDisposable
             }
         }
 
-        var prompts = await client.ListPromptsAsync();
+        var prompts = await client.ListPromptsAsync(cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains(prompts, p => p.Name == "behandle_innboks");
         Assert.Contains("KJØPSUTKAST", client.ServerInstructions);
     }
@@ -280,7 +296,7 @@ public sealed class McpStdioEndToEndTests : IDisposable
     {
         await using var client = await StartAsync();
 
-        var result = await client.CallToolAsync("get_fiken_context");
+        var result = await client.CallToolAsync("get_fiken_context", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(result.IsError);
         var text = string.Join(" ", result.Content.OfType<TextContentBlock>().Select(c => c.Text));

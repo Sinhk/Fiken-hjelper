@@ -37,4 +37,13 @@ public sealed class CompanySlugOverrideConfigStore(ILocalConfigStore inner, stri
     public Task SaveEventAsync(SavedMinSpeidingEvent savedEvent, CancellationToken ct = default) => inner.SaveEventAsync(savedEvent, ct);
 
     public Task RemoveEventAsync(string projectId, CancellationToken ct = default) => inner.RemoveEventAsync(projectId, ct);
+
+    public Task<SavedEventDraftState?> LoadEventDraftStateAsync(string projectId, CancellationToken ct = default) =>
+        inner.LoadEventDraftStateAsync(projectId, ct);
+
+    public Task SaveEventDraftStateAsync(SavedEventDraftState draftState, CancellationToken ct = default) =>
+        inner.SaveEventDraftStateAsync(draftState, ct);
+
+    public Task DeleteEventDraftStateAsync(string projectId, CancellationToken ct = default) =>
+        inner.DeleteEventDraftStateAsync(projectId, ct);
 }
