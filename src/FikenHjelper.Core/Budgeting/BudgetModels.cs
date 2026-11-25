@@ -68,6 +68,9 @@ public sealed class BudgetLine
 
 public sealed record ProjectActual(long ProjectId, string Name, decimal Amount);
 
+/// <summary>Resultat og antall posteringer på resultatkonti for ett prosjekt i ett år.</summary>
+public sealed record ProjectActivity(decimal Amount, int PostingCount);
+
 public sealed record BudgetLineReport(
     string Name,
     decimal Budget,

@@ -91,13 +91,18 @@ FikenHjelper.slnx
 - Import fra Google Sheets-arket «Sammenstilling av budsjett og regnskap» (.xlsx): oversiktsarket gir poster og beløp, arkene «Regnskap ÅÅÅÅ» gir prosjektkoblinger (navn matches mot Fiken-prosjekter). Pivotene fra Google Sheets har ugyldige relasjoner som ryddes bort før lesing.
 - Sider: `/budsjett` (flere år side om side, utvidbare rader per prosjekt, kontroll per år) og `/budsjett/oppsett` (redigering, kopier fra forrige år, import).
 - Eksport: `/budsjett/eksport?year=ÅÅÅÅ&years=N` med fanene *Budsjettoversikt*, *Prosjekter* og *Kontroll*.
-- Kjent: importen matcher prosjekter på navn, så omdøpte prosjekter (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse» i Fiken) må kobles manuelt. Importen varsler om dette.
+- Importen matcher prosjekter på navn. Omdøpte prosjekter (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse» i Fiken) får forslag som bekreftes i forhåndsvisningen.
 - Gjenstår: drill-down til enkeltbilag, eventuelt kopiering av tabellen til Word/Docs, og på sikt direkte kobling mot Google Sheets-arket.
 
 **Neste forbedringer (fra brukertest og verifisering 24.11.2026):**
 - **Prosjekt fordelt på flere budsjettposter:** Et prosjekt skal kunne kobles til flere poster, med en fordelingsnøkkel (f.eks. prosent eller faste beløp) som deler prosjektets resultat mellom postene. Summen av fordelingen må gå opp i 100 %. Kontrollen for «prosjekt koblet til flere poster» blir da en kontroll av at nøkkelen er satt og går opp. Gjelder rapport, eksport og import.
 - **Mer oversiktlig kobling i «Rediger budsjett»:** Med mange prosjekter er nedtrekkslisten tung å bruke. Vurder f.eks. søk/filter, skjule avsluttede og allerede koblede prosjekter, eller en egen visning med prosjekter i én kolonne og budsjettpost i en annen.
 - **Foreslå prosjekter etter navn:** Prosjekter som matcher eller nesten matcher budsjettpostens navn, og som ikke er koblet ennå, legges øverst i listen. Samme likhetsmatching brukes i importen: når et navn ikke finnes eksakt (f.eks. «Kretsbannerkonkurranse» → «Kretskonkurranse»), foreslås nærmeste prosjekt i stedet for bare en advarsel.
+- *Status (branch `fase3-kobling`):* Forslag etter navn og ny kobling er laget, fordelingsnøkkel kommer i egen PR.
+  - Likhet: `ProjectNameMatcher` med `Fuzz.WeightedRatio` fra Raffinert.FuzzySharp (små bokstaver, uten tegnsetting, årstall beholdes). Forslag fra likhet 60, sikkert forslag fra 91 med 5 poengs avstand til nest beste. Fjorårets kobling (post med samme navn) går foran likhet.
+  - «Rediger budsjett»: velger per post med søk, forslag øverst, og prosjekter koblet til andre poster og avsluttede uten posteringer skjult. Ny fane «Prosjekter → poster» viser prosjekter med posteringer i året, med forslag til post og «Godta sikre forslag».
+  - Import: navn uten eksakt treff gir forslag som må hukes av før de kobles. Sikre forslag er huket av på forhånd.
+  - Gjenstår: justere grensene mot ekte prosjektnavn på Windows-maskinen.
 
 ---
 

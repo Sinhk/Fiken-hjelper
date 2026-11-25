@@ -1,6 +1,7 @@
 using System.Globalization;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
+using FikenHjelper.Web.Components.Budgeting;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Routing;
@@ -36,10 +37,20 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private List<FikenProject> projects = [];
     private Dictionary<long, FikenProject> projectsById = [];
+    private string companySlug = string.Empty;
+
+    // Posteringer per prosjekt og år, til forslag, beløp og fanen «Prosjekter → poster».
+    private readonly Dictionary<int, IReadOnlyDictionary<long, ProjectActivity>> activityByYear = [];
+    private bool isLoadingActivity;
+    private int activeTab;
+    private bool onlyUnlinked = true;
+    private string? projectSearch;
 
     private BudgetImportResult? importPreview;
     private string importFileName = string.Empty;
     private readonly HashSet<int> importSelection = [];
+    private readonly HashSet<ProjectImportSuggestion> acceptedSuggestions = [];
+    private readonly Dictionary<ProjectImportSuggestion, long> suggestionChoices = [];
     private bool isImporting;
 
     protected override async Task OnInitializedAsync()
@@ -59,11 +70,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         StateHasChanged();
         try
         {
-            var slug = await Reports.GetCompanySlugAsync(disposeCts.Token);
-            hasCompany = !string.IsNullOrWhiteSpace(slug);
+            companySlug = await Reports.GetCompanySlugAsync(disposeCts.Token);
+            hasCompany = !string.IsNullOrWhiteSpace(companySlug);
             if (hasCompany)
             {
-                projects = (await Reports.GetProjectsAsync(slug, ct: disposeCts.Token))
+                projects = (await Reports.GetProjectsAsync(companySlug, ct: disposeCts.Token))
                     .OrderBy(p => p.Completed)
                     .ThenBy(p => p.Name, StringComparer.Create(Nb, ignoreCase: true))
                     .ToList();
@@ -87,6 +98,63 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         finally
         {
             isLoadingProjects = false;
+        }
+
+        if (projectsLoaded && current is not null)
+        {
+            await LoadActivityAsync(current.Year);
+        }
+    }
+
+    private IReadOnlyDictionary<long, ProjectActivity>? CurrentActivity =>
+        current is null ? null : activityByYear.GetValueOrDefault(current.Year);
+
+    private IReadOnlyList<ProjectLinkRow> ProjectRows =>
+        current is null || CurrentActivity is not { } activity
+            ? []
+            : ProjectLinking.BuildProjectRows(current, data.FindYear(current.Year - 1), projects, activity);
+
+    /// <summary>Antall prosjekter med posteringer som ikke er koblet, til merket på fanen.</summary>
+    private object? UnlinkedBadge
+    {
+        get
+        {
+            if (current is null || CurrentActivity is not { } activity)
+            {
+                return null;
+            }
+
+            var linked = current.Lines.SelectMany(l => l.ProjectIds).ToHashSet();
+            var count = activity.Count(kv => kv.Value.PostingCount > 0 && !linked.Contains(kv.Key) && projectsById.ContainsKey(kv.Key));
+            return count > 0 ? count : null;
+        }
+    }
+
+    private async Task LoadActivityAsync(int year, bool refresh = false)
+    {
+        if (!projectsLoaded || year == 0 || (!refresh && activityByYear.ContainsKey(year)))
+        {
+            return;
+        }
+
+        isLoadingActivity = true;
+        StateHasChanged();
+        try
+        {
+            var entries = await Reports.GetJournalEntriesAsync(companySlug, year, refresh, disposeCts.Token);
+            activityByYear[year] = BudgetReportBuilder.SumByProject(entries);
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Klarte ikke å hente posteringer for {Year}", year);
+            activityByYear.Remove(year);
+        }
+        finally
+        {
+            isLoadingActivity = false;
         }
     }
 
@@ -116,6 +184,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         }
 
         SelectYearCore(year);
+        await LoadActivityAsync(year);
     }
 
     private async Task AddYearAsync()
@@ -134,7 +203,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         }
 
         SelectYearCore(newYear);
-        await Task.CompletedTask;
+        await LoadActivityAsync(newYear);
     }
 
     private async Task DeleteYearAsync()
@@ -198,11 +267,79 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         MarkDirty();
     }
 
-    private void SetProjects(BudgetLine line, IEnumerable<long>? ids)
+    private async Task OpenPickerAsync(BudgetLine line)
     {
-        line.ProjectIds = (ids ?? []).Distinct().ToList();
+        if (current is null)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters<ProjectPickerDialog>
+        {
+            { d => d.Line, line },
+            { d => d.Year, current },
+            { d => d.PreviousYear, data.FindYear(current.Year - 1) },
+            { d => d.Projects, projects },
+            { d => d.Activity, CurrentActivity }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await Dialogs.ShowAsync<ProjectPickerDialog>($"Prosjekter for «{line.Name}»", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: List<long> ids } && !ids.SequenceEqual(line.ProjectIds))
+        {
+            line.ProjectIds = ids;
+            MarkDirty();
+        }
+    }
+
+    /// <summary>Kobler prosjektet til posten med indeks <paramref name="lineIndex"/> (−1: ingen) og fjerner andre koblinger.</summary>
+    private void SetProjectLine(long projectId, int lineIndex)
+    {
+        if (current is null)
+        {
+            return;
+        }
+
+        foreach (var line in current.Lines)
+        {
+            line.ProjectIds.Remove(projectId);
+        }
+
+        if (lineIndex >= 0 && lineIndex < current.Lines.Count)
+        {
+            current.Lines[lineIndex].ProjectIds.Add(projectId);
+        }
+
         MarkDirty();
     }
+
+    private void AcceptStrongSuggestions()
+    {
+        if (current is null)
+        {
+            return;
+        }
+
+        var accepted = 0;
+        foreach (var row in ProjectRows.Where(r => r.Lines.Count == 0 && r.SuggestionIsStrong && r.Suggestion is not null))
+        {
+            row.Suggestion!.Item.ProjectIds.Add(row.Project.ProjectId);
+            accepted++;
+        }
+
+        if (accepted > 0)
+        {
+            MarkDirty();
+            Snackbar.Add($"Koblet {accepted} prosjekter. Husk å lagre.", Severity.Info);
+        }
+    }
+
+    private static string LineMatchText(NameMatch<BudgetLine> match) => match.Reason switch
+    {
+        NameMatchReason.Exact => "samme navn",
+        NameMatchReason.History => "koblet hit i fjor",
+        _ => $"likhet {match.Score} %"
+    };
 
     private void RemoveProject(BudgetLine line, long id)
     {
@@ -213,11 +350,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
     private string? UsedByOther(long projectId, BudgetLine line) =>
         current?.Lines.FirstOrDefault(l => !ReferenceEquals(l, line) && l.ProjectIds.Contains(projectId))?.Name;
 
+    private string? UsedByOtherTitle(long projectId, BudgetLine line) =>
+        UsedByOther(projectId, line) is { } other ? $"Også koblet til «{other}»" : null;
+
     private string ProjectName(long id) =>
         projectsById.TryGetValue(id, out var p) ? p.Name : $"Prosjekt {id}";
-
-    private string ProjectSummary(IReadOnlyList<string> selected) =>
-        selected.Count == 0 ? string.Empty : string.Join(", ", selected);
 
     private void MarkDirty() => isDirty = true;
 
@@ -282,6 +419,17 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             {
                 importSelection.Add(y.Year);
             }
+
+            acceptedSuggestions.Clear();
+            suggestionChoices.Clear();
+            foreach (var suggestion in importPreview.Suggestions)
+            {
+                suggestionChoices[suggestion] = suggestion.Candidates[0].Item.ProjectId;
+                if (suggestion.IsStrong)
+                {
+                    acceptedSuggestions.Add(suggestion);
+                }
+            }
         }
         catch (InvalidDataException ex)
         {
@@ -308,6 +456,24 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         {
             importSelection.Remove(year);
         }
+    }
+
+    private void ToggleSuggestion(ProjectImportSuggestion suggestion, bool accepted)
+    {
+        if (accepted)
+        {
+            acceptedSuggestions.Add(suggestion);
+        }
+        else
+        {
+            acceptedSuggestions.Remove(suggestion);
+        }
+    }
+
+    private void ChooseSuggestion(ProjectImportSuggestion suggestion, long projectId)
+    {
+        suggestionChoices[suggestion] = projectId;
+        acceptedSuggestions.Add(suggestion);
     }
 
     private async Task ApplyImportAsync()
@@ -341,6 +507,9 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
                 return;
             }
 
+            BudgetWorkbookImporter.ApplySuggestions(
+                importPreview,
+                acceptedSuggestions.Select(s => (s, suggestionChoices[s])));
             saved.Years.RemoveAll(y => chosen.Any(c => c.Year == y.Year));
             saved.Years.AddRange(chosen);
             await BudgetStore.SaveAsync(saved, disposeCts.Token);
@@ -348,6 +517,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             isDirty = false;
             importPreview = null;
             SelectYearCore(chosen.Max(y => y.Year));
+            await LoadActivityAsync(selectedYear);
             Snackbar.Add($"Importerte {chosen.Count} år.", Severity.Success);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

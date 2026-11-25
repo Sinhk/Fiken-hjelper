@@ -119,6 +119,26 @@ public static class BudgetReportBuilder
     }
 
     /// <summary>
+    /// Resultat og antall posteringer per prosjekt, med samme regler som rapporten
+    /// (resultatkonti, første prosjekt på linjen). Prosjekter uten posteringer er ikke med.
+    /// </summary>
+    public static IReadOnlyDictionary<long, ProjectActivity> SumByProject(IEnumerable<FikenJournalEntry> journalEntries)
+    {
+        ArgumentNullException.ThrowIfNull(journalEntries);
+        var result = new Dictionary<long, ProjectActivity>();
+        foreach (var line in journalEntries.SelectMany(e => e.Lines ?? []))
+        {
+            if (TryGetResultAmount(line, out _, out var amount) && PrimaryProjectId(line) is { } projectId)
+            {
+                var current = result.GetValueOrDefault(projectId) ?? new ProjectActivity(0, 0);
+                result[projectId] = new ProjectActivity(current.Amount + amount, current.PostingCount + 1);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Den ene felles regelen for resultatbidrag fra en posteringslinje. Gjelder bare resultatkonti
     /// <see cref="FirstResultAccount"/>–<see cref="LastResultAccount"/>. Fiken oppgir debet positivt og
     /// kredit negativt i øre, så resultatbidraget i kroner er <c>−amount / 100</c>
