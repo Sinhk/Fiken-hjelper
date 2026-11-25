@@ -101,4 +101,20 @@ public sealed record FikenJournalEntry(
     [property: JsonPropertyName("date")] string? Date,
     [property: JsonPropertyName("lines")] IReadOnlyList<FikenJournalEntryLine>? Lines);
 
+/// <summary>Kundefaktura fra <c>GET /invoices</c>. Beløp i øre.</summary>
+public sealed record FikenInvoice(
+    [property: JsonPropertyName("invoiceId")] long InvoiceId,
+    [property: JsonPropertyName("invoiceNumber")] long? InvoiceNumber,
+    [property: JsonPropertyName("issueDate")] string? IssueDate,
+    [property: JsonPropertyName("dueDate")] string? DueDate,
+    [property: JsonPropertyName("gross")] long? Gross,
+    [property: JsonPropertyName("grossInNok")] long? GrossInNok,
+    [property: JsonPropertyName("orderReference")] string? OrderReference,
+    [property: JsonPropertyName("kid")] string? Kid,
+    [property: JsonPropertyName("customer")] FikenContact? Customer,
+    [property: JsonPropertyName("sale")] FikenSale? Sale,
+    [property: JsonPropertyName("project")]
+    [property: JsonConverter(typeof(FikenProjectRefListConverter))]
+    IReadOnlyList<FikenProjectRef>? Projects);
+
 public sealed record CreatedResourceResult(long? Id, Uri? Location);

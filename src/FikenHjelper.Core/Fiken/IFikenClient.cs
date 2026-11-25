@@ -45,4 +45,9 @@ public interface IFikenClient
         DateOnly from,
         DateOnly to,
         CancellationToken ct = default);
+
+    /// <summary>Henter kundefakturaer som ikke er fullt betalt (<c>GET /invoices?settled=false</c>).</summary>
+    Task<IReadOnlyList<FikenInvoice>> GetUnsettledInvoicesAsync(
+        string companySlug,
+        CancellationToken ct = default);
 }

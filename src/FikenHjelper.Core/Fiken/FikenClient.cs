@@ -143,6 +143,16 @@ public sealed partial class FikenClient : IFikenClient
         return await GetAllPagesAsync<FikenJournalEntry>(path, auth, ct);
     }
 
+    public async Task<IReadOnlyList<FikenInvoice>> GetUnsettledInvoicesAsync(
+        string companySlug,
+        CancellationToken ct = default)
+    {
+        ValidateSlug(companySlug);
+        var auth = await ResolveAuthAsync(null, ct);
+        var path = $"companies/{Uri.EscapeDataString(companySlug)}/invoices?settled=false";
+        return await GetAllPagesAsync<FikenInvoice>(path, auth, ct);
+    }
+
     private async Task<AuthResolution> ResolveAuthAsync(string? overrideToken, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(overrideToken))

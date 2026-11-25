@@ -160,8 +160,35 @@ FikenHjelper.slnx
 
 ---
 
-## Fase 6 – Idébank for videre utvidelser
-- **Utlegg og reiseregninger fra frivillige:** Tolke kvitteringer/skjemaer via AI/MCP og klargjøre kjøpsutkast per prosjekt.
-- **Vipps- og bankavstemming:** Matche oppgjørsfiler fra Vipps mot deltakerlister fra Min speiding og åpne salg i Fiken.
-- **Kvalitetssjekk før styremøte og årsoppgjør:** Sjekkliste over forfalte fakturaer, bilag uten prosjekt og åpne poster.
-- **Tilskuddsgrunnlag:** Ferdige oppsummeringer for Frifond, momskompensasjon og fylkeskommunale tilskudd.
+## Fase 6 – Idébank for videre utvidelser *(Prioritert; kvalitetssjekk v1 under arbeid i branch `fase6-ideer`)*
+**Mål:** Små verktøy som sparer kassereren tid før styremøter, årsoppgjør og tilskuddssøknader, uten å gjøre det samme som Fase 2–5.
+
+**Funn i Fiken API v2 som styrer prioriteringen:**
+- API-et har ingen kontoutskrift eller banktransaksjoner, bare saldo per bankkonto (`GET /bankBalances`). Bankavstemming må bygge på eksportfiler.
+- Betaling på salg (`POST /sales/{id}/payments`) føres direkte og er ikke et utkast. Avstemming kan derfor bare lage en rapport med forslag.
+- Åpne fakturaer, salg og kjøp (`invoices?settled=false`, `sales?settled=false`, `purchases?paid=false`) og ubrukte bilag i innboksen (`inbox?status=unused`) kan hentes bare med lesekall.
+
+**Prioritert rekkefølge:**
+1. **Kvalitetssjekk før styremøte og årsoppgjør** *(først, størrelse S)*
+   - v1 (valgt av kasserer): ubetalte kundefakturaer, åpne salg (annet salg) og ubetalte kjøp, med forfalt/åpen per valgt dato, summer og kopierbar tabell for Word/Google Docs.
+   - Logikken ligger i `FikenHjelper.Core/QualityCheck` (`QualityCheckService`, `QualityCheckRules`, `QualityCheckTextFormatter`) og bruker bare GET-kall. Salg og kjøp hentes med Fase 4s `IFikenPurchasingClient` og samme modeller (`FikenSale`, `FikenPurchase`).
+   - Overlapp med Fase 4: `AnomalyFinder.OverduePurchases`/`OverdueSales` i `find_accounting_anomalies` gjør en enklere variant. Senere kan de bruke `QualityCheckRules`, så kreditsaldoer, valuta og fakturasalg håndteres likt.
+   - Neste steg: siden `/kvalitetssjekk` med MudBlazor (Fase 3 og MudBlazor er nå i `main`).
+   - Senere: ubrukte bilag i innboksen, fakturautkast som aldri ble sendt, bank i Fiken mot banksaldo, og Fase 3s «bilag uten prosjekt» og «prosjekter uten budsjettpost» (gjenbrukes, ikke skrevet på nytt).
+   - Kreditsaldoer (overbetaling, kreditnota som ikke er motregnet) vises med egen status og trekkes fra summen. Poster der beløpet ikke kan regnes ut sikkert (fremmed valuta, fakturasalg uten treff), merkes «Sjekk» og holdes utenfor summen.
+   - Tabulatorseparert tekst bruker tall uten tusenskille (`1234,50`), så regneark leser dem som tall. Markdown bruker `1 234,50`.
+   - *Begrensning:* listen viser åpne poster og utestående beløp slik de er i Fiken i dag. En post som ble betalt etter valgt dato, kommer ikke med, og delbetalinger etter valgt dato er trukket fra beløpet. Dette må stå tydelig på siden.
+2. **Tilskuddsgrunnlag** *(størrelse S–M per ordning)*
+   - Aktuelt: fylkeskommunalt tilskudd og kommunale tilskudd eller stiftelser. Frifond og momskompensasjon er ikke aktuelle nå.
+   - Bygger på Fase 3s summer per konto og prosjekt og xlsx-eksporten derfra.
+3. **Utlegg og reiseregninger fra frivillige** *(størrelse M–L, mest i Fase 4)*
+   - Innboks, kontoforslag og kjøpsutkast med vedlegg finnes allerede i MCP-serveren (Fase 4). Fase 6 lager eventuelt bare et enkelt skjema senere, for frivillige som ikke bruker AI-verktøy.
+4. **Betalings- og bankavstemming** *(størrelse M, sist)*
+   - Kretsen har ikke egen Vipps. Zettle ble brukt på leir sommeren 2026.
+   - Første steg uten fil: ubetalte fakturaer per arrangement (orderReference/prosjekt fra Fase 1), som delvis dekkes av kvalitetssjekken.
+   - Import av Zettle-eksport når neste leir nærmer seg og filimporten fra Fase 2 finnes.
+
+**Åpne spørsmål:**
+- Hvordan føres Zettle-salg i Fiken i dag? Er det ett samlebilag per utbetaling?
+- Hvilke kommuner og stiftelser søker kretsen hos, når er fristene, og hvilke tall krever hver søknad eller rapport?
+- Hvordan kommer utlegg fra frivillige inn i dag (e-post til Fiken-innboksen, skjema eller papir)?
