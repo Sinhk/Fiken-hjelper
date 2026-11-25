@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FikenHjelper.Core\FikenHjelper.Core.csproj" />
+    <ProjectReference Include="..\FikenHjelper.ServiceDefaults\FikenHjelper.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>
