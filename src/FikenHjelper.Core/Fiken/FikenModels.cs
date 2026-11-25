@@ -86,4 +86,19 @@ public sealed record FikenInvoiceDraftSummary(
     [property: JsonPropertyName("projectId")] long? ProjectId,
     [property: JsonPropertyName("customers")] IReadOnlyList<FikenContact>? Customers);
 
+public sealed record FikenJournalEntryLine(
+    [property: JsonPropertyName("amount")] long Amount,
+    [property: JsonPropertyName("account")] string? Account,
+    [property: JsonPropertyName("vatCode")] string? VatCode,
+    [property: JsonPropertyName("projectId")] IReadOnlyList<long>? ProjectId);
+
+public sealed record FikenJournalEntry(
+    [property: JsonPropertyName("journalEntryId")] long JournalEntryId,
+    [property: JsonPropertyName("transactionId")] long? TransactionId,
+    [property: JsonPropertyName("transactionType")] string? TransactionType,
+    [property: JsonPropertyName("journalEntryNumber")] int? JournalEntryNumber,
+    [property: JsonPropertyName("description")] string? Description,
+    [property: JsonPropertyName("date")] string? Date,
+    [property: JsonPropertyName("lines")] IReadOnlyList<FikenJournalEntryLine>? Lines);
+
 public sealed record CreatedResourceResult(long? Id, Uri? Location);

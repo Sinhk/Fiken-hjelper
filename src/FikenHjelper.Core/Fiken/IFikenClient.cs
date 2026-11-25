@@ -38,4 +38,11 @@ public interface IFikenClient
         string companySlug,
         FikenInvoiceDraftRequest request,
         CancellationToken ct = default);
+
+    /// <summary>Henter alle posteringer (journal entries) med dato i [from, to], inkludert linjer med konto og prosjekt.</summary>
+    Task<IReadOnlyList<FikenJournalEntry>> GetJournalEntriesAsync(
+        string companySlug,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken ct = default);
 }

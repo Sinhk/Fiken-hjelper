@@ -1,0 +1,29 @@
+@* MudBlazor-providere. Legges øverst i hver interaktive side som bruker MudBlazor,
+   siden appen bruker interaktivitet per side og layouten er statisk. *@
+<MudThemeProvider Theme="Theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+@code {
+    private static readonly MudTheme Theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#194d36",
+            Secondary = "#2f7d57",
+            Success = "#2f7d57",
+            AppbarBackground = "#194d36",
+            Background = "#f5f7f5",
+            TextPrimary = "#1c2420",
+            TextSecondary = "#4b5a52"
+        },
+        Typography = new Typography
+        {
+            Default = new DefaultTypography
+            {
+                FontFamily = ["system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"]
+            }
+        }
+    };
+}

@@ -1,0 +1,425 @@
+@page "/budsjett"
+@rendermode InteractiveServer
+@using System.Globalization
+@implements IDisposable
+@inject BudgetReportService Reports
+@inject IBudgetStore BudgetStore
+@inject ILogger<Budget> Logger
+
+<PageTitle>Budsjett og regnskap – Fiken-hjelper</PageTitle>
+<MudProviders />
+
+<MudStack Spacing="4">
+    <MudPaper Class="pa-4" Outlined>
+        <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <MudText Typo="Typo.h5" HtmlTag="h1">Budsjett og regnskap</MudText>
+            <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                <MudSelect T="int" Label="Til og med" Value="lastYear" ValueChanged="HandleLastYearChanged"
+                           Dense Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="isLoading" Style="min-width: 7rem">
+                    @foreach (var y in selectableYears)
+                    {
+                        <MudSelectItem Value="y">@y</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="int" Label="Antall år" Value="yearCount" ValueChanged="HandleYearCountChanged"
+                           Dense Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="isLoading" Style="min-width: 6rem">
+                    @for (var n = 1; n <= 5; n++)
+                    {
+                        var value = n;
+                        <MudSelectItem Value="value">@value</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="() => LoadAsync(refresh: true)" Disabled="isLoading">
+                    Oppdater fra Fiken
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
+                           Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="isLoading">
+                    Last ned Excel
+                </MudButton>
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit" Href="budsjett/oppsett">
+                    Rediger budsjett
+                </MudButton>
+            </MudStack>
+        </MudStack>
+
+        @if (isLoading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
+        }
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+        }
+
+        @if (!hasCompany)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                Ingen Fiken-foretak er valgt, så rapporten viser bare budsjett og manuelle tall.
+                Koble til Fiken under <MudLink Href="innstillinger">Innstillinger</MudLink>.
+            </MudAlert>
+        }
+
+        @if (comparison is null)
+        {
+            @if (string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <MudText Color="Color.Secondary">
+                    @(isLoading ? "Henter posteringer fra Fiken. Det kan ta litt tid første gang …" : "Laster …")
+                </MudText>
+            }
+        }
+        else if (comparison.Rows.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">
+                Det finnes ikke noe budsjett for disse årene ennå. Gå til
+                <MudLink Href="budsjett/oppsett">Rediger budsjett</MudLink> for å importere fra regnearket eller legge inn poster.
+            </MudAlert>
+        }
+        else
+        {
+            var main = comparison.Reports[comparison.Years[0]];
+            <MudGrid Spacing="2" Class="mb-3">
+                <MudItem xs="6" md="3">
+                    <MudPaper Outlined Class="pa-3">
+                        <MudText Typo="Typo.caption">Budsjettert resultat @main.Year</MudText>
+                        <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(main.TotalBudget)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudPaper Outlined Class="pa-3">
+                        <MudText Typo="Typo.caption">Regnskap @main.Year</MudText>
+                        <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(main.TotalActual)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudPaper Outlined Class="pa-3">
+                        <MudText Typo="Typo.caption">Avvik</MudText>
+                        <MudText Typo="Typo.h6" Class="tabular-nums" Color="VarianceColor(main.TotalVariance)">@Kr(main.TotalVariance)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudPaper Outlined Class="pa-3">
+                        <MudText Typo="Typo.caption">Kontrollpunkter @main.Year</MudText>
+                        <MudText Typo="Typo.h6" Color="@(!main.HasFikenData ? Color.Default : ControlIssueCount(main) == 0 ? Color.Success : Color.Warning)">
+                            @(main.HasFikenData ? ControlIssueCount(main).ToString(Nb) : "–")
+                        </MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudSimpleTable Dense Hover Bordered FixedHeader Style="overflow-x: auto" Class="budget-table">
+                <thead>
+                    <tr>
+                        <th rowspan="2">Budsjettpost</th>
+                        @foreach (var year in comparison.Years)
+                        {
+                            <th colspan="3" class="text-center">@year</th>
+                        }
+                    </tr>
+                    <tr>
+                        @foreach (var year in comparison.Years)
+                        {
+                            <th class="fh-num-col">Budsjett</th>
+                            <th class="fh-num-col">Regnskap</th>
+                            <th class="fh-num-col">Avvik</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in comparison.Rows)
+                    {
+                        var isOpen = expanded.Contains(row.Name);
+                        <tr @key="row.Name">
+                            <td>
+                                <MudButton Variant="Variant.Text" Size="Size.Small" Class="text-none justify-start px-1"
+                                           StartIcon="@(isOpen ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                           OnClick="() => Toggle(row.Name)" aria-expanded="@(isOpen ? "true" : "false")">
+                                    @row.Name
+                                </MudButton>
+                            </td>
+                            @foreach (var year in comparison.Years)
+                            {
+                                var line = row.ByYear.GetValueOrDefault(year);
+                                if (line is null)
+                                {
+                                    <td class="fh-num-col mud-text-disabled">–</td>
+                                    <td class="fh-num-col mud-text-disabled">–</td>
+                                    <td class="fh-num-col mud-text-disabled">–</td>
+                                }
+                                else
+                                {
+                                    <td class="fh-num-col tabular-nums">@Kr(line.Budget)</td>
+                                    <td class="fh-num-col tabular-nums" title="@(line.IsManualActual ? "Manuelt tall" : null)">
+                                        @Kr(line.Actual)@(line.IsManualActual ? "*" : "")
+                                    </td>
+                                    <td class="fh-num-col tabular-nums @VarianceClass(line.Variance)" title="@Pct(line.VariancePercent)">@Kr(line.Variance)</td>
+                                }
+                            }
+                        </tr>
+                        @if (isOpen)
+                        {
+                            <tr>
+                                <td colspan="@(1 + comparison.Years.Count * 3)" class="budget-detail">
+                                    <MudStack Row Wrap="Wrap.Wrap" Spacing="6" Class="py-1 ps-8">
+                                        @foreach (var year in comparison.Years)
+                                        {
+                                            var line = row.ByYear.GetValueOrDefault(year);
+                                            <div>
+                                                <MudText Typo="Typo.subtitle2">@year</MudText>
+                                                @if (line is null)
+                                                {
+                                                    <MudText Typo="Typo.body2" Color="Color.Secondary">Ikke budsjettert</MudText>
+                                                }
+                                                else if (line.IsManualActual)
+                                                {
+                                                    <MudText Typo="Typo.body2" Color="Color.Secondary">Manuelt tall</MudText>
+                                                }
+                                                else if (line.Projects.Count == 0)
+                                                {
+                                                    <MudText Typo="Typo.body2" Color="Color.Secondary">Ingen prosjekter koblet</MudText>
+                                                }
+                                                else
+                                                {
+                                                    @foreach (var p in line.Projects)
+                                                    {
+                                                        <MudStack Row Justify="Justify.SpaceBetween" Spacing="4">
+                                                            <MudText Typo="Typo.body2">@p.Name</MudText>
+                                                            <MudText Typo="Typo.body2" Class="tabular-nums">@Kr(p.Amount)</MudText>
+                                                        </MudStack>
+                                                    }
+                                                }
+                                            </div>
+                                        }
+                                    </MudStack>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+                <tfoot>
+                    <tr class="budget-total">
+                        <th scope="row">Resultat</th>
+                        @foreach (var year in comparison.Years)
+                        {
+                            var r = comparison.Reports[year];
+                            <td class="fh-num-col tabular-nums">@Kr(r.TotalBudget)</td>
+                            <td class="fh-num-col tabular-nums">@Kr(r.TotalActual)</td>
+                            <td class="fh-num-col tabular-nums @VarianceClass(r.TotalVariance)">@Kr(r.TotalVariance)</td>
+                        }
+                    </tr>
+                </tfoot>
+            </MudSimpleTable>
+            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">
+                Avvik = regnskap − budsjett. Positivt avvik er gunstig. * = manuelt registrert tall. Klikk på en post for å se prosjektene.
+            </MudText>
+        }
+    </MudPaper>
+
+    @if (comparison is not null && comparison.Rows.Count > 0)
+    {
+        @foreach (var year in comparison.Years)
+        {
+            var report = comparison.Reports[year];
+            if (!report.HasFikenData)
+            {
+                continue;
+            }
+
+            <MudPaper Class="pa-4" Outlined>
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Kontroll @year</MudText>
+
+                <MudSimpleTable Dense Style="max-width: 32rem" Class="mb-3">
+                    <tbody>
+                        <tr>
+                            <td>Resultat i Fiken (konto 3000–8799)</td>
+                            <td class="fh-num-col tabular-nums"><strong>@Kr(report.FikenResult ?? 0)</strong></td>
+                        </tr>
+                        <tr>
+                            <td>Fordelt på budsjettposter</td>
+                            <td class="fh-num-col tabular-nums">@Kr(report.Lines.Where(l => !l.IsManualActual).Sum(l => l.Actual))</td>
+                        </tr>
+                        <tr>
+                            <td>Prosjekter uten budsjettpost</td>
+                            <td class="fh-num-col tabular-nums">@Kr(report.UnlinkedTotal)</td>
+                        </tr>
+                        <tr>
+                            <td>Posteringer uten prosjekt</td>
+                            <td class="fh-num-col tabular-nums">@Kr(report.UnallocatedTotal)</td>
+                        </tr>
+                    </tbody>
+                </MudSimpleTable>
+
+                @if (ControlIssueCount(report) == 0)
+                {
+                    <MudAlert Severity="Severity.Success">Alt er fordelt. Ingen posteringer eller prosjekter faller utenfor budsjettet.</MudAlert>
+                }
+
+                @if (report.UnlinkedProjects.Count > 0)
+                {
+                    <MudAlert Severity="Severity.Warning" Class="mb-2">
+                        <MudText Typo="Typo.body2"><strong>Prosjekter med posteringer som ikke er koblet til noen budsjettpost:</strong></MudText>
+                        <ul class="mb-1">
+                            @foreach (var p in report.UnlinkedProjects)
+                            {
+                                <li>@p.Name: <span class="tabular-nums">@Kr(p.Amount)</span></li>
+                            }
+                        </ul>
+                        Koble dem under <MudLink Href="@($"budsjett/oppsett?year={year}")">Rediger budsjett</MudLink>.
+                    </MudAlert>
+                }
+
+                @if (report.ProjectsLinkedToSeveralLines.Count > 0)
+                {
+                    <MudAlert Severity="Severity.Warning" Class="mb-2">
+                        Disse prosjektene er koblet til flere budsjettposter og telles dobbelt:
+                        @string.Join(", ", report.ProjectsLinkedToSeveralLines.Select(p => p.Name))
+                    </MudAlert>
+                }
+
+                @if (report.PostingsWithSeveralProjects > 0)
+                {
+                    <MudAlert Severity="Severity.Info" Class="mb-2">
+                        @report.PostingsWithSeveralProjects posteringslinje(r) har flere prosjekter. Bare det første prosjektet er brukt.
+                    </MudAlert>
+                }
+
+                @if (report.UnallocatedPostings.Count > 0)
+                {
+                    <MudExpansionPanels Outlined Class="mt-2">
+                        <MudExpansionPanel Text="@($"{report.UnallocatedPostings.Count} posteringer på resultatkonti uten prosjekt ({Kr(report.UnallocatedTotal)})")">
+                            <MudDataGrid T="UnallocatedPosting" Items="report.UnallocatedPostings" Dense Hover Filterable
+                                         FilterMode="DataGridFilterMode.ColumnFilterRow" SortMode="SortMode.Single" RowsPerPage="25">
+                                <Columns>
+                                    <PropertyColumn Property="p => p.JournalEntryNumber" Title="Bilag" />
+                                    <PropertyColumn Property="p => p.Date" Title="Dato" />
+                                    <PropertyColumn Property="p => p.Account" Title="Konto" />
+                                    <PropertyColumn Property="p => p.Description" Title="Beskrivelse" />
+                                    <PropertyColumn Property="p => p.Amount" Title="Beløp" Format="N2" Culture="Nb"
+                                                    HeaderClass="fh-num-col" CellClass="fh-num-col tabular-nums" Filterable="false" />
+                                </Columns>
+                                <PagerContent>
+                                    <MudDataGridPager T="UnallocatedPosting" />
+                                </PagerContent>
+                            </MudDataGrid>
+                        </MudExpansionPanel>
+                    </MudExpansionPanels>
+                }
+            </MudPaper>
+        }
+    }
+</MudStack>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly Dictionary<string, object> downloadAttributes = new()
+    {
+        ["download"] = "",
+        ["data-enhance-nav"] = "false"
+    };
+
+    private BudgetComparison? comparison;
+    private List<int> selectableYears = [];
+    private int lastYear = DateTime.Today.Year;
+    private int yearCount = 3;
+    private bool hasCompany = true;
+    private bool isLoading;
+    private string? errorMessage;
+    private readonly HashSet<string> expanded = new(StringComparer.CurrentCultureIgnoreCase);
+    private readonly CancellationTokenSource disposeCts = new();
+
+    private string ExportUrl => $"budsjett/eksport?year={lastYear}&years={yearCount}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var budget = await BudgetStore.LoadAsync(disposeCts.Token);
+        var budgetYears = budget.Years.Select(y => y.Year).ToList();
+        selectableYears = budgetYears
+            .Append(DateTime.Today.Year)
+            .Distinct()
+            .OrderByDescending(y => y)
+            .ToList();
+        lastYear = budgetYears.Count > 0 ? budgetYears.Max() : DateTime.Today.Year;
+
+        if (RendererInfo.IsInteractive)
+        {
+            await LoadAsync(refresh: false);
+        }
+    }
+
+    private async Task LoadAsync(bool refresh)
+    {
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+        try
+        {
+            hasCompany = !string.IsNullOrWhiteSpace(await Reports.GetCompanySlugAsync(disposeCts.Token));
+            comparison = await Reports.BuildComparisonAsync(
+                Enumerable.Range(0, yearCount).Select(i => lastYear - i),
+                refresh,
+                disposeCts.Token);
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+        }
+        catch (FikenApiException ex)
+        {
+            Logger.LogWarning(ex, "Fiken-feil ved henting av budsjettrapport");
+            errorMessage = ex.UserMessage;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å bygge budsjettrapport");
+            errorMessage = "Noe gikk galt under henting av rapporten. Se loggen for detaljer.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task HandleLastYearChanged(int year)
+    {
+        lastYear = year;
+        await LoadAsync(refresh: false);
+    }
+
+    private async Task HandleYearCountChanged(int count)
+    {
+        yearCount = Math.Clamp(count, 1, 5);
+        await LoadAsync(refresh: false);
+    }
+
+    private void Toggle(string name)
+    {
+        if (!expanded.Remove(name))
+        {
+            expanded.Add(name);
+        }
+    }
+
+    private static int ControlIssueCount(BudgetYearReport r) =>
+        !r.HasFikenData
+            ? 0
+            : r.UnlinkedProjects.Count
+              + r.ProjectsLinkedToSeveralLines.Count
+              + (r.UnallocatedPostings.Count > 0 ? 1 : 0);
+
+    private static string Kr(decimal value) => value.ToString("N0", Nb);
+
+    private static string? Pct(decimal? value) => value?.ToString("P0", Nb);
+
+    private static string VarianceClass(decimal variance) =>
+        variance < 0 ? "mud-error-text" : variance > 0 ? "mud-success-text" : string.Empty;
+
+    private static Color VarianceColor(decimal variance) =>
+        variance < 0 ? Color.Error : variance > 0 ? Color.Success : Color.Default;
+
+    public void Dispose()
+    {
+        disposeCts.Cancel();
+        disposeCts.Dispose();
+    }
+}

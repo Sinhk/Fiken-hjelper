@@ -1,15 +1,18 @@
+using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.MinSpeiding;
 using FikenHjelper.Web.Auth;
 using FikenHjelper.Web.Components;
 using Microsoft.AspNetCore.DataProtection;
+using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.AddMudServices();
 
 var dataDirOverride = builder.Configuration["FikenHjelper:DataDirectory"];
 if (!string.IsNullOrWhiteSpace(dataDirOverride))
@@ -31,6 +34,11 @@ builder.Services.AddSingleton<ILocalConfigStore>(sp =>
         FikenOAuthClientSecret: config["Fiken:ClientSecret"]);
     return new LocalConfigStore(defaults, dataDirOverride);
 });
+
+builder.Services.AddSingleton<IBudgetStore>(sp =>
+    new JsonBudgetStore(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
+builder.Services.AddSingleton<FikenDataCache>();
+builder.Services.AddScoped<BudgetReportService>();
 
 builder.Services.AddSingleton<FikenOAuthStateStore>();
 builder.Services.AddHttpClient(FikenOAuthService.HttpClientName, client =>
@@ -98,6 +106,7 @@ app.MapGet("/fiken/oauth/callback", async (
     string? error,
     FikenOAuthStateStore stateStore,
     IFikenOAuthService oauthService,
+    FikenDataCache fikenCache,
     ILogger<Program> logger,
     CancellationToken ct) =>
 {
@@ -125,6 +134,7 @@ app.MapGet("/fiken/oauth/callback", async (
             pending.RedirectUri,
             state,
             ct);
+        fikenCache.Clear();
         return Results.Redirect("/innstillinger?oauth=connected");
     }
     catch (FikenApiException ex)
@@ -141,6 +151,47 @@ app.MapGet("/fiken/oauth/callback", async (
         logger.LogError(ex, "Unexpected error during Fiken OAuth callback");
         return Results.Redirect("/innstillinger?oauthError=token_exchange_failed");
     }
+});
+
+app.MapGet("/budsjett/eksport", async (
+    int? year,
+    int? years,
+    BudgetReportService reports,
+    ILogger<BudgetReportService> logger,
+    CancellationToken ct) =>
+{
+    var lastYear = year ?? DateTime.Today.Year;
+    if (lastYear is < BudgetData.MinYear or > BudgetData.MaxYear)
+    {
+        return Results.BadRequest($"Året må være mellom {BudgetData.MinYear} og {BudgetData.MaxYear}.");
+    }
+
+    var count = Math.Clamp(years ?? 3, 1, Math.Min(10, lastYear - BudgetData.MinYear + 1));
+    BudgetComparison comparison;
+    try
+    {
+        comparison = await reports.BuildComparisonAsync(
+            Enumerable.Range(0, count).Select(i => lastYear - i),
+            refresh: false,
+            ct);
+    }
+    catch (FikenApiException ex)
+    {
+        return Results.Problem(ex.UserMessage, statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
+    }
+    catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+    {
+        logger.LogWarning(ex, "Fiken svarte ikke ved eksport av budsjett");
+        return Results.Problem("Fiken svarte ikke. Prøv igjen om litt.", statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
+    }
+
+    var bytes = BudgetWorkbookExporter.Export(comparison);
+    var firstYear = lastYear - count + 1;
+    var period = firstYear == lastYear ? $"{lastYear}" : $"{firstYear}-{lastYear}";
+    return Results.File(
+        bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        $"Budsjett og regnskap {period}.xlsx");
 });
 
 app.MapStaticAssets();
