@@ -140,18 +140,18 @@ public sealed class ScoutnetAnswerValueConverter : JsonConverter<RawAnswerValue?
                 return null;
 
             case JsonTokenType.String:
-            {
-                var str = reader.GetString() ?? string.Empty;
-                return new RawAnswerValue(str, string.IsNullOrEmpty(str) ? [] : [str]);
-            }
+                {
+                    var str = reader.GetString() ?? string.Empty;
+                    return new RawAnswerValue(str, string.IsNullOrEmpty(str) ? [] : [str]);
+                }
 
             case JsonTokenType.Number:
-            {
-                var numStr = reader.TryGetInt64(out var l)
-                    ? l.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture);
-                return new RawAnswerValue(numStr, [numStr]);
-            }
+                {
+                    var numStr = reader.TryGetInt64(out var l)
+                        ? l.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return new RawAnswerValue(numStr, [numStr]);
+                }
 
             case JsonTokenType.True:
                 return new RawAnswerValue("true", ["true"]);
@@ -160,35 +160,35 @@ public sealed class ScoutnetAnswerValueConverter : JsonConverter<RawAnswerValue?
                 return new RawAnswerValue("false", ["false"]);
 
             case JsonTokenType.StartArray:
-            {
-                var items = new List<string>();
-                while (reader.Read())
                 {
-                    if (reader.TokenType == JsonTokenType.EndArray)
+                    var items = new List<string>();
+                    while (reader.Read())
                     {
-                        break;
+                        if (reader.TokenType == JsonTokenType.EndArray)
+                        {
+                            break;
+                        }
+
+                        var item = reader.TokenType switch
+                        {
+                            JsonTokenType.String => reader.GetString(),
+                            JsonTokenType.Number => reader.TryGetInt64(out var l)
+                                ? l.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            JsonTokenType.True => "true",
+                            JsonTokenType.False => "false",
+                            JsonTokenType.Null => null,
+                            _ => null
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(item))
+                        {
+                            items.Add(item.Trim());
+                        }
                     }
 
-                    var item = reader.TokenType switch
-                    {
-                        JsonTokenType.String => reader.GetString(),
-                        JsonTokenType.Number => reader.TryGetInt64(out var l)
-                            ? l.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                            : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        JsonTokenType.True => "true",
-                        JsonTokenType.False => "false",
-                        JsonTokenType.Null => null,
-                        _ => null
-                    };
-
-                    if (!string.IsNullOrWhiteSpace(item))
-                    {
-                        items.Add(item.Trim());
-                    }
+                    return new RawAnswerValue(string.Join(", ", items), items);
                 }
-
-                return new RawAnswerValue(string.Join(", ", items), items);
-            }
 
             default:
                 reader.Skip();
@@ -268,13 +268,13 @@ public sealed class FlexibleBoolConverter : JsonConverter<bool>
             case JsonTokenType.Number:
                 return reader.TryGetInt64(out var n) && n != 0;
             case JsonTokenType.String:
-            {
-                var str = (reader.GetString() ?? string.Empty).Trim();
-                return str.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    || str.Equals("1", StringComparison.Ordinal)
-                    || str.Equals("yes", StringComparison.OrdinalIgnoreCase)
-                    || str.Equals("ja", StringComparison.OrdinalIgnoreCase);
-            }
+                {
+                    var str = (reader.GetString() ?? string.Empty).Trim();
+                    return str.Equals("true", StringComparison.OrdinalIgnoreCase)
+                        || str.Equals("1", StringComparison.Ordinal)
+                        || str.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                        || str.Equals("ja", StringComparison.OrdinalIgnoreCase);
+                }
             default:
                 reader.Skip();
                 return false;
