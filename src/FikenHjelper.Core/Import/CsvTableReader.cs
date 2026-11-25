@@ -31,7 +31,7 @@ public static class CsvTableReader
     {
         text = text.TrimStart('﻿');
         var delimiter = DetectDelimiter(text);
-        var (records, _) = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true);
+        var (records, _, _) = ReadRecords(text, delimiter, maxRecords: null, throwOnBadData: true);
 
         // Første ikke-tomme rad er overskriften.
         if (records.Count == 0)
@@ -76,18 +76,19 @@ public static class CsvTableReader
     }
 
     /// <summary>
-    /// Velger skilletegnet for de første radene: færrest felt med ødelagte anførselstegn først (et komma-skilt felt
-    /// som «"Allergi; diett"» blir ødelagt hvis det leses med semikolon), deretter flest rader med samme antall
-    /// kolonner som overskriften (minst to), deretter flest kolonner, deretter semikolon før komma før tab.
+    /// Velger skilletegnet for de første radene: færrest rader med ødelagt sitering først (et komma-skilt felt
+    /// som «"Allergi; diett"» blir ødelagt hvis det leses med semikolon), deretter færrest rader med løse
+    /// anførselstegn (som i «12" panne»), deretter flest rader med samme antall kolonner som overskriften
+    /// (minst to), deretter flest kolonner, deretter semikolon før komma før tab.
     /// </summary>
     internal static string DetectDelimiter(string text)
     {
         var best = ",";
-        var bestScore = (BadFields: int.MaxValue, Consistent: -1, Columns: 0);
+        var bestScore = (BrokenRecords: int.MaxValue, StrayQuoteRecords: int.MaxValue, Consistent: -1, Columns: 0);
 
         foreach (var candidate in CandidateDelimiters)
         {
-            var (records, badFields) = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
+            var (records, brokenRecords, strayQuoteRecords) = ReadRecords(text, candidate, DelimiterSampleRecords, throwOnBadData: false);
             if (records.Count == 0 || records[0].Length < 2)
             {
                 continue;
@@ -95,10 +96,8 @@ public static class CsvTableReader
 
             var columns = records[0].Length;
             var consistent = records.Count(r => r.Length == columns);
-            var score = (BadFields: badFields, Consistent: consistent, Columns: columns);
-            if (score.BadFields < bestScore.BadFields
-                || (score.BadFields == bestScore.BadFields && score.Consistent > bestScore.Consistent)
-                || (score.BadFields == bestScore.BadFields && score.Consistent == bestScore.Consistent && score.Columns > bestScore.Columns))
+            var score = (BrokenRecords: brokenRecords, StrayQuoteRecords: strayQuoteRecords, Consistent: consistent, Columns: columns);
+            if (IsBetter(score, bestScore))
             {
                 best = candidate;
                 bestScore = score;
@@ -106,25 +105,62 @@ public static class CsvTableReader
         }
 
         return best;
+
+        static bool IsBetter(
+            (int BrokenRecords, int StrayQuoteRecords, int Consistent, int Columns) score,
+            (int BrokenRecords, int StrayQuoteRecords, int Consistent, int Columns) best)
+        {
+            if (score.BrokenRecords != best.BrokenRecords)
+            {
+                return score.BrokenRecords < best.BrokenRecords;
+            }
+
+            if (score.StrayQuoteRecords != best.StrayQuoteRecords)
+            {
+                return score.StrayQuoteRecords < best.StrayQuoteRecords;
+            }
+
+            if (score.Consistent != best.Consistent)
+            {
+                return score.Consistent > best.Consistent;
+            }
+
+            return score.Columns > best.Columns;
+        }
     }
 
-    /// <summary>Leser ikke-tomme rader og teller rader CsvHelper melder som ødelagte (OnMalformedRecord).</summary>
-    private static (List<string[]> Records, int BadFields) ReadRecords(string text, string delimiter, int? maxRecords, bool throwOnBadData)
+    /// <summary>
+    /// Leser ikke-tomme rader. Teller rader med ødelagt sitering (et sitert felt med tekst etter avsluttende
+    /// anførselstegn, eller som aldri lukkes) og rader med løse anførselstegn i uquotede felt hver for seg.
+    /// </summary>
+    private static (List<string[]> Records, int BrokenRecords, int StrayQuoteRecords) ReadRecords(
+        string text, string delimiter, int? maxRecords, bool throwOnBadData)
     {
         var unclosedQuote = false;
-        var badFields = 0;
+        var brokenRecords = 0;
+        var strayQuoteRecords = 0;
         var options = new CsvReaderOptions
         {
             Separator = delimiter[0],
             HasHeader = false,
             SkipEmptyLines = true,
-            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst. Et sitert felt som
-            // aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet for stille datatap.
+            // Et anførselstegn midt i et uquotet felt (f.eks. «12" panne») er vanlig tekst, og «"ab"c» leses som
+            // «abc». Et sitert felt som aldri lukkes, sluker derimot resten av filen, så det skal gi feil i stedet
+            // for stille datatap (se IsUnterminatedQuotedField).
             MalformedData = CsvMalformedDataHandling.Recover,
+            // CsvHelper melder bare den første feilen i hver rad.
             OnMalformedRecord = record =>
             {
-                badFields++;
-                unclosedQuote |= record.Reason is CsvMalformedReason.UnterminatedQuote or CsvMalformedReason.TextAfterClosingQuote;
+                if (record.Reason == CsvMalformedReason.StrayQuote)
+                {
+                    strayQuoteRecords++;
+                }
+                else
+                {
+                    brokenRecords++;
+                }
+
+                unclosedQuote |= record.Reason == CsvMalformedReason.UnterminatedQuote;
             }
         };
 
@@ -140,6 +176,17 @@ public static class CsvTableReader
                     record[i] = reader.GetString(i);
                 }
 
+                if (record.Length > 0 && IsUnterminatedQuotedField(reader.GetRawSpan(record.Length - 1)))
+                {
+                    if (!unclosedQuote)
+                    {
+                        // Skjult bak en tidligere feil i samme rad, f.eks. et løst anførselstegn.
+                        brokenRecords++;
+                    }
+
+                    unclosedQuote = true;
+                }
+
                 if (record.Any(c => !string.IsNullOrWhiteSpace(c)))
                 {
                     records.Add(record);
@@ -153,7 +200,7 @@ public static class CsvTableReader
         catch (CsvFormatException)
         {
             // Ved gjenkjenning av skilletegn regnes et lesebrudd som ødelagte data.
-            badFields++;
+            brokenRecords++;
         }
 
         if (unclosedQuote && throwOnBadData)
@@ -161,6 +208,37 @@ public static class CsvTableReader
             throw new InvalidDataException("Filen har et anførselstegn som ikke er lukket. Sjekk at riktig fil og format er valgt.");
         }
 
-        return (records, badFields);
+        return (records, brokenRecords, strayQuoteRecords);
+    }
+
+    /// <summary>
+    /// Om et felt (rå bytes slik det står i filen) starter med anførselstegn uten at det lukkes igjen. Et slikt felt
+    /// sluker resten av filen og blir alltid det siste. CsvHelper melder bare første feil per rad, så denne sjekken
+    /// fanger også tilfeller der et løst anførselstegn tidligere i raden skjuler det. «""» er et escapet anførselstegn.
+    /// </summary>
+    private static bool IsUnterminatedQuotedField(ReadOnlySpan<byte> raw)
+    {
+        if (raw.IsEmpty || raw[0] != (byte)'"')
+        {
+            return false;
+        }
+
+        for (var i = 1; i < raw.Length; i++)
+        {
+            if (raw[i] != (byte)'"')
+            {
+                continue;
+            }
+
+            if (i + 1 < raw.Length && raw[i + 1] == (byte)'"')
+            {
+                i++;
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 }

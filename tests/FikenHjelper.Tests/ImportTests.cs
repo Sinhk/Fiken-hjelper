@@ -79,6 +79,35 @@ public sealed class CsvTableReaderTests
         Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse("Navn;Gruppe\n\"Ola Test;Molde\nKari;Aukra\n"));
     }
 
+    [Theory]
+    // CsvHelper melder bare første feil per rad. Et løst anførselstegn først i raden skal ikke skjule
+    // at et senere felt aldri lukkes og sluker resten av filen.
+    [InlineData("Navn;Kommentar;Notat\nOla;12\" panne;\"uavsluttet tekst\nKari;ok;ok\n")]
+    [InlineData("Navn;Kommentar;Notat\nOla;12\" panne;\"uavsluttet \"\"sitat\"\"\nKari;ok;ok\n")]
+    [InlineData("Navn;Gruppe\nOla;\"Molde\n")]
+    public void Parse_UnclosedQuoteAfterStrayQuote_Throws(string csv)
+    {
+        Assert.Throws<InvalidDataException>(() => CsvTableReader.Parse(csv));
+    }
+
+    [Fact]
+    public void Parse_TextAfterClosingQuote_IsKeptWithoutSwallowingRows()
+    {
+        var table = CsvTableReader.Parse("Navn;Gruppe\nOla;\"Molde\" sør\nKari;Aukra\n");
+
+        Assert.Equal(2, table.Rows.Count);
+        Assert.Equal("Molde sør", table.Rows[0][1]);
+        Assert.Equal("Kari", table.Rows[1][0]);
+    }
+
+    [Fact]
+    public void Parse_QuotedLastFieldWithEscapedQuotes_IsNotUnclosed()
+    {
+        var table = CsvTableReader.Parse("Navn;Notat\nOla;\"Sa \"\"hei\"\"\"");
+
+        Assert.Equal("Sa \"hei\"", table.Rows[0][1]);
+    }
+
     [Fact]
     public void Parse_StripsBomInString()
     {
@@ -103,6 +132,18 @@ public sealed class CsvTableReaderTests
         Assert.Equal(",", table.DetectedDelimiter);
         Assert.Equal(["Navn", "Allergi; diett"], table.Headers);
         Assert.Equal("Nøtter; gluten", table.Rows[0][1]);
+    }
+
+    [Fact]
+    public void DetectDelimiter_CommaFileWithQuotedSemicolonsAndStrayQuotes_PicksComma()
+    {
+        // Løse anførselstegn («12" utstyr») er ufarlige og skal ikke veie like tungt som et sitert felt
+        // som ødelegges av feil skilletegn.
+        var table = CsvTableReader.Parse("\"Navn\",\"A;B;C\",12\" utstyr\n\"Ola\",\"1;2;3\",14\" panne\n");
+
+        Assert.Equal(",", table.DetectedDelimiter);
+        Assert.Equal(["Navn", "A;B;C", "12\" utstyr"], table.Headers);
+        Assert.Equal("1;2;3", table.Rows[0][1]);
     }
 
     [Fact]
