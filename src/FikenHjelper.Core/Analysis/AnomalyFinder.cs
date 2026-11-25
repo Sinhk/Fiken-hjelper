@@ -8,7 +8,7 @@ public static class AnomalyTypes
 {
     public const string UnallocatedPostings = "ufordelte_posteringer";
     public const string UnlinkedProjects = "ukoblede_prosjekter";
-    public const string ProjectsLinkedToSeveralLines = "prosjekt_i_flere_poster";
+    public const string InvalidProjectSplits = "ugyldig_fordeling";
     public const string OverduePurchases = "forfalte_kjop";
     public const string OverdueSales = "forfalte_salg";
     public const string PurchasesWithoutAttachment = "kjop_uten_vedlegg";
@@ -20,7 +20,7 @@ public static class AnomalyTypes
     [
         UnallocatedPostings,
         UnlinkedProjects,
-        ProjectsLinkedToSeveralLines,
+        InvalidProjectSplits,
         OverduePurchases,
         OverdueSales,
         PurchasesWithoutAttachment,
@@ -70,15 +70,15 @@ public static class AnomalyFinder
                 $"prosjekt {project.ProjectId}");
         }
 
-        foreach (var project in report.ProjectsLinkedToSeveralLines)
+        foreach (var issue in report.InvalidProjectSplits)
         {
             yield return new Anomaly(
-                AnomalyTypes.ProjectsLinkedToSeveralLines,
+                AnomalyTypes.InvalidProjectSplits,
                 High,
                 null,
-                $"Prosjektet «{project.Name}» er koblet til flere budsjettposter i {report.Year} og telles dobbelt.",
-                project.Amount,
-                $"prosjekt {project.ProjectId}");
+                $"{report.Year}: {issue.Description} Budsjettrapporten teller prosjektet feil til nøkkelen går opp i 100 %.",
+                issue.Amount,
+                $"prosjekt {issue.ProjectId}");
         }
     }
 

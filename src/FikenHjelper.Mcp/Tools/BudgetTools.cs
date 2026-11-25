@@ -20,7 +20,7 @@ public sealed class BudgetTools(
         "Positivt avvik er gunstig.";
 
     [McpServerTool(Name = "get_budget_status", Title = "Budsjett mot regnskap", ReadOnly = true, Idempotent = true, OpenWorld = true)]
-    [Description("Henter budsjett mot regnskap per budsjettpost (fra budsjettet i Fiken-hjelper og posteringer i Fiken), med avvik i kr og %, prosjekter per post og kontrolltall (ufordelte posteringer, ukoblede prosjekter). Kan vise flere år side om side.")]
+    [Description("Henter budsjett mot regnskap per budsjettpost (fra budsjettet i Fiken-hjelper og posteringer i Fiken), med avvik i kr og %, prosjekter per post (med andel når et prosjekt er fordelt på flere poster) og kontrolltall (ufordelte posteringer, ukoblede prosjekter, ugyldige fordelingsnøkler). Kan vise flere år side om side.")]
     public Task<object> GetBudgetStatus(
         [Description("Siste år som tas med. Standard: inneværende år.")] int? year = null,
         [Description("Antall år bakover, inkludert det siste (1-5).")] int years = 1,
@@ -55,14 +55,22 @@ public sealed class BudgetTools(
                         variance = l.Variance,
                         variancePercent = l.VariancePercent is { } p ? Math.Round(p * 100, 1) : (decimal?)null,
                         manualActual = l.IsManualActual,
-                        projects = l.Projects.Select(p => new { p.ProjectId, p.Name, amount = p.Amount }).ToList()
+                        projects = l.Projects.Select(p => new { p.ProjectId, p.Name, amount = p.Amount, sharePercent = p.Share, projectTotal = p.FullAmount }).ToList()
                     }).ToList(),
                     control = new
                     {
                         unallocatedPostings = r.UnallocatedPostings.Count,
                         unallocatedTotal = r.UnallocatedTotal,
                         unlinkedProjects = r.UnlinkedProjects.Select(p => new { p.ProjectId, p.Name, amount = p.Amount }).ToList(),
-                        projectsLinkedToSeveralLines = r.ProjectsLinkedToSeveralLines.Select(p => new { p.ProjectId, p.Name }).ToList(),
+                        invalidProjectSplits = r.InvalidProjectSplits.Select(i => new
+                        {
+                            i.ProjectId,
+                            i.Name,
+                            projectTotal = i.Amount,
+                            lines = i.Lines,
+                            totalSharePercent = i.TotalShare,
+                            problem = i.Description
+                        }).ToList(),
                         r.PostingsWithSeveralProjects
                     }
                 };
@@ -91,21 +99,27 @@ public sealed class BudgetTools(
 
         BudgetLine? line = null;
         BudgetLine? previousLine = null;
-        IReadOnlyCollection<long> projectIds;
-        IReadOnlyCollection<long> previousProjectIds;
+        // Andel (0–1) per prosjekt. Prosjekter fordelt på flere poster teller bare med postens andel.
+        IReadOnlyDictionary<long, decimal> fractions;
+        IReadOnlyDictionary<long, decimal> previousFractions;
         if (!string.IsNullOrWhiteSpace(budgetLineName))
         {
-            line = FindLine(budget.FindYear(y), budgetLineName, y);
-            projectIds = line.ProjectIds.Distinct().ToList();
-            previousLine = budget.FindYear(y - 1)?.Lines.FirstOrDefault(l =>
+            var budgetYear = budget.FindYear(y);
+            line = FindLine(budgetYear, budgetLineName, y);
+            fractions = ProjectSplits.LineFractions(budgetYear!, line);
+            var previousYear = budget.FindYear(y - 1);
+            previousLine = previousYear?.Lines.FirstOrDefault(l =>
                 string.Equals(l.Name, line.Name, StringComparison.CurrentCultureIgnoreCase));
-            previousProjectIds = previousLine?.ProjectIds.Distinct().ToList() ?? projectIds;
+            previousFractions = previousLine is null ? fractions : ProjectSplits.LineFractions(previousYear!, previousLine);
         }
         else
         {
-            projectIds = [projectId!.Value];
-            previousProjectIds = projectIds;
+            fractions = new Dictionary<long, decimal> { [projectId!.Value] = 1m };
+            previousFractions = fractions;
         }
+
+        var projectIds = fractions.Keys.ToList();
+        var previousProjectIds = previousFractions.Keys.ToList();
 
         var notes = new List<string> { SignNote };
         if (line is { ManualActual: not null })
@@ -123,10 +137,14 @@ public sealed class BudgetTools(
         var accounts = await lookups.GetAccountsAsync(slug, "3000-8799", ct);
         var projects = await lookups.GetProjectsAsync(slug, ct);
 
-        var explanation = ProjectVarianceExplainer.Explain(y, projectIds, entries, null, accounts, maxPostings);
+        var explanation = ProjectVarianceExplainer.Explain(y, fractions, entries, null, accounts, maxPostings);
         var previous = previousEntries is null
             ? null
-            : ProjectVarianceExplainer.Explain(y - 1, previousProjectIds, previousEntries, null, accounts, 0);
+            : ProjectVarianceExplainer.Explain(y - 1, previousFractions, previousEntries, null, accounts, 0);
+        if (fractions.Values.Any(f => f != 1m))
+        {
+            notes.Add("Noen prosjekter er fordelt på flere budsjettposter. Beløpene er postens andel (sharePercent), ikke hele prosjektet.");
+        }
         var previousByAccount = previous?.ByAccount.ToDictionary(a => a.Account, a => a.Amount);
         var projectNames = projects.GroupBy(p => p.ProjectId).ToDictionary(g => g.Key, g => g.First().Name);
 
@@ -165,9 +183,9 @@ public sealed class BudgetTools(
                 // Samme regel som budsjettrapporten: et manuelt regnskapstall går foran Fiken-tallene.
                 actual = previousLine?.ManualActual ?? previous.Actual,
                 manualActual = previousLine?.ManualActual is not null,
-                projects = previousProjectIds.Select(id => new { projectId = id, name = projectNames.GetValueOrDefault(id) }).ToList()
+                projects = previousProjectIds.Select(id => new { projectId = id, name = projectNames.GetValueOrDefault(id), sharePercent = SharePercent(previousFractions, id) }).ToList()
             },
-            projects = projectIds.Select(id => new { projectId = id, name = projectNames.GetValueOrDefault(id) }).ToList(),
+            projects = projectIds.Select(id => new { projectId = id, name = projectNames.GetValueOrDefault(id), sharePercent = SharePercent(fractions, id) }).ToList(),
             explanation.PostingCount,
             byAccount,
             largestPostings = explanation.LargestPostings.Select(p => new
@@ -177,11 +195,15 @@ public sealed class BudgetTools(
                 p.Description,
                 p.Account,
                 project = projectNames.GetValueOrDefault(p.ProjectId),
-                amount = p.Amount
+                amount = p.Amount,
+                sharePercent = p.Share
             }).ToList(),
             notes
         };
     });
+
+    private static decimal? SharePercent(IReadOnlyDictionary<long, decimal> fractions, long id) =>
+        fractions.TryGetValue(id, out var f) && f != 1m ? f * 100m : null;
 
     private static BudgetLine FindLine(BudgetYear? budgetYear, string name, int year)
     {

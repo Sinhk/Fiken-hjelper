@@ -199,6 +199,9 @@ public static partial class BudgetWorkbookImporter
         var linesByName = budgetYear.Lines.ToDictionary(l => Normalize(l.Name));
         var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 1;
 
+        // Beløp fra kolonnen «Sum» per prosjekt og post, til fordelingsnøkkel når et prosjekt står på flere poster.
+        var amounts = new Dictionary<long, (string Name, Dictionary<BudgetLine, decimal?> PerLine)>();
+
         for (var row = 2; row <= lastRow; row++)
         {
             var projectName = sheet.Cell(row, 1).GetString().Trim();
@@ -244,11 +247,67 @@ public static partial class BudgetWorkbookImporter
                 warnings.Add($"{budgetYear.Year}: Flere Fiken-prosjekter heter «{projectName}». Alle er koblet til «{line.Name}», så sjekk koblingen.");
             }
 
-            foreach (var id in ids.Where(id => !line.ProjectIds.Contains(id)))
+            var amount = ReadNumber(sheet.Cell(row, 2));
+            foreach (var id in ids)
             {
-                line.ProjectIds.Add(id);
+                if (!line.ProjectIds.Contains(id))
+                {
+                    line.ProjectIds.Add(id);
+                }
+
+                if (!amounts.TryGetValue(id, out var entry))
+                {
+                    entry = (projectName, []);
+                    amounts[id] = entry;
+                }
+
+                entry.PerLine[line] = entry.PerLine.TryGetValue(line, out var sum) ? sum + amount : amount;
             }
         }
+
+        foreach (var (id, (name, perLine)) in amounts.Where(kv => kv.Value.PerLine.Count > 1))
+        {
+            var lines = budgetYear.Lines.Where(perLine.ContainsKey).ToList();
+            var shares = SharesFromAmounts(lines.Select(l => perLine[l]).ToList());
+            var lineNames = string.Join(", ", lines.Select(l => $"«{l.Name}»"));
+            if (shares is null)
+            {
+                warnings.Add($"{budgetYear.Year}: Prosjektet «{name}» er koblet til {lineNames}, men beløpene i arket gir ingen fordelingsnøkkel. Legg den inn under «Prosjekter → poster».");
+                continue;
+            }
+
+            for (var i = 0; i < lines.Count; i++)
+            {
+                lines[i].SetShare(id, shares[i]);
+            }
+
+            var split = string.Join(", ", lines.Select((l, i) => $"«{l.Name}» {shares[i].ToString("0.##", CultureInfo.GetCultureInfo("nb-NO"))} %"));
+            warnings.Add($"{budgetYear.Year}: Prosjektet «{name}» er fordelt ut fra beløpene i arket: {split}. Sjekk fordelingen.");
+        }
+    }
+
+    /// <summary>
+    /// Prosentandeler (to desimaler, sum 100) ut fra beløpene per post. Null når et beløp mangler,
+    /// summen er 0 eller beløpene har ulikt fortegn, siden andelene da ikke gir mening.
+    /// </summary>
+    public static IReadOnlyList<decimal>? SharesFromAmounts(IReadOnlyList<decimal?> amounts)
+    {
+        ArgumentNullException.ThrowIfNull(amounts);
+        if (amounts.Count == 0 || amounts.Any(a => a is null or 0))
+        {
+            return null;
+        }
+
+        var values = amounts.Select(a => a!.Value).ToList();
+        if (values.Any(v => v > 0) && values.Any(v => v < 0))
+        {
+            return null;
+        }
+
+        var total = values.Sum();
+        var shares = values.Select(v => Math.Round(v / total * 100m, 2, MidpointRounding.AwayFromZero)).ToList();
+        shares[^1] = 100m - shares.Take(shares.Count - 1).Sum();
+        return shares;
     }
 
     private static (IXLWorksheet Sheet, int HeaderRow, Dictionary<int, int> BudgetCols, Dictionary<int, int> ActualCols)? FindOverview(XLWorkbook workbook)
@@ -554,7 +613,7 @@ public static class BudgetWorkbookExporter
 
     private static void WriteProjects(IXLWorksheet ws, BudgetComparison comparison)
     {
-        string[] headers = ["År", "Budsjettpost", "Prosjekt", "Regnskap"];
+        string[] headers = ["År", "Budsjettpost", "Prosjekt", "Regnskap", "Andel", "Prosjektet totalt"];
         for (var i = 0; i < headers.Length; i++)
         {
             ws.Cell(1, i + 1).Value = headers[i];
@@ -582,6 +641,17 @@ public static class BudgetWorkbookExporter
                     ws.Cell(row, 2).Value = line.Name;
                     ws.Cell(row, 3).Value = project.Name;
                     ws.Cell(row, 4).Value = project.Amount;
+                    if (project.FullAmount is { } full)
+                    {
+                        // Prosjektet er fordelt på flere poster: vis andelen og hele prosjektets resultat.
+                        if (project.Share is { } share)
+                        {
+                            ws.Cell(row, 5).Value = share / 100m;
+                        }
+
+                        ws.Cell(row, 6).Value = full;
+                    }
+
                     row++;
                 }
             }
@@ -589,13 +659,15 @@ public static class BudgetWorkbookExporter
 
         ws.Row(1).Style.Font.Bold = true;
         ws.Column(4).Style.NumberFormat.Format = AmountFormat;
+        ws.Column(5).Style.NumberFormat.Format = "0.##%";
+        ws.Column(6).Style.NumberFormat.Format = AmountFormat;
         if (row > 2)
         {
-            ws.Range(1, 1, row - 1, 4).SetAutoFilter();
+            ws.Range(1, 1, row - 1, headers.Length).SetAutoFilter();
         }
 
         ws.SheetView.FreezeRows(1);
-        ws.Columns(1, 4).AdjustToContents();
+        ws.Columns(1, headers.Length).AdjustToContents();
     }
 
     private static void WriteControl(IXLWorksheet ws, BudgetComparison comparison)
@@ -623,10 +695,9 @@ public static class BudgetWorkbookExporter
             row = WriteKeyValue(ws, row, "Prosjekter uten budsjettpost", report.UnlinkedTotal);
             row++;
 
-            if (report.ProjectsLinkedToSeveralLines.Count > 0)
+            foreach (var issue in report.InvalidProjectSplits)
             {
-                ws.Cell(row++, 1).Value = "Prosjekter koblet til flere poster (telles flere ganger): "
-                    + string.Join(", ", report.ProjectsLinkedToSeveralLines.Select(p => p.Name));
+                ws.Cell(row++, 1).Value = $"Fordelingsnøkkel: {issue.Description}";
             }
 
             if (report.PostingsWithSeveralProjects > 0)
@@ -634,7 +705,7 @@ public static class BudgetWorkbookExporter
                 ws.Cell(row++, 1).Value = $"{report.PostingsWithSeveralProjects} posteringslinje(r) har flere prosjekter. Bare det første prosjektet er brukt.";
             }
 
-            if (report.ProjectsLinkedToSeveralLines.Count > 0 || report.PostingsWithSeveralProjects > 0)
+            if (report.InvalidProjectSplits.Count > 0 || report.PostingsWithSeveralProjects > 0)
             {
                 row++;
             }

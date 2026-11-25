@@ -22,7 +22,7 @@ public sealed class AnomalyTools(
     [Description("Kontrollerer regnskapet for et år: posteringer uten prosjekt, prosjekter som ikke er koblet til budsjettet (eller er koblet flere ganger), forfalte ubetalte kjøp og salg, kjøp uten vedlegg, gamle ubehandlede bilag i innboks/EHF, gamle kjøpsutkast og posteringer etter prosjektets sluttdato.")]
     public Task<object> FindAccountingAnomalies(
         [Description("År. Standard: inneværende år.")] int? year = null,
-        [Description("Hvilke sjekker som skal kjøres (standard alle): ufordelte_posteringer, ukoblede_prosjekter, prosjekt_i_flere_poster, forfalte_kjop, forfalte_salg, kjop_uten_vedlegg, gammel_innboks, gamle_kjopsutkast, postering_etter_prosjektslutt.")] string[]? checks = null,
+        [Description("Hvilke sjekker som skal kjøres (standard alle): ufordelte_posteringer, ukoblede_prosjekter, ugyldig_fordeling, forfalte_kjop, forfalte_salg, kjop_uten_vedlegg, gammel_innboks, gamle_kjopsutkast, postering_etter_prosjektslutt.")] string[]? checks = null,
         [Description("Maks antall funn per type (1-200).")] int maxPerType = 25,
         CancellationToken ct = default) => ToolSupport.Run<object>(async () =>
     {
@@ -40,7 +40,7 @@ public sealed class AnomalyTools(
         var slug = await context.GetCompanySlugAsync(ct);
         var anomalies = new List<Anomaly>();
 
-        if (selected.Overlaps([AnomalyTypes.UnallocatedPostings, AnomalyTypes.UnlinkedProjects, AnomalyTypes.ProjectsLinkedToSeveralLines]))
+        if (selected.Overlaps([AnomalyTypes.UnallocatedPostings, AnomalyTypes.UnlinkedProjects, AnomalyTypes.InvalidProjectSplits]))
         {
             var comparison = await reports.BuildComparisonAsync([y], refresh: false, ct);
             anomalies.AddRange(AnomalyFinder.FromBudgetReport(comparison.Reports[y]).Where(a => selected.Contains(a.Type)));

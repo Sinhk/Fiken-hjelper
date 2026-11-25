@@ -1,0 +1,163 @@
+@using System.Globalization
+
+@* Fordeler ett Fiken-prosjekt på én eller flere budsjettposter med prosentandeler som summerer til 100. *@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.body2">
+                Velg postene prosjektet hører til. Ved flere poster deles prosjektets resultat etter andelene, som må bli 100 % til sammen.
+                @if (Amount is { } total)
+                {
+                    <span>Regnskap @Year.Year: <strong class="tabular-nums">@total.ToString("N0", Nb)</strong>.</span>
+                }
+            </MudText>
+
+            @if (rows.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Prosjektet er ikke koblet til noen post.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense Elevation="0">
+                    <thead>
+                        <tr>
+                            <th>Budsjettpost</th>
+                            @if (rows.Count > 1)
+                            {
+                                <th style="width: 8rem" class="fh-num-col">Andel %</th>
+                                <th style="width: 8rem" class="fh-num-col">Beløp</th>
+                            }
+                            <th style="width: 3rem"><span class="visually-hidden">Fjern</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in rows)
+                        {
+                            var r = row;
+                            <tr @key="r">
+                                <td>@r.Line.Name</td>
+                                @if (rows.Count > 1)
+                                {
+                                    <td>
+                                        <MudNumericField T="decimal?" @bind-Value="r.Share" Min="0" Max="100" HideSpinButtons
+                                                         Culture="Nb" Format="0.##" Margin="Margin.Dense" Class="fh-num-input"
+                                                         aria-label="@($"Andel for {r.Line.Name}")" />
+                                    </td>
+                                    <td class="fh-num-col tabular-nums">
+                                        @(Amount is { } a && r.Share is { } s ? (a * s / 100m).ToString("N0", Nb) : "")
+                                    </td>
+                                }
+                                <td>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="() => rows.Remove(r)"
+                                                   aria-label="@($"Fjern {r.Line.Name}")" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    @if (rows.Count > 1)
+                    {
+                        <tfoot>
+                            <tr>
+                                <th scope="row">Sum</th>
+                                <td class="fh-num-col tabular-nums">
+                                    <MudText Typo="Typo.body2" Color="@(IsValid ? Color.Success : Color.Warning)">
+                                        <strong>@Total.ToString("0.##", Nb) %</strong>
+                                    </MudText>
+                                </td>
+                                <td colspan="2"></td>
+                            </tr>
+                        </tfoot>
+                    }
+                </MudSimpleTable>
+            }
+
+            <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                <MudSelect T="BudgetLine" Value="null" ValueChanged="AddLine" Label="Legg til post" Dense
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width: 16rem"
+                           ToStringFunc="@(l => l?.Name ?? string.Empty)" Disabled="@(AvailableLines.Count == 0)">
+                    @foreach (var line in AvailableLines)
+                    {
+                        <MudSelectItem T="BudgetLine" Value="line">@line.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                @if (rows.Count > 1)
+                {
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="SplitEvenly">Fordel likt</MudButton>
+                }
+            </MudStack>
+
+            @if (rows.Count > 1 && !IsValid)
+            {
+                <MudAlert Severity="Severity.Warning" Dense>
+                    @(rows.Any(r => r.Share is null) ? "Fyll inn andel for alle postene." : $"Andelene summerer til {Total.ToString("0.##", Nb)} %. De må bli 100 %.")
+                </MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Avbryt</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="@(!IsValid)">Bruk</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public FikenProject Project { get; set; } = default!;
+    [Parameter, EditorRequired] public BudgetYear Year { get; set; } = default!;
+
+    /// <summary>Prosjektets regnskap i året, eller null når det ikke er hentet.</summary>
+    [Parameter] public decimal? Amount { get; set; }
+
+    private List<SplitRow> rows = [];
+
+    /// <summary>Én post i fordelingen. Resultatet fra dialogen er en liste av disse.</summary>
+    public sealed class SplitRow(BudgetLine line, decimal? share)
+    {
+        public BudgetLine Line { get; } = line;
+        public decimal? Share { get; set; } = share;
+    }
+
+    protected override void OnInitialized()
+    {
+        // Poster med manuelt regnskapstall bruker ikke Fiken-tall og er ikke med i fordelingen.
+        var linked = Year.Lines.Where(l => !l.ManualActual.HasValue && l.ProjectIds.Contains(Project.ProjectId)).ToList();
+        rows = linked.Select(l => new SplitRow(l, linked.Count > 1 ? l.ShareOf(Project.ProjectId) : 100m)).ToList();
+    }
+
+    private List<BudgetLine> AvailableLines =>
+        Year.Lines.Where(l => !l.ManualActual.HasValue && rows.All(r => !ReferenceEquals(r.Line, l))).ToList();
+
+    private decimal Total => rows.Sum(r => r.Share ?? 0m);
+
+    private bool IsValid =>
+        rows.Count <= 1
+        || (rows.All(r => r.Share is > 0) && Math.Abs(Total - 100m) <= ProjectSplits.Tolerance);
+
+    private void AddLine(BudgetLine? line)
+    {
+        if (line is null)
+        {
+            return;
+        }
+
+        // Ny post får det som mangler opp til 100 %, så to poster blir enkle å fylle ut.
+        var rest = 100m - Total;
+        rows.Add(new SplitRow(line, rows.Count == 0 ? 100m : rest > 0 ? rest : null));
+    }
+
+    private void SplitEvenly()
+    {
+        var each = Math.Round(100m / rows.Count, 2);
+        foreach (var row in rows)
+        {
+            row.Share = each;
+        }
+
+        rows[^1].Share = 100m - each * (rows.Count - 1);
+    }
+
+    private void Submit() => MudDialog.Close(DialogResult.Ok(rows));
+}

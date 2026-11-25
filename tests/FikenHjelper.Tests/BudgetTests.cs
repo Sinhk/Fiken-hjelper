@@ -99,7 +99,7 @@ public sealed class BudgetReportBuilderTests
         Assert.Equal(80m, report.Lines[0].Actual);
         Assert.False(report.HasFikenData);
         Assert.Null(report.FikenResult);
-        Assert.Empty(report.ProjectsLinkedToSeveralLines);
+        Assert.Empty(report.InvalidProjectSplits);
     }
 
     [Fact]
@@ -117,7 +117,9 @@ public sealed class BudgetReportBuilderTests
 
         var report = BudgetReportBuilder.Build(budget, [Leir], journalEntries: []);
 
-        Assert.Equal(Leir.ProjectId, Assert.Single(report.ProjectsLinkedToSeveralLines).ProjectId);
+        var issue = Assert.Single(report.InvalidProjectSplits);
+        Assert.Equal(Leir.ProjectId, issue.ProjectId);
+        Assert.Equal(ProjectSplitProblem.MissingShares, issue.Problem);
     }
 
     [Fact]
