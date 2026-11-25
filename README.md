@@ -49,7 +49,31 @@ dotnet run --project src/FikenHjelper.Web
 dotnet test
 ```
 
-### 5. CI
+### 5. Start med .NET Aspire (valgfritt)
+
+Aspire gir et lokalt **Aspire Dashboard** med logger, traces og metrikker – blant annet alle HTTP-kall mot `api.fiken.no` og `min.speiding.no`. Det krever ingen workload eller templates; alt hentes som NuGet-pakker ved første bygg (første gang tar det litt tid).
+
+```powershell
+# Windows (HTTPS-dashboard, krever klarert dev-sertifikat: dotnet dev-certs https --trust)
+dotnet run --project src/FikenHjelper.AppHost
+
+# Linux (HTTP-dashboard, slipper klarert dev-sertifikat)
+dotnet run --project src/FikenHjelper.AppHost --launch-profile http
+```
+
+Dashboard-lenken (med innloggingstoken) vises i terminalen. Web-appen kjører fortsatt på `https://localhost:7193` / `http://localhost:5066`, så OAuth-redirect fungerer som før. Uten Aspire startes appen som vanlig (steg 3) og sender da ingen telemetri.
+
+Hemmeligheter kan valgfritt legges som Aspire-parametere i AppHost sine user-secrets (de sendes til web-appen som miljøvariabler og maskeres i dashboardet). Web-appens egne user-secrets og `config.json` fungerer uansett:
+
+```powershell
+dotnet user-secrets --project src/FikenHjelper.AppHost set "Parameters:fiken-client-id" "DIN_CLIENT_ID"
+dotnet user-secrets --project src/FikenHjelper.AppHost set "Parameters:fiken-client-secret" "DIN_CLIENT_SECRET"
+dotnet user-secrets --project src/FikenHjelper.AppHost set "Parameters:fiken-api-token" "DIN_PERSONLIGE_FIKEN_NOKKEL"
+```
+
+> `FikenHjelper.ServiceDefaults` legger **ikke** på standard resilience/retries på HttpClients – Fiken-klienten bruker kun sin egen `FikenRateLimitHandler`. Query-strenger (f.eks. OAuth `code`/`state`) redigeres alltid i traces.
+
+### 6. CI
 
 GitHub Actions (`.github/workflows/ci.yml`) kjører på alle pull requests mot `main` og ved push til `main`. Sjekkene er:
 - bygg i Release der kompilatoradvarsler gir feil (`-warnaserror`)

@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/FikenHjelper.AppHost/FikenHjelper.AppHost.csproj" />
     <Project Path="src/FikenHjelper.Core/FikenHjelper.Core.csproj" />
+    <Project Path="src/FikenHjelper.ServiceDefaults/FikenHjelper.ServiceDefaults.csproj" />
     <Project Path="src/FikenHjelper.Web/FikenHjelper.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">

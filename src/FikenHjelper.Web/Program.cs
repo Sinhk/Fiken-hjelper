@@ -6,6 +6,7 @@ using FikenHjelper.Web.Components;
 using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddServiceDefaults();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -44,14 +45,7 @@ builder.Services.AddSingleton<IFikenOAuthService>(sp =>
         sp.GetRequiredService<ILocalConfigStore>());
 });
 
-builder.Services.AddSingleton<FikenRateLimiter>();
-builder.Services.AddTransient<FikenRateLimitHandler>();
-
-builder.Services.AddHttpClient<IFikenClient, FikenClient>(client =>
-{
-    client.BaseAddress = new Uri(FikenClient.DefaultBaseAddress);
-    client.Timeout = TimeSpan.FromSeconds(30);
-}).AddHttpMessageHandler<FikenRateLimitHandler>();
+builder.Services.AddFikenApiClient();
 
 builder.Services.AddHttpClient<IMinSpeidingClient, MinSpeidingClient>(client =>
 {
@@ -152,5 +146,7 @@ app.MapGet("/fiken/oauth/callback", async (
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+app.MapDefaultEndpoints();
 
 app.Run();

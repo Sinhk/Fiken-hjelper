@@ -100,7 +100,7 @@ FikenHjelper.slnx
 
 ---
 
-## Fase 5 – .NET Aspire-støtte (Orkestrering og telemetri)
+## Fase 5 – .NET Aspire-støtte (Orkestrering og telemetri) *(Implementert)*
 **Mål:** Enkel lokal oppstart med én kommando, samlet logging/tracing av API-kall mot Fiken og Min speiding, og felles helsesjekker når løsningen vokser med både `Web` og `Mcp`.
 
 - **`FikenHjelper.AppHost`:**
@@ -110,6 +110,14 @@ FikenHjelper.slnx
 - **`FikenHjelper.ServiceDefaults`:**
   - Legger til standard **OpenTelemetry** (tracing, metrikker og logger), helsesjekk-endepunkter (`/health` og `/alive`) og tjenesteoppdagelse (`AddServiceDiscovery`).
   - **Viktig om Fiken-klienten:** `FikenClient` beholder sin egen sekvensielle `FikenRateLimitHandler` (maks 1 samtidig kall / 260 ms mellomrom) og bruker *ikke* standard `AddStandardResilienceHandler` med parallelle/aggressive retries som kan bryte Fikens rate-limit-regler.
+- **Status (november 2026):**
+  - Aspire **17.0.0** (`Aspire.Hosting.AppHost` + `Aspire.Hosting.Dotnet`, vanlig `Microsoft.NET.Sdk`) – ingen workload/templates nødvendig på Windows eller Linux; DCP, dashboard og Aspire-CLI hentes som NuGet-pakker.
+  - AppHost legger til web-appen med `AddDotnetProject` og launch-profil `https`, med `IsProxied = false` slik at appen lytter direkte på 5066/7193 og OAuth-redirect-URI-ene er uendret. AppHost har `https`- og `http`-profil (sistnevnte for Linux uten klarert dev-sertifikat).
+  - Fiken-hemmeligheter (`fiken-client-id`, `fiken-client-secret`, `fiken-api-token`) er *valgfrie* secret-parametere – de kobles bare til når de finnes i AppHost sine user-secrets.
+  - ServiceDefaults refererer ikke `Microsoft.Extensions.Http.Resilience`; `ConfigureHttpClientDefaults` legger kun på tjenesteoppdagelse. Fiken-registreringen er flyttet til `AddFikenApiClient()` i Core (gjenbrukes av Fase 4).
+  - Aspire slår av query-redigering i telemetri; ServiceDefaults redigerer likevel alltid `url.query` på innkommende forespørsler (OAuth `code`/`state`).
+  - Tester (`ServiceDefaultsFikenTests`, `ServiceDefaultsTelemetryTests`): med ServiceDefaults aktivert gir 503 nøyaktig ett kall, 429 gir kun FikenRateLimitHandler sine egne retries, parallelle kall serialiseres med ≥260 ms mellomrom, og query-strenger lekker ikke til traces.
+  - Gjenstår: verifisere Fiken-kall i dashboardet på maskin med Fiken-innlogging; legge til `FikenHjelper.Mcp` i AppHost når Fase 4 får HTTP-transport.
 
 ---
 
