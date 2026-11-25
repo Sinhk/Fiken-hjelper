@@ -20,14 +20,14 @@ public sealed class CrossProcessLockTests : IDisposable
     public async Task FileLock_SecondAcquireWaitsUntilFirstIsReleased()
     {
         var path = Path.Combine(_tempDir, "test.lock");
-        var first = await CrossProcessFileLock.AcquireAsync(path);
+        var first = await CrossProcessFileLock.AcquireAsync(path, TestContext.Current.CancellationToken);
 
-        var secondTask = CrossProcessFileLock.AcquireAsync(path);
-        await Task.Delay(150);
+        var secondTask = CrossProcessFileLock.AcquireAsync(path, TestContext.Current.CancellationToken);
+        await Task.Delay(150, TestContext.Current.CancellationToken);
         Assert.False(secondTask.IsCompleted);
 
         first.Dispose();
-        using var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(5));
+        using var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.True(secondTask.IsCompletedSuccessfully);
     }
 
@@ -35,23 +35,23 @@ public sealed class CrossProcessLockTests : IDisposable
     public async Task FileLock_TimesOutWithClearMessage()
     {
         var path = Path.Combine(_tempDir, "timeout.lock");
-        using var first = await CrossProcessFileLock.AcquireAsync(path);
+        using var first = await CrossProcessFileLock.AcquireAsync(path, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<TimeoutException>(() =>
-            CrossProcessFileLock.AcquireAsync(path, timeout: TimeSpan.FromMilliseconds(100)));
+            CrossProcessFileLock.AcquireAsync(path, timeout: TimeSpan.FromMilliseconds(100), ct: TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public async Task FileLock_StoresSharedValue()
     {
         var path = Path.Combine(_tempDir, "value.lock");
-        using (var fileLock = await CrossProcessFileLock.AcquireAsync(path))
+        using (var fileLock = await CrossProcessFileLock.AcquireAsync(path, TestContext.Current.CancellationToken))
         {
             Assert.Equal(0, fileLock.ReadInt64());
             fileLock.WriteInt64(123456789L);
         }
 
-        using var again = await CrossProcessFileLock.AcquireAsync(path);
+        using var again = await CrossProcessFileLock.AcquireAsync(path, TestContext.Current.CancellationToken);
         Assert.Equal(123456789L, again.ReadInt64());
     }
 
@@ -158,13 +158,13 @@ public sealed class CrossProcessLockTests : IDisposable
         using var oauthMcp = new FikenOAuthService(httpMcp, storeMcp);
 
         var results = await Task.WhenAll(
-            oauthWeb.GetValidAccessTokenAsync(),
-            oauthMcp.GetValidAccessTokenAsync());
+            oauthWeb.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken),
+            oauthMcp.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken));
 
         Assert.Equal(1, tokenCalls);
         Assert.All(results, token => Assert.Equal("acc-2", token));
 
-        var loaded = await storeWeb.LoadSettingsAsync();
+        var loaded = await storeWeb.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("acc-2", loaded.FikenOAuthAccessToken);
         Assert.Equal("ref-2", loaded.FikenOAuthRefreshToken);
     }
@@ -187,10 +187,10 @@ public sealed class CrossProcessLockTests : IDisposable
         }));
         using var oauth = new FikenOAuthService(http, store);
 
-        var token = await oauth.GetValidAccessTokenAsync();
+        var token = await oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken);
 
         Assert.Equal("acc-other", token);
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("ref-other", loaded.FikenOAuthRefreshToken);
     }
 
@@ -206,10 +206,10 @@ public sealed class CrossProcessLockTests : IDisposable
             })));
         using var oauth = new FikenOAuthService(http, store);
 
-        var ex = await Assert.ThrowsAsync<FikenApiException>(() => oauth.GetValidAccessTokenAsync());
+        var ex = await Assert.ThrowsAsync<FikenApiException>(() => oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken));
 
         Assert.Equal(HttpStatusCode.Unauthorized, ex.StatusCode);
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.False(loaded.HasFikenOAuthTokens);
     }
 
@@ -217,8 +217,8 @@ public sealed class CrossProcessLockTests : IDisposable
     public async Task OAuthForceRefresh_FromTwoProcessesAtOnce_NeitherIsLoggedOut()
     {
         var seed = new LocalConfigStore(dataDirectory: _tempDir);
-        await seed.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client" });
-        await seed.SaveFikenOAuthTokensAsync("acc-1", "ref-1", DateTimeOffset.UtcNow.AddHours(1));
+        await seed.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client" }, TestContext.Current.CancellationToken);
+        await seed.SaveFikenOAuthTokensAsync("acc-1", "ref-1", DateTimeOffset.UtcNow.AddHours(1), TestContext.Current.CancellationToken);
 
         var currentRefresh = "ref-1";
         var issued = 0;
@@ -252,12 +252,12 @@ public sealed class CrossProcessLockTests : IDisposable
 
         // Begge har fått 401 på acc-1 og ber om tvungen fornyelse samtidig.
         var results = await Task.WhenAll(
-            oauthA.GetValidAccessTokenAsync(forceRefresh: true),
-            oauthB.GetValidAccessTokenAsync(forceRefresh: true));
+            oauthA.GetValidAccessTokenAsync(forceRefresh: true, TestContext.Current.CancellationToken),
+            oauthB.GetValidAccessTokenAsync(forceRefresh: true, TestContext.Current.CancellationToken));
 
         Assert.All(results, token => Assert.StartsWith("acc-", token));
         Assert.DoesNotContain("acc-1", results);
-        var loaded = await storeA.LoadSettingsAsync();
+        var loaded = await storeA.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.True(loaded.HasFikenOAuthTokens);
         Assert.Equal(currentRefresh, loaded.FikenOAuthRefreshToken);
     }
@@ -267,7 +267,7 @@ public sealed class CrossProcessLockTests : IDisposable
     {
         var storeWeb = new LocalConfigStore(dataDirectory: _tempDir);
         var storeMcp = new LocalConfigStore(dataDirectory: _tempDir);
-        await storeWeb.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client", FikenCompanySlug = "krets" });
+        await storeWeb.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client", FikenCompanySlug = "krets" }, TestContext.Current.CancellationToken);
 
         const int iterations = 40;
         var settingsWriter = Task.Run(async () =>
@@ -276,17 +276,17 @@ public sealed class CrossProcessLockTests : IDisposable
             {
                 await storeWeb.SaveSettingsAsync(new AppSettings { FikenOAuthClientId = "client", FikenCompanySlug = $"krets-{i}" });
             }
-        });
+        }, TestContext.Current.CancellationToken);
         var tokenWriter = Task.Run(async () =>
         {
             for (var i = 0; i < iterations; i++)
             {
                 await storeMcp.SaveFikenOAuthTokensAsync($"acc-{i}", $"ref-{i}", DateTimeOffset.UtcNow.AddHours(1));
             }
-        });
+        }, TestContext.Current.CancellationToken);
         await Task.WhenAll(settingsWriter, tokenWriter);
 
-        var loaded = await storeWeb.LoadSettingsAsync();
+        var loaded = await storeWeb.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal($"ref-{iterations - 1}", loaded.FikenOAuthRefreshToken);
         Assert.Equal($"krets-{iterations - 1}", loaded.FikenCompanySlug);
         Assert.Empty(Directory.GetFiles(_tempDir, "*.tmp"));
@@ -340,10 +340,10 @@ public sealed class OAuthReviewFixTests : IDisposable
             })));
         using var oauth = new FikenOAuthService(http, store);
 
-        var ex = await Assert.ThrowsAsync<FikenApiException>(() => oauth.GetValidAccessTokenAsync());
+        var ex = await Assert.ThrowsAsync<FikenApiException>(() => oauth.GetValidAccessTokenAsync(ct: TestContext.Current.CancellationToken));
 
         Assert.Contains("beholdt", ex.Message);
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("ref-1", loaded.FikenOAuthRefreshToken);
     }
 
@@ -374,7 +374,7 @@ public sealed class OAuthReviewFixTests : IDisposable
             // Akseptabelt, så lenge tokenene er lagret.
         }
 
-        var loaded = await store.LoadSettingsAsync();
+        var loaded = await store.LoadSettingsAsync(TestContext.Current.CancellationToken);
         Assert.Equal("ref-2", loaded.FikenOAuthRefreshToken);
         Assert.Equal("acc-2", loaded.FikenOAuthAccessToken);
     }
@@ -392,7 +392,7 @@ public sealed class OAuthReviewFixTests : IDisposable
         using var oauth = new FikenOAuthService(http, store);
 
         // En annen prosess har allerede byttet acc-0 (som Fiken avviste) ut med acc-1.
-        var token = await oauth.GetValidAccessTokenAsync(forceRefresh: true, rejectedAccessToken: "acc-0");
+        var token = await oauth.GetValidAccessTokenAsync(forceRefresh: true, rejectedAccessToken: "acc-0", ct: TestContext.Current.CancellationToken);
 
         Assert.Equal("acc-1", token);
         Assert.Equal(0, calls);
@@ -423,8 +423,8 @@ public sealed class OAuthReviewFixTests : IDisposable
             BaseAddress = new Uri(FikenClient.DefaultBaseAddress)
         };
 
-        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync("companies"));
-        await http.GetAsync("companies");
+        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync("companies", TestContext.Current.CancellationToken));
+        await http.GetAsync("companies", TestContext.Current.CancellationToken);
 
         Assert.True(times[1] - times[0] >= spacing - TimeSpan.FromMilliseconds(15));
     }
