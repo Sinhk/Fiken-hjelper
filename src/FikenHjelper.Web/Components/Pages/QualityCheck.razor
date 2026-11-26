@@ -1,9 +1,11 @@
 @page "/kvalitetssjekk"
 @rendermode InteractiveServer
 @using System.Globalization
+@using FikenHjelper.Core.Grants
 @using FikenHjelper.Core.QualityCheck
 @implements IAsyncDisposable
 @inject QualityCheckService QualityChecks
+@inject GrantService Grants
 @inject ILocalConfigStore ConfigStore
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
@@ -19,7 +21,7 @@
             <MudStack Spacing="0">
                 <MudText Typo="Typo.h5" HtmlTag="h1">Kvalitetssjekk</MudText>
                 <MudText Typo="Typo.body2" Color="Color.Secondary">
-                    Ubetalte kundefakturaer, åpne salg og ubetalte kjøp – før styremøte og årsoppgjør.
+                    Ubetalte kundefakturaer, åpne salg, ubetalte kjøp og tilskudd – før styremøte og årsoppgjør.
                 </MudText>
             </MudStack>
             <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
@@ -33,7 +35,7 @@
                                OnClick="SetLastYearEnd" UserAttributes="@PressedAttributes(IsLastYearEnd)">31.12.@(today.Year - 1)</MudButton>
                 </MudButtonGroup>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
-                           OnClick="LoadAsync" Disabled="@(isLoading || !hasCompany)">
+                           OnClick="@(() => LoadAsync(true))" Disabled="@(isLoading)">
                     Hent på nytt
                 </MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy"
@@ -96,6 +98,31 @@
                                 @if (section.UnknownAmountCount > 0)
                                 {
                                     <span> · @section.UnknownAmountCount med ukjent beløp</span>
+                                }
+                            </MudText>
+                        </MudPaper>
+                    </MudItem>
+                }
+                @if (report.Grants is { } grantSummary)
+                {
+                    <MudItem xs="12" md="4">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudStack Row AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.caption">@GrantCheckSection.Title</MudText>
+                                <MudChip T="string" Size="Size.Small" Color="StatusColor(grantSummary.Status)" Variant="Variant.Text">
+                                    @GrantSummaryStatusText(grantSummary)
+                                </MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@grantSummary.Findings.Count funn</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                @grantSummary.GrantCount tilskudd kontrollert
+                                @if (grantSummary.OverdueCount > 0)
+                                {
+                                    <span> · frist passert eller forfalt: @grantSummary.OverdueCount stk</span>
+                                }
+                                @if (grantSummary.MissingDataNote is not null)
+                                {
+                                    <span> · mangler Fiken-data</span>
                                 }
                             </MudText>
                         </MudPaper>
@@ -166,6 +193,53 @@
                 }
             </MudPaper>
         }
+
+        @if (report.Grants is { } grantSection)
+        {
+            <MudPaper Class="pa-4" Outlined @key="GrantCheckSection.Key">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">@GrantCheckSection.Title</MudText>
+                @if (grantSection.MissingDataNote is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense Class="mb-2">@grantSection.MissingDataNote</MudAlert>
+                }
+                @if (grantSection.Findings.Count == 0)
+                {
+                    <MudText Color="@(grantSection.MissingDataNote is null ? Color.Success : Color.Default)">
+                        @(grantSection.MissingDataNote is null ? "Ingen funn." : "Ingen funn i kontrollene som ble kjørt.")
+                    </MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Tilskudd</th>
+                                <th>Kontroll</th>
+                                <th>Detalj</th>
+                                <th class="fh-num-col">Beløp (kr)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var finding in grantSection.Findings)
+                            {
+                                <tr>
+                                    <td>
+                                        <MudChip T="string" Size="Size.Small" Color="StatusColor(finding.Status)">
+                                            @QualityCheckTextFormatter.StatusText(finding.Status)
+                                        </MudChip>
+                                    </td>
+                                    <td><MudLink Href="@finding.Href">@finding.GrantName</MudLink></td>
+                                    <td>@finding.Check</td>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">@finding.Detail</MudText></td>
+                                    <td class="fh-num-col tabular-nums">@(finding.Amount is { } amount ? Kr((long)Math.Round(amount * 100m, MidpointRounding.AwayFromZero)) : "–")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        }
     }
 </MudStack>
 </PageErrorBoundary>
@@ -175,6 +249,9 @@
 
     private QualityCheckData? data;
     private QualityCheckReport? report;
+    private IReadOnlyList<Grant>? grantList;
+    private GrantFikenData? grantFiken;
+    private string? grantError;
     private DateOnly today;
     private DateOnly referenceDate;
     private bool hasCompany = true;
@@ -221,7 +298,7 @@
         }
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool refresh = false)
     {
         if (isLoading)
         {
@@ -244,15 +321,14 @@
         {
             var settings = await ConfigStore.LoadSettingsAsync(ct);
             hasCompany = !string.IsNullOrWhiteSpace(settings.FikenCompanySlug);
+            await LoadGrantsAsync(refresh, ct);
             if (!hasCompany)
             {
                 data = null;
-                report = null;
                 return;
             }
 
             data = await QualityChecks.FetchAsync(settings.FikenCompanySlug!, ct);
-            Rebuild();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -269,12 +345,48 @@
         }
         finally
         {
+            Rebuild();
             isLoading = false;
         }
     }
 
+    // Tilskudd leses lokalt, og Fiken-delen kan mangle uten at resten av sjekken stopper.
+    private async Task LoadGrantsAsync(bool refresh, CancellationToken ct)
+    {
+        grantError = null;
+        grantFiken = null;
+        try
+        {
+            grantList = (await Grants.LoadAsync(ct)).Grants;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Klarte ikke å lese tilskudd");
+            grantList = null;
+            return;
+        }
+
+        try
+        {
+            grantFiken = await Grants.LoadFikenAsync(Grants.YearsFor(grantList), refresh, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Klarte ikke å hente posteringer for tilskudd");
+            grantError = UserErrors.Describe(ex, "Klarte ikke å hente posteringer fra Fiken");
+        }
+    }
+
     // Dato endres uten nye kall til Fiken: reglene kjøres på nytt på data som allerede er hentet.
-    private void Rebuild() => report = data?.BuildReport(referenceDate);
+    private void Rebuild()
+    {
+        var grants = grantList is null
+            ? null
+            : GrantCheckRules.Build(grantList, grantFiken ?? GrantFikenData.None, referenceDate, grantError);
+        var baseReport = data?.BuildReport(referenceDate)
+            ?? (grants is null ? null : new QualityCheckReport(referenceDate, DateTimeOffset.Now, []));
+        report = baseReport is null ? null : baseReport with { Grants = grants };
+    }
 
     private void HandleDateChanged(DateTime? value)
     {
@@ -389,6 +501,14 @@
         QualityStatus.Overdue => "Forfalt",
         QualityStatus.CheckManually => "Sjekk",
         _ => "Åpne poster"
+    };
+
+    private static string GrantSummaryStatusText(GrantCheckSection section) => section.Status switch
+    {
+        QualityStatus.Ok => "OK",
+        QualityStatus.Overdue => "Frist/forfalt",
+        QualityStatus.CheckManually => "Sjekk",
+        _ => "Frister nærmer seg"
     };
 
     public async ValueTask DisposeAsync()

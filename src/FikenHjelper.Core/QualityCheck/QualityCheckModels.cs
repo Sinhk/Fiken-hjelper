@@ -70,9 +70,20 @@ public sealed record QualityCheckSection(
 public sealed record QualityCheckReport(
     DateOnly ReferenceDate,
     DateTimeOffset FetchedAt,
-    IReadOnlyList<QualityCheckSection> Sections)
+    IReadOnlyList<QualityCheckSection> Sections,
+    GrantCheckSection? Grants = null)
 {
-    public QualityStatus Status => Sections.Count == 0
-        ? QualityStatus.Ok
-        : Sections.Max(s => s.Status);
+    public QualityStatus Status
+    {
+        get
+        {
+            var statuses = Sections.Select(s => s.Status).ToList();
+            if (Grants is not null)
+            {
+                statuses.Add(Grants.Status);
+            }
+
+            return statuses.Count == 0 ? QualityStatus.Ok : statuses.Max();
+        }
+    }
 }

@@ -1,9 +1,11 @@
 @page "/budsjett"
 @rendermode InteractiveServer
 @using System.Globalization
+@using FikenHjelper.Core.Grants
 @implements IDisposable
 @inject BudgetReportService Reports
 @inject IBudgetStore BudgetStore
+@inject IGrantStore GrantStore
 @inject ILogger<Budget> Logger
 
 <PageTitle>Budsjett og regnskap – Fiken-hjelper</PageTitle>
@@ -190,6 +192,14 @@
                                                         <MudStack Row Justify="Justify.SpaceBetween" Spacing="4">
                                                             <MudText Typo="Typo.body2">
                                                                 @p.Name
+                                                                @foreach (var link in GrantLinksFor(p.ProjectId))
+                                                                {
+                                                                    <MudTooltip Text="@link.Tooltip">
+                                                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                                                                 Icon="@Icons.Material.Filled.Savings" Href="@link.Href"
+                                                                                 aria-label="@link.Tooltip">Tilskudd</MudChip>
+                                                                    </MudTooltip>
+                                                                }
                                                                 @if (p.FullAmount is { } full)
                                                                 {
                                                                     <MudText Inline Typo="Typo.caption" Color="@(p.Share is null ? Color.Warning : Color.Secondary)">
@@ -339,6 +349,7 @@
     };
 
     private BudgetComparison? comparison;
+    private IReadOnlyDictionary<long, IReadOnlyList<GrantProjectLink>> grantLinks = new Dictionary<long, IReadOnlyList<GrantProjectLink>>();
     private List<int> selectableYears = [];
     private int lastYear = DateTime.Today.Year;
     private int yearCount = 3;
@@ -393,6 +404,7 @@
                 Enumerable.Range(0, yearCount).Select(i => lastYear - i),
                 refresh,
                 disposeCts.Token);
+            await LoadGrantLinksAsync();
         }
         catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
         {
@@ -414,6 +426,23 @@
             isLoading = false;
         }
     }
+
+    // Merkingen er bare lesing fra grants.json. Feil her skal aldri stoppe budsjettrapporten.
+    private async Task LoadGrantLinksAsync()
+    {
+        try
+        {
+            grantLinks = GrantProjectLinks.Build((await GrantStore.LoadAsync(disposeCts.Token)).Grants);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Klarte ikke å lese tilskudd for merking av prosjekter");
+            grantLinks = new Dictionary<long, IReadOnlyList<GrantProjectLink>>();
+        }
+    }
+
+    private IReadOnlyList<GrantProjectLink> GrantLinksFor(long projectId) =>
+        grantLinks.TryGetValue(projectId, out var links) ? links : [];
 
     private async Task HandleLastYearChanged(int year)
     {

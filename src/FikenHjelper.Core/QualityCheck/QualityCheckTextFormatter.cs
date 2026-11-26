@@ -73,6 +73,24 @@ public static class QualityCheckTextFormatter
             sb.Append("Sum\t\t\t\t\t\t").Append(FormatKronerPlain(section.TotalOre)).Append("\t\t\n");
         }
 
+        if (report.Grants is { } grants)
+        {
+            sb.Append('\n').Append(GrantHeading(grants)).Append('\n');
+            AppendGrantNote(sb, grants);
+            if (grants.Findings.Count == 0)
+            {
+                sb.Append("Ingen funn.\n");
+            }
+            else
+            {
+                sb.AppendJoin('\t', GrantColumns).Append('\n');
+                foreach (var row in grants.Findings.Select(f => GrantCells(f, FormatKronerPlain)))
+                {
+                    sb.AppendJoin('\t', row.Select(CleanTab)).Append('\n');
+                }
+            }
+        }
+
         return sb.ToString();
     }
 
@@ -127,6 +145,44 @@ public static class QualityCheckTextFormatter
             sb.Append("</tr>\n</tbody></table>\n");
         }
 
+        if (report.Grants is { } grants)
+        {
+            sb.Append("<h3>").Append(Encode(GrantHeading(grants))).Append("</h3>\n");
+            if (grants.MissingDataNote is not null)
+            {
+                sb.Append("<p>").Append(Encode(grants.MissingDataNote)).Append("</p>\n");
+            }
+
+            if (grants.Findings.Count == 0)
+            {
+                sb.Append("<p>Ingen funn.</p>\n");
+            }
+            else
+            {
+                sb.Append("<table style=\"border-collapse:collapse\"><thead><tr>");
+                foreach (var (column, i) in GrantColumns.Select((c, i) => (c, i)))
+                {
+                    sb.Append("<th style=\"").Append(i == GrantAmountColumn ? NumCell : Cell).Append("\">")
+                        .Append(Encode(column)).Append("</th>");
+                }
+
+                sb.Append("</tr></thead><tbody>\n");
+                foreach (var row in grants.Findings.Select(f => GrantCells(f, FormatKroner)))
+                {
+                    sb.Append("<tr>");
+                    for (var i = 0; i < row.Length; i++)
+                    {
+                        sb.Append("<td style=\"").Append(i == GrantAmountColumn ? NumCell : Cell).Append("\">")
+                            .Append(Encode(row[i])).Append("</td>");
+                    }
+
+                    sb.Append("</tr>\n");
+                }
+
+                sb.Append("</tbody></table>\n");
+            }
+        }
+
         return sb.ToString();
     }
 
@@ -155,8 +211,54 @@ public static class QualityCheckTextFormatter
             sb.Append("| **Sum** |  |  |  |  |  | **").Append(FormatKroner(section.TotalOre)).Append("** |  |  |\n");
         }
 
+        if (report.Grants is { } grants)
+        {
+            sb.Append("\n### ").Append(GrantHeading(grants)).Append("\n\n");
+            AppendGrantNote(sb, grants, markdown: true);
+            if (grants.Findings.Count == 0)
+            {
+                sb.Append("Ingen funn.\n");
+            }
+            else
+            {
+                sb.Append("| ").AppendJoin(" | ", GrantColumns).Append(" |\n");
+                sb.Append('|').Append(string.Concat(GrantColumns.Select((_, i) => i == GrantAmountColumn ? "---:|" : "---|"))).Append('\n');
+                foreach (var row in grants.Findings.Select(f => GrantCells(f, FormatKroner)))
+                {
+                    sb.Append("| ").AppendJoin(" | ", row.Select(EscapeMarkdown)).Append(" |\n");
+                }
+            }
+        }
+
         return sb.ToString();
     }
+
+    private static readonly string[] GrantColumns = ["Status", "Tilskudd", "Kontroll", "Detalj", "Beløp (kr)"];
+
+    private const int GrantAmountColumn = 4;
+
+    private static string GrantHeading(GrantCheckSection section) =>
+        section.Findings.Count == 0
+            ? $"{GrantCheckSection.Title}: ingen funn"
+            : $"{GrantCheckSection.Title}: {section.Findings.Count} funn"
+                + (section.OverdueCount > 0 ? $" (frist passert eller forfalt: {section.OverdueCount})" : "");
+
+    private static void AppendGrantNote(StringBuilder sb, GrantCheckSection section, bool markdown = false)
+    {
+        if (section.MissingDataNote is not null)
+        {
+            sb.Append(markdown ? EscapeMarkdown(section.MissingDataNote) : CleanTab(section.MissingDataNote)).Append(markdown ? "\n\n" : "\n");
+        }
+    }
+
+    private static string[] GrantCells(GrantCheckFinding f, Func<long, string> formatAmount) =>
+    [
+        StatusText(f.Status),
+        f.GrantName,
+        f.Check,
+        f.Detail,
+        f.Amount is { } amount ? formatAmount((long)Math.Round(amount * 100m, MidpointRounding.AwayFromZero)) : ""
+    ];
 
     private static string SectionHeading(QualityCheckSection section)
     {

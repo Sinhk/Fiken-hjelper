@@ -45,7 +45,7 @@ dotnet run --project src/FikenHjelper.Web
 
 ### 4. MCP-server for AI-chat (Claude Desktop, VS Code, Antigravity)
 
-`FikenHjelper.Mcp` gir AI-klienter verktøy for innkommende fakturaer (innboks/EHF → forslag til konto og prosjekt → **kjøpsutkast**), budsjettstatus, avviksforklaring og kontroll av regnskapet. Serveren bruker samme innlogging og datamappe som web-appen, så logg inn via web-appen først.
+`FikenHjelper.Mcp` gir AI-klienter verktøy for innkommende fakturaer (innboks/EHF → forslag til konto og prosjekt → **kjøpsutkast**), budsjettstatus, avviksforklaring, kontroll av regnskapet og status for søknader og tilskudd (`get_grant_status`, bare lesing). Serveren bruker samme innlogging og datamappe som web-appen, så logg inn via web-appen først.
 
 **Sikkerhet:**
 - Bare kjøpsutkast kan opprettes. Ingenting bokføres eller betales.

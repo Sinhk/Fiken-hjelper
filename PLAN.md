@@ -122,11 +122,12 @@ FikenHjelper.slnx
 - **Andre nyttige MCP-verktøy:**
   - `get_budget_status` / `explain_project_variance`: Hente tall fra Fase 3 slik at AI-en kan forklare avvik og skrive korte oppsummeringer til styremøtet.
   - `find_accounting_anomalies`: Finne bilag uten prosjektkode, ubetalte fakturaer eller manglende vedlegg.
+  - `get_grant_status` *(lagt til i Fase 7)*: Status for søknader og tilskudd (bare lesing).
 
 **Status for første versjon:**
 - **Serveren:**
   - Konsollapp over stdio med `ModelContextProtocol` 2.4.0.
-  - 15 verktøy og 2 prompter (`behandle_innboks`, `styremote_oppsummering`).
+  - 15 verktøy (16 med `get_grant_status` fra Fase 7) og 2 prompter (`behandle_innboks`, `styremote_oppsummering`).
   - Bruker samme `config.json`, innlogging og user-secrets som Web. Oppsett av klientene står i README.
 - **Fiken-klienten:** `IFikenPurchasingClient`, implementert som partial i `FikenClient`, dekker innboks, EHF, kjøp, salg, kjøpsutkast, vedlegg, kontoer og leverandører. Nedlasting av bilag sender bare bearer-token til https-adresser hos fiken.no.
 - **Sikringer:**
@@ -185,11 +186,12 @@ FikenHjelper.slnx
    - Logikken ligger i `FikenHjelper.Core/QualityCheck` (`QualityCheckService`, `QualityCheckRules`, `QualityCheckTextFormatter`) og bruker bare GET-kall. Salg og kjøp hentes med Fase 4s `IFikenPurchasingClient` og samme modeller (`FikenSale`, `FikenPurchase`).
    - Overlapp med Fase 4: `AnomalyFinder.OverduePurchases`/`OverdueSales` i `find_accounting_anomalies` gjør en enklere variant. Senere kan de bruke `QualityCheckRules`, så kreditsaldoer, valuta og fakturasalg håndteres likt.
    - Siden `/kvalitetssjekk` (MudBlazor) viser sammendrag og tabell per seksjon, lar deg velge «Forfalt per»-dato (i dag eller 31.12 i fjor) uten nye kall til Fiken, og kopierer tabellen som HTML og tekst (blir en ekte tabell i Word og Google Docs) eller som Markdown. Kopiering krever https eller localhost. Safari kan avvise kopiering, fordi klikket går via serveren før utklippstavlen skrives. Da vises en melding.
+   - Gjort i Fase 7: tilskudd er en egen seksjon i kvalitetssjekken (frister, brukt mer enn innvilget, ikke mottatt etter 60 dager, kostnader utenfor bruksperioden, ugyldig andelsfordeling, utbetaling som ikke finnes i Fiken).
    - Senere: ubrukte bilag i innboksen, fakturautkast som aldri ble sendt, bank i Fiken mot banksaldo, og Fase 3s «bilag uten prosjekt» og «prosjekter uten budsjettpost» (gjenbrukes, ikke skrevet på nytt).
    - Kreditsaldoer (overbetaling, kreditnota som ikke er motregnet) vises med egen status og trekkes fra summen. Poster der beløpet ikke kan regnes ut sikkert (fremmed valuta, fakturasalg uten treff), merkes «Sjekk» og holdes utenfor summen.
    - Tabulatorseparert tekst bruker tall uten tusenskille (`1234,50`), så regneark leser dem som tall. Markdown bruker `1 234,50`.
    - *Begrensning:* listen viser åpne poster og utestående beløp slik de er i Fiken i dag. En post som ble betalt etter valgt dato, kommer ikke med, og delbetalinger etter valgt dato er trukket fra beløpet. Dette må stå tydelig på siden.
-2. **Tilskuddsgrunnlag** *(størrelse S–M per ordning)* → *planlagt som Fase 7 nedenfor*
+2. **Tilskuddsgrunnlag** *(størrelse S–M per ordning)* → *implementert som Fase 7 nedenfor (verifisering mot ekte Fiken gjenstår)*
    - Aktuelt: fylkeskommunalt tilskudd og kommunale tilskudd eller stiftelser. Frifond og momskompensasjon er ikke aktuelle nå.
    - Bygger på Fase 3s summer per konto og prosjekt og xlsx-eksporten derfra.
 3. **Utlegg og reiseregninger fra frivillige** *(størrelse M–L, mest i Fase 4)*
@@ -219,7 +221,7 @@ FikenHjelper.slnx
 
 ---
 
-## Fase 7 – Søknader og tilskudd *(Plan godkjent 26.11.2026, ikke startet)*
+## Fase 7 – Søknader og tilskudd *(Implementert, steg 1–4. Ikke verifisert mot ekte Fiken ennå)*
 **Mål:** Holde styr på hva kretsen har søkt om, hva som er innvilget, hva som faktisk er utbetalt, og hva pengene er brukt på. Bruken hentes fra Fiken ved at hvert tilskudd kobles til ett eller flere Fiken-prosjekter, på samme måte som budsjettpostene i Fase 3.
 
 **Avgrensning:**
@@ -271,10 +273,22 @@ FikenHjelper.slnx
   - «Kopier som tabell» (HTML og tekst, samme løsning som kvalitetssjekken) for å lime inn i rapporten til tilskuddsgiveren.
 - **Eksport:** `/tilskudd/eksport?id=…` gir .xlsx (ClosedXML) med fanene *Sammendrag*, *Bruk per konto* og *Bilag*. Oversikten kan også eksporteres med alle tilskudd for et år.
 
-### Kobling til resten av appen (senere steg)
+### Kobling til resten av appen *(implementert i steg 4)*
 - Budsjettsiden (`/budsjett`): merke prosjekter som er finansiert av et tilskudd, med lenke til tilskuddet.
 - Kvalitetssjekken: «Rapporteringsfrist nærmer seg/er passert», «Brukt mer enn innvilget», «Innvilget, men ikke mottatt etter 60 dager», «Kostnader på prosjektet utenfor bruksperioden».
 - MCP: lesverktøyet `get_grant_status`, så AI-en kan skrive utkast til rapport til tilskuddsgiver eller oppsummering til styremøtet.
+
+### Status
+- **Finnes (steg 1–4):**
+  - Modell, `JsonGrantStore` (`grants.json` med `grants.lock`), `GrantReportBuilder` og forslag til utbetalinger (PR #24).
+  - `/tilskudd` og `/tilskudd/{id}` med prosjektkobling, utbetalinger og bruk per konto (PR #26).
+  - Kopier som tabell og Excel-eksport (PR #28).
+  - Integrasjon (denne PR-en): seksjonen «Tilskudd» i kvalitetssjekken (`GrantCheckRules`, bruker samme «per dato» som siden), merking av prosjekter på `/budsjett` (`GrantProjectLinks`, bare lesing av `grants.json`) og MCP-verktøyet `get_grant_status` (bare lesing, samme datamappe og lås som Web).
+- **Gjenstår:**
+  - Verifisere mot ekte Fiken på Windows-maskinen: prosjektvelger, forslag til utbetalinger, bruk per konto, kopiering inn i Word og Google Docs, og Excel med norsk språk.
+  - Justere grensene for forslagene mot ekte navn og posteringstekster.
+  - Ende-til-ende-tester når testinfrastrukturen (se Fase 6) finnes.
+  - Kontrollen «Kostnader utenfor bruksperioden» ser bare på årene som hentes for tilskuddet (fra tidligste kjente dato), så kostnader i tidligere år fanges ikke.
 
 ### Rekkefølge (én PR per steg)
 1. **Core:** modell, `JsonGrantStore`, `GrantReportBuilder` og forslag til utbetalinger. xUnit-tester med syntetiske data (oppdiktede tilskuddsgivere og beløp).

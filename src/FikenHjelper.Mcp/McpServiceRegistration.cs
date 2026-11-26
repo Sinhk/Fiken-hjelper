@@ -1,6 +1,7 @@
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
+using FikenHjelper.Core.Grants;
 using FikenHjelper.Core.Purchasing;
 using FikenHjelper.Mcp.Safety;
 using FikenHjelper.Mcp.Services;
@@ -61,6 +62,11 @@ public static class McpServiceRegistration
             new JsonBudgetStore(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
         services.AddSingleton(sp => new FikenDataCache(sp.GetRequiredService<TimeProvider>()));
         services.AddScoped<BudgetReportService>();
+
+        // Samme grants.json og grants.lock som Web. MCP-serveren bare leser tilskudd.
+        services.AddSingleton<IGrantStore>(sp =>
+            new JsonGrantStore(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
+        services.AddScoped<GrantService>();
 
         services.AddHttpClient(FikenOAuthService.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         services.AddSingleton<IFikenOAuthService>(sp =>

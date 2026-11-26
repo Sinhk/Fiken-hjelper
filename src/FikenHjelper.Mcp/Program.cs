@@ -41,6 +41,7 @@ builder.Services
     .WithTools<PurchaseTools>(ToolSupport.JsonOptions)
     .WithTools<BudgetTools>(ToolSupport.JsonOptions)
     .WithTools<AnomalyTools>(ToolSupport.JsonOptions)
+    .WithTools<GrantTools>(ToolSupport.JsonOptions)
     .WithPrompts<FikenPrompts>(ToolSupport.JsonOptions);
 
 await builder.Build().RunAsync();
