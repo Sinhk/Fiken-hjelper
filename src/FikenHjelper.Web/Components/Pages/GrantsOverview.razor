@@ -40,11 +40,11 @@
                     Oppdater fra Fiken
                 </MudButton>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ContentCopy"
-                           OnClick="CopyTableAsync" Disabled="@(rows.Count == 0 || Clipboard.IsCopying)">Kopier som tabell</MudButton>
+                           OnClick="CopyTableAsync" Disabled="@(rows.Count == 0 || isLoading || Clipboard.IsCopying)">Kopier som tabell</MudButton>
                 <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Notes"
-                           OnClick="CopyMarkdownAsync" Disabled="@(rows.Count == 0 || Clipboard.IsCopying)">Kopier som Markdown</MudButton>
+                           OnClick="CopyMarkdownAsync" Disabled="@(rows.Count == 0 || isLoading || Clipboard.IsCopying)">Kopier som Markdown</MudButton>
                 <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
-                           Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="@(grants.Count == 0)">Last ned Excel</MudButton>
+                           Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="@(rows.Count == 0 || isLoading)">Last ned Excel</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="tilskudd/ny">
                     Nytt tilskudd
                 </MudButton>

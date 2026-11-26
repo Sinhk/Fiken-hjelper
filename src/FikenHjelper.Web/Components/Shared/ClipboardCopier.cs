@@ -85,7 +85,7 @@ public sealed class ClipboardCopier(IJSRuntime js, ISnackbar snackbar, ILogger l
             {
                 await _module.DisposeAsync();
             }
-            catch (JSDisconnectedException)
+            catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
             {
             }
         }

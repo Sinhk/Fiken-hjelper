@@ -180,8 +180,133 @@ public sealed class GrantTextFormatterTests
     {
         Assert.Contains("Ingen tilskudd passer utvalget.", GrantTextFormatter.OverviewToTabSeparated([]));
     }
+
+    private static Grant OperatingWithRangeAndManual()
+    {
+        var grant = new Grant { Name = "Drift 2027", Grantor = "Eksempel fylke", Kind = GrantKind.Operating, Status = GrantStatus.Granted, GrantedAmount = 1000m };
+        grant.AccountRanges = [new AccountRange { From = 6800, To = 6899 }];
+        grant.ManualUses = [new GrantManualUse { Date = new DateOnly(2027, 5, 5), Amount = 250m, Description = "Husleie" }];
+        return grant;
+    }
+
+    [Fact]
+    public void OperatingWithAccountsAndManualUse_WithoutFikenData_DoesNotShowZeroSum()
+    {
+        var report = GrantOutputData.Report(OperatingWithRangeAndManual(), null);
+
+        var tabs = GrantTextFormatter.ToTabSeparated(report);
+        var markdown = GrantTextFormatter.ToMarkdown(report);
+        var html = GrantTextFormatter.ToHtml(report);
+
+        Assert.Contains("\tManuell bruk\t250,00", tabs);
+        Assert.Contains("Sum\t\tmangler Fiken-data", tabs);
+        Assert.Contains("Brukt (kr)\tmangler Fiken-data", tabs);
+        Assert.DoesNotContain("Sum\t\t0,00", tabs);
+        Assert.Contains("| **Sum** |  | **mangler Fiken-data** |", markdown);
+        Assert.Contains("<b>mangler Fiken-data</b>", html);
+    }
+
+    [Fact]
+    public void LinkedPaymentMissingInFiken_IsNotCalledMissingFikenData()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.Payments = [new GrantPayment { JournalEntryId = 77, Date = new DateOnly(2027, 2, 1) }];
+        var report = GrantOutputData.Report(grant, GrantOutputData.Entries);
+
+        Assert.Equal(GrantTextFormatter.PaymentNotFound, GrantTextFormatter.ReceivedMissingText(report));
+        Assert.Contains("Mottatt (kr)\tutbetaling ikke funnet i Fiken", GrantTextFormatter.ToTabSeparated(report));
+        var overview = GrantTextFormatter.OverviewToTabSeparated([report]);
+        Assert.Contains("utbetaling ikke funnet i Fiken", overview);
+        Assert.DoesNotContain("Mottatt (kr)\tmangler Fiken-data", GrantTextFormatter.ToTabSeparated(report));
+    }
+
+    [Fact]
+    public void NegativeAmounts_KeepTheirSign()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.GrantedAmount = 5000m;
+        var report = GrantOutputData.Report(grant,
+        [
+            GrantTestData.Cost(1, "6800", 15000m, GrantTestData.Kurs, "2027-03-01"),
+            GrantTestData.Cost(2, "7140", -200m, GrantTestData.Kurs, "2027-04-01")
+        ]);
+
+        var tabs = GrantTextFormatter.ToTabSeparated(report);
+        var markdown = GrantTextFormatter.ToMarkdown(report);
+
+        Assert.Contains("Gjenstår å motta (kr)\t-5000,00", tabs);
+        Assert.Contains("Ubrukt (mottatt − brukt) (kr)\t-4800,00", tabs);
+        Assert.Contains("7140\tReisekostnad\t-200,00", tabs);
+        Assert.Contains("| Gjenstår å motta (kr) | -5\u00A0000,00 |", markdown);
+    }
+
+    [Fact]
+    public void SpecialCharacters_AreEscaped()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.Name = "A|B\\C*D";
+        grant.Grantor = "x\ty\nz|w *";
+        var report = GrantOutputData.Report(grant, GrantOutputData.Entries);
+
+        var tabs = GrantTextFormatter.ToTabSeparated(report);
+        var markdown = GrantTextFormatter.ToMarkdown(report);
+
+        Assert.Contains("Tilskuddsgiver\tx y z|w *\n", tabs);
+        Assert.Equal(1, tabs.Split('\n').Count(l => l.StartsWith("Tilskuddsgiver\t", StringComparison.Ordinal)));
+        Assert.Contains("## Tilskudd: A\\|B\\\\C\\*D", markdown);
+        Assert.Contains("| Tilskuddsgiver | x y z\\|w \\* |", markdown);
+    }
 }
 
+public sealed class GrantExportQueryTests
+{
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("", "", "")]
+    [InlineData(null, "2027", "granted")]
+    [InlineData("11111111-1111-1111-1111-111111111111", null, null)]
+    public void Valid_IsAccepted(string? id, string? year, string? status)
+    {
+        Assert.True(GrantExportQuery.TryParse(id, year, status, out _, out var error), error);
+    }
+
+    [Fact]
+    public void Valid_ParsesValues()
+    {
+        Assert.True(GrantExportQuery.TryParse(null, "2027", "Granted", out var query, out _));
+        Assert.Equal(2027, query.Year);
+        Assert.Equal(GrantStatus.Granted, query.Status);
+        Assert.Null(query.Id);
+    }
+
+    [Theory]
+    [InlineData("ikke-en-guid", null, null)]
+    [InlineData(null, "abc", null)]
+    [InlineData(null, "1800", null)]
+    [InlineData(null, "2027.5", null)]
+    [InlineData(null, "-2027", null)]
+    [InlineData(null, null, "2")]
+    [InlineData(null, null, "99")]
+    [InlineData(null, null, "Ukjent")]
+    [InlineData(null, null, "Granted,Closed")]
+    public void Invalid_IsRejectedWithNorwegianMessage(string? id, string? year, string? status)
+    {
+        Assert.False(GrantExportQuery.TryParse(id, year, status, out _, out var error));
+        Assert.False(string.IsNullOrWhiteSpace(error));
+        Assert.DoesNotContain("not", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SelectGrants_FiltersOnYearAndStatus()
+    {
+        var a = GrantOutputData.KursGrant();
+        var b = new Grant { Name = "Annet", Status = GrantStatus.Submitted, AppliedDate = new DateOnly(2025, 3, 1) };
+
+        Assert.Equal([a], GrantOverviewLogic.SelectGrants([a, b], 2027, null));
+        Assert.Equal([b], GrantOverviewLogic.SelectGrants([a, b], null, GrantStatus.Submitted));
+        Assert.Equal(2, GrantOverviewLogic.SelectGrants([a, b], null, null).Count);
+    }
+}
 public sealed class GrantWorkbookTests
 {
     private static XLWorkbook Open(byte[] bytes) => new(new MemoryStream(bytes));
@@ -326,5 +451,139 @@ public sealed class GrantWorkbookTests
         Assert.Equal("Tilskudd 2027 Innvilget 2027-06-15.xlsx", GrantWorkbookExporter.OverviewFileName(2027, GrantStatus.Granted, GrantOutputData.Today));
         Assert.Equal("Tilskudd alle år 2027-06-15.xlsx", GrantWorkbookExporter.OverviewFileName(null, null, GrantOutputData.Today));
         Assert.True(GrantWorkbookExporter.FileName(new Grant { Name = new string('a', 500) }, GrantOutputData.Today).Length < 120);
+    }
+
+    [Fact]
+    public void OperatingWithAccountsAndManualUse_WithoutFikenData_HasEmptySumAndNotes()
+    {
+        var grant = new Grant { Name = "Drift 2027", Grantor = "Eksempel fylke", Kind = GrantKind.Operating, Status = GrantStatus.Granted, GrantedAmount = 1000m };
+        grant.AccountRanges = [new AccountRange { From = 6800, To = 6899 }];
+        grant.ManualUses = [new GrantManualUse { Date = new DateOnly(2027, 5, 5), Amount = 250m, Description = "Husleie" }];
+        using var wb = Open(GrantWorkbookExporter.ExportGrant(GrantOutputData.Report(grant, null), null, GrantOutputData.Today));
+
+        var byAccount = wb.Worksheet("Bruk per konto");
+        Assert.Equal("Manuell bruk", byAccount.Cell(3, 2).GetString());
+        Assert.Equal(250, byAccount.Cell(3, 3).GetDouble());
+        Assert.Equal("Sum", byAccount.Cell(4, 1).GetString());
+        Assert.True(byAccount.Cell(4, 3).IsEmpty());
+        Assert.Contains("Mangler Fiken-data", byAccount.Cell(5, 1).GetString());
+
+        var postings = wb.Worksheet("Bilag");
+        Assert.Equal("Husleie", postings.Cell(2, 3).GetString());
+        Assert.Contains("Mangler Fiken-data", postings.Cell(4, 1).GetString());
+
+        var used = FindRow(wb.Worksheet("Sammendrag"), "Brukt (kr)");
+        Assert.True(used.Cell(2).IsEmpty());
+        Assert.Contains("fiken-data", used.Cell(3).GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LinkedPaymentMissingInFiken_IsExplainedAsNotFound()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.Payments = [new GrantPayment { JournalEntryId = 77, Date = new DateOnly(2027, 2, 1) }];
+        var report = GrantOutputData.Report(grant, GrantOutputData.Entries);
+        using var wb = Open(GrantWorkbookExporter.ExportGrant(report, GrantOutputData.Projects, GrantOutputData.Today));
+
+        var received = FindRow(wb.Worksheet("Sammendrag"), "Mottatt (kr)");
+        Assert.True(received.Cell(2).IsEmpty());
+        Assert.Equal("Utbetaling ikke funnet i Fiken.", received.Cell(3).GetString());
+
+        using var overview = Open(GrantWorkbookExporter.ExportOverview([report], GrantOutputData.Today));
+        Assert.Equal("Mottatt: utbetaling ikke funnet i Fiken", overview.Worksheet("Tilskudd").Cell(2, 14).GetString());
+    }
+
+    [Fact]
+    public void PartialShare_ShowsShareAndPartOfAmount()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.ProjectShares = new Dictionary<long, decimal> { [GrantTestData.Kurs] = 40m };
+        using var wb = Open(GrantWorkbookExporter.ExportGrant(GrantOutputData.Report(grant, GrantOutputData.Entries), GrantOutputData.Projects, GrantOutputData.Today));
+
+        var postings = wb.Worksheet("Bilag");
+        Assert.Equal(40, postings.Cell(2, 7).GetDouble());
+        Assert.Equal("General\" %\"", postings.Cell(2, 7).Style.NumberFormat.Format);
+        Assert.Equal(493.80, postings.Cell(2, 8).GetDouble());
+        Assert.Equal(1234.50, postings.Cell(2, 9).GetDouble());
+        Assert.Equal("#,##0.00;-#,##0.00", postings.Cell(2, 8).Style.NumberFormat.Format);
+        Assert.Equal("#,##0.00;-#,##0.00", postings.Cell(2, 9).Style.NumberFormat.Format);
+    }
+
+    [Fact]
+    public void PaymentSum_HasAmountFormat()
+    {
+        var report = GrantOutputData.Report(GrantOutputData.KursGrant(), GrantOutputData.Entries);
+        using var wb = Open(GrantWorkbookExporter.ExportGrant(report, GrantOutputData.Projects, GrantOutputData.Today));
+
+        var sum = FindRow(wb.Worksheet("Sammendrag"), "Sum");
+        Assert.Equal(10000, sum.Cell(2).GetDouble());
+        Assert.Equal("#,##0.00;-#,##0.00", sum.Cell(2).Style.NumberFormat.Format);
+    }
+
+    [Fact]
+    public void NegativeAmounts_AreWrittenAsNegativeNumbers()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.GrantedAmount = 5000m;
+        var report = GrantOutputData.Report(grant,
+        [
+            GrantTestData.Cost(1, "6800", 15000m, GrantTestData.Kurs, "2027-03-01"),
+            GrantTestData.Cost(2, "7140", -200m, GrantTestData.Kurs, "2027-04-01")
+        ]);
+        using var wb = Open(GrantWorkbookExporter.ExportGrant(report, GrantOutputData.Projects, GrantOutputData.Today));
+
+        var summary = wb.Worksheet("Sammendrag");
+        Assert.Equal(-5000, FindRow(summary, "Gjenstår å motta (kr)").Cell(2).GetDouble());
+        Assert.Equal(-4800, FindRow(summary, "Ubrukt (mottatt − brukt) (kr)").Cell(2).GetDouble());
+        Assert.Equal(-200, wb.Worksheet("Bruk per konto").Cell(4, 3).GetDouble());
+        Assert.Equal(-200, wb.Worksheet("Bilag").Cell(3, 8).GetDouble());
+    }
+
+    [Fact]
+    public void FormulaLikeText_IsStoredAsText()
+    {
+        var grant = new Grant
+        {
+            Name = "=SUM(1,2)",
+            Grantor = "+1",
+            Scheme = "@x",
+            Notes = "-2+3",
+            Kind = GrantKind.Operating,
+            Status = GrantStatus.Granted,
+            GrantedAmount = 100m,
+            ManualUses = [new GrantManualUse { Date = new DateOnly(2027, 5, 5), Amount = 10m, Description = "=1+1" }],
+            Payments = [new GrantPayment { Amount = 5m, Date = new DateOnly(2027, 2, 1), Note = "@y" }]
+        };
+        var report = GrantOutputData.Report(grant, []);
+        using var single = Open(GrantWorkbookExporter.ExportGrant(report, null, GrantOutputData.Today));
+        using var overview = Open(GrantWorkbookExporter.ExportOverview([report], GrantOutputData.Today));
+
+        foreach (var wb in new[] { single, overview })
+        {
+            foreach (var cell in wb.Worksheets.SelectMany(w => w.CellsUsed()))
+            {
+                Assert.False(cell.HasFormula, $"{cell.Worksheet.Name}!{cell.Address}");
+            }
+        }
+
+        var summary = single.Worksheet("Sammendrag");
+        Assert.Equal("+1", FindRow(summary, "Tilskuddsgiver").Cell(2).GetString());
+        Assert.Equal(XLDataType.Text, FindRow(summary, "Tilskuddsgiver").Cell(2).DataType);
+        Assert.Equal("@x", FindRow(summary, "Ordning").Cell(2).GetString());
+        Assert.Equal("-2+3", FindRow(summary, "Notater").Cell(2).GetString());
+        Assert.Equal("=1+1", single.Worksheet("Bilag").Cell(2, 3).GetString());
+        var name = overview.Worksheet("Tilskudd").Cell(2, 1);
+        Assert.Equal("=SUM(1,2)", name.GetString());
+        Assert.Equal(XLDataType.Text, name.DataType);
+    }
+
+    [Fact]
+    public void ProjectGrant_IgnoresManualUses()
+    {
+        var grant = GrantOutputData.KursGrant();
+        grant.ManualUses = [new GrantManualUse { Amount = 999m, Description = "Skal ikke med" }];
+        using var wb = Open(GrantWorkbookExporter.ExportGrant(GrantOutputData.Report(grant, GrantOutputData.Entries), GrantOutputData.Projects, GrantOutputData.Today));
+
+        Assert.DoesNotContain(wb.Worksheet("Bilag").CellsUsed(), c => c.GetString() == "Skal ikke med");
     }
 }

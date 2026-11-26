@@ -24,7 +24,7 @@ public static class GrantWorkbookExporter
     public static string FileName(Grant grant, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(grant);
-        return $"Tilskudd {SafeName(grant.Name)} {today:yyyy-MM-dd}.xlsx";
+        return $"Tilskudd {SafeName(grant.Name)} {today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}.xlsx";
     }
 
     /// <summary>Filnavn for oversikten, med år og status når filteret er satt.</summary>
@@ -116,7 +116,7 @@ public static class GrantWorkbookExporter
         var remaining = GrantOverviewLogic.RemainingOrNull(report);
         var unused = received is null ? null : report.Unused;
         Field("Innvilget (kr)", report.Granted, report.Granted is null ? "Ikke satt" : null);
-        Field("Mottatt (kr)", received, received is null ? "Mangler Fiken-data. Koblede utbetalinger kan ikke leses." : null);
+        Field("Mottatt (kr)", received, GrantTextFormatter.ReceivedMissingText(report) is { } receivedMissing ? Capitalize(receivedMissing) : null);
         Field("Brukt (kr)", report.Used, GrantTextFormatter.UsedMissingText(report) is { } missing ? Capitalize(missing) : null);
         Field("Gjenstår å motta (kr)", remaining, remaining is null ? "Innvilget eller mottatt er ikke kjent." : null);
         Field("Ubrukt (mottatt − brukt) (kr)", unused, unused is null ? "Mottatt eller brukt er ikke kjent." : null);
@@ -161,13 +161,10 @@ public static class GrantWorkbookExporter
             }
 
             ws.Cell(row, 1).Value = "Sum";
-            if (received is { } total)
+            SetValue(ws.Cell(row, 2), received);
+            if (received is null)
             {
-                ws.Cell(row, 2).Value = total;
-            }
-            else
-            {
-                ws.Cell(row, 4).Value = "Mangler Fiken-data, så summen er ikke kjent.";
+                ws.Cell(row, 4).Value = $"{Capitalize(GrantTextFormatter.ReceivedMissingText(report) ?? "ukjent")} Summen er ikke kjent.";
             }
 
             ws.Range(row, 1, row, 4).Style.Font.Bold = true;
@@ -196,7 +193,11 @@ public static class GrantWorkbookExporter
         }
         else
         {
-            row = AccountRows(ws, row, report.UsedByAccount, report.ManualUsed, report.Used ?? 0m);
+            row = AccountRows(ws, row, report.UsedByAccount, report.ManualUsed, report.Used);
+            if (report.UsedNeedsFikenData)
+            {
+                ws.Cell(row++, 1).Value = "Mangler Fiken-data, så kostnader fra Fiken er ikke med. Summen er ikke kjent.";
+            }
         }
 
         if (report.OtherIncomeByAccount.Count > 0)
@@ -213,7 +214,7 @@ public static class GrantWorkbookExporter
         ws.Columns(1, 3).AdjustToContents(8, 60);
     }
 
-    private static int AccountRows(IXLWorksheet ws, int row, IReadOnlyList<GrantAccountSum> accounts, decimal manual, decimal total)
+    private static int AccountRows(IXLWorksheet ws, int row, IReadOnlyList<GrantAccountSum> accounts, decimal manual, decimal? total)
     {
         foreach (var account in accounts)
         {
@@ -235,7 +236,7 @@ public static class GrantWorkbookExporter
         }
 
         ws.Cell(row, 1).Value = "Sum";
-        ws.Cell(row, 3).Value = total;
+        SetValue(ws.Cell(row, 3), total);
         ws.Range(row, 1, row, 3).Style.Font.Bold = true;
         ws.Range(row, 1, row, 3).Style.Border.TopBorder = XLBorderStyleValues.Thin;
         return row + 1;
@@ -261,7 +262,7 @@ public static class GrantWorkbookExporter
             }
         }
 
-        foreach (var use in grant.ManualUses ?? [])
+        foreach (var use in grant.Kind == GrantKind.Operating ? grant.ManualUses ?? [] : [])
         {
             SetValue(ws.Cell(row, 1), use.Date);
             SetValue(ws.Cell(row, 3), use.Description);
@@ -298,9 +299,10 @@ public static class GrantWorkbookExporter
             row++;
         }
 
-        if (row == 2)
+        var dataRows = row - 2;
+        if (dataRows == 0)
         {
-            ws.Cell(row, 1).Value = GrantTextFormatter.UsedMissingText(report) is { } missing
+            ws.Cell(2, 1).Value = GrantTextFormatter.UsedMissingText(report) is { } missing
                 ? $"Ingen bilag: {missing}."
                 : "Ingen bilag funnet i bruksperioden.";
         }
@@ -309,9 +311,13 @@ public static class GrantWorkbookExporter
         ws.Column(7).Style.NumberFormat.Format = "General\" %\"";
         ws.Column(8).Style.NumberFormat.Format = AmountFormat;
         ws.Column(9).Style.NumberFormat.Format = AmountFormat;
-        if (row > 2)
+        if (dataRows > 0)
         {
             ws.Range(1, 1, row - 1, headers.Length).SetAutoFilter();
+            if (report.UsedNeedsFikenData)
+            {
+                ws.Cell(row + 1, 1).Value = "Mangler Fiken-data, så bilag fra Fiken er ikke med. Bare manuell bruk vises.";
+            }
         }
 
         ws.SheetView.FreezeRows(1);
@@ -364,9 +370,9 @@ public static class GrantWorkbookExporter
             }
 
             var notes = new List<string>();
-            if (received is null)
+            if (GrantTextFormatter.ReceivedMissingText(r) is { } receivedMissing)
             {
-                notes.Add("Mottatt: mangler Fiken-data");
+                notes.Add($"Mottatt: {receivedMissing}");
             }
 
             if (GrantTextFormatter.UsedMissingText(r) is { } missing)
@@ -398,7 +404,11 @@ public static class GrantWorkbookExporter
         ws.Range(row, 1, row, headers.Length).Style.Border.TopBorder = XLBorderStyleValues.Thin;
 
         ws.Range(2, 6, row, 10).Style.NumberFormat.Format = AmountFormat;
-        ws.Range(2, 11, row - 1, 12).Style.NumberFormat.Format = DateFormat;
+        if (rows.Count > 0)
+        {
+            ws.Range(2, 11, row - 1, 12).Style.NumberFormat.Format = DateFormat;
+        }
+
         if (rows.Count > 0)
         {
             ws.Range(1, 1, row - 1, headers.Length).SetAutoFilter();

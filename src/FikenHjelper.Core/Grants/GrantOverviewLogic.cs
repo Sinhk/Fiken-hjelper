@@ -205,6 +205,12 @@ public static class GrantOverviewLogic
         return parts.Count == 0 ? null : string.Join(", ", parts);
     }
 
+    /// <summary>Tilskuddene som passer filteret, i samme rekkefølge som <see cref="Filter"/> gir.</summary>
+    public static IReadOnlyList<Grant> SelectGrants(IEnumerable<Grant> grants, int? year, GrantStatus? status) =>
+        grants
+            .Where(g => (year is null || OverlapsYear(g, year.Value)) && (status is null || g.Status == status))
+            .ToList();
+
     public static IReadOnlyList<GrantReport> Filter(IEnumerable<GrantReport> reports, int? year, GrantStatus? status) =>
         reports
             .Where(r => (year is null || OverlapsYear(r.Grant, year.Value)) && (status is null || r.Grant.Status == status))

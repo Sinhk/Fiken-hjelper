@@ -58,6 +58,23 @@ public static class GrantTextFormatter
         return report.UsedIsUnregistered ? NotRegistered : report.UsedNeedsFikenData ? MissingFikenData : null;
     }
 
+    public const string PaymentNotFound = "utbetaling ikke funnet i Fiken";
+
+    /// <summary>
+    /// Hvorfor «mottatt» ikke kan regnes ut, eller null når den har verdi. Skiller mellom manglende Fiken-data og
+    /// en koblet utbetaling som ikke finnes i Fiken-dataene.
+    /// </summary>
+    public static string? ReceivedMissingText(GrantReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        if (GrantOverviewLogic.ReceivedOrNull(report) is not null)
+        {
+            return null;
+        }
+
+        return report.HasFikenData ? PaymentNotFound : MissingFikenData;
+    }
+
     // ---- Bygging ----
 
     private static List<Block> BuildGrant(GrantReport report, bool includeOtherIncome, Func<long, string> format)
@@ -90,8 +107,8 @@ public static class GrantTextFormatter
 
         Row("Bruksperiode", period);
         Row("Innvilget (kr)", report.Granted is { } granted ? Money(granted) : NotSet);
-        Row("Mottatt (kr)", received is { } r ? Money(r) : MissingFikenData);
-        Row("Brukt (kr)", UsedMissingText(report) ?? Money(report.Used ?? 0m));
+        Row("Mottatt (kr)", received is { } r ? Money(r) : ReceivedMissingText(report) ?? Unknown);
+        Row("Brukt (kr)", report.Used is { } used ? Money(used) : UsedMissingText(report) ?? Unknown);
         Row("Gjenstår å motta (kr)", remaining is { } rem ? Money(rem) : Unknown);
         Row("Ubrukt (mottatt − brukt) (kr)", unused is { } un ? Money(un) : Unknown);
         blocks.Add(new Heading(3, "Sammendrag"));
@@ -110,7 +127,7 @@ public static class GrantTextFormatter
         }
         else
         {
-            blocks.Add(AccountTable(report.UsedByAccount, report.ManualUsed, report.Used ?? 0m, Money));
+            blocks.Add(AccountTable(report.UsedByAccount, report.ManualUsed, report.Used, Money));
         }
 
         if (includeOtherIncome && report.OtherIncomeByAccount.Count > 0)
@@ -122,7 +139,7 @@ public static class GrantTextFormatter
         return blocks;
     }
 
-    private static Table AccountTable(IReadOnlyList<GrantAccountSum> accounts, decimal manual, decimal total, Func<decimal, string> money)
+    private static Table AccountTable(IReadOnlyList<GrantAccountSum> accounts, decimal manual, decimal? total, Func<decimal, string> money)
     {
         var table = new Table(["Konto", "Navn", "Beløp (kr)"], [false, false, true], [], true);
         foreach (var account in accounts)
@@ -135,7 +152,7 @@ public static class GrantTextFormatter
             table.Rows.Add(["", "Manuell bruk", money(manual)]);
         }
 
-        table.Rows.Add(["Sum", "", money(total)]);
+        table.Rows.Add(["Sum", "", total is { } t ? money(t) : MissingFikenData]);
         return table;
     }
 
@@ -172,7 +189,7 @@ public static class GrantTextFormatter
                 Grant.StatusText(r.Grant.Status),
                 Opt(r.Grant.AppliedAmount),
                 Opt(r.Granted),
-                GrantOverviewLogic.ReceivedOrNull(r) is { } rec ? Money(rec) : MissingFikenData,
+                GrantOverviewLogic.ReceivedOrNull(r) is { } rec ? Money(rec) : ReceivedMissingText(r) ?? Unknown,
                 UsedMissingText(r) ?? Opt(r.Used),
                 Opt(GrantOverviewLogic.RemainingOrNull(r))
             ]);
@@ -194,7 +211,7 @@ public static class GrantTextFormatter
 
     // Stjerne markerer delsum og må ikke bli kursiv eller punktliste i Markdown.
     private static string MarkdownText(string value) =>
-        QualityCheckTextFormatter.EscapeMarkdown(value).Replace("*", "\\*");
+        QualityCheckTextFormatter.CleanTab(value).Replace("\\", "\\\\").Replace("|", "\\|").Replace("*", "\\*");
 
     private static long ToOre(decimal kroner) => (long)Math.Round(kroner * 100m, MidpointRounding.AwayFromZero);
 
