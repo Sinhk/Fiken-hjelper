@@ -390,6 +390,66 @@ public sealed class BudgetWorkbookTests
     }
 
     [Fact]
+    public void Import_ReadsSharedFormulasUnderNorwegianCulture()
+    {
+        // På Linux (ICU) bruker nb-NO U+2212 som minustegn. ClosedXML gjør om delte formler til
+        // R1C1 med gjeldende kultur og klarte da ikke å lese «RC[−1]-RC[−2]».
+        using var wb = new XLWorkbook();
+        var overview = wb.AddWorksheet("Ark 1");
+        overview.Cell("B1").Value = "Budsjett 2026";
+        overview.Cell("C1").Value = "Regnskap 2026";
+        overview.Cell("D1").Value = "Avvik 2026";
+        overview.Cell("A2").Value = "Medlemskontingent";
+        overview.Cell("B2").Value = 100;
+        overview.Cell("C2").Value = 80;
+        overview.Cell("D2").FormulaA1 = "C2-B2";
+        overview.Cell("A3").Value = "Drift";
+        overview.Cell("B3").Value = -50;
+        overview.Cell("C3").Value = -40;
+        overview.Cell("D3").FormulaA1 = "C3-B3";
+        var saved = new MemoryStream();
+        wb.SaveAs(saved);
+
+        var shared = new MemoryStream();
+        saved.Position = 0;
+        saved.CopyTo(shared);
+        using (var zip = new System.IO.Compression.ZipArchive(shared, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+        {
+            var entry = zip.GetEntry("xl/worksheets/sheet1.xml")!;
+            string xml;
+            using (var reader = new StreamReader(entry.Open()))
+            {
+                xml = reader.ReadToEnd();
+            }
+
+            var patchedXml = xml
+                .Replace(">C2-B2</", " t=\"shared\" ref=\"D2:D3\" si=\"0\">C2-B2</")
+                .Replace(">C3-B3</", " t=\"shared\" si=\"0\"></");
+            Assert.NotEqual(xml, patchedXml);
+
+            entry.Delete();
+            using var writer = new StreamWriter(zip.CreateEntry("xl/worksheets/sheet1.xml").Open());
+            writer.Write(patchedXml);
+        }
+
+        var previous = CultureInfo.CurrentCulture;
+        var norwegian = (CultureInfo)CultureInfo.GetCultureInfo("nb-NO").Clone();
+        norwegian.NumberFormat.NegativeSign = "−";
+        try
+        {
+            CultureInfo.CurrentCulture = norwegian;
+            shared.Position = 0;
+            var result = BudgetWorkbookImporter.Import(shared, []);
+
+            Assert.Equal(2, result.Years.Single().Lines.Count);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Fact]
     public void Export_RoundTripsOverviewThroughImporter()
     {
         var report = BudgetReportBuilder.Build(
