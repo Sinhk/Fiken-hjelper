@@ -37,7 +37,7 @@
                             Tilkoblet med Fiken OAuth2
                             @if (oauthExpiresAtUtc.HasValue)
                             {
-                                <text>(token utløper @oauthExpiresAtUtc.Value.ToLocalTime().ToString("dd.MM HH:mm") – fornyes automatisk)</text>
+                                <text>(token utløper @oauthExpiresAtUtc.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm") – fornyes automatisk)</text>
                             }
                         </span>
                     }
@@ -211,7 +211,7 @@
             </fieldset>
 
             <fieldset class="fh-fieldset">
-                <legend>Min speiding (Scoutnet API)</legend>
+                <legend>Min speiding</legend>
                 <div class="fh-field">
                     <label for="ms-base-url">Base-URL for API</label>
                     <InputText id="ms-base-url"

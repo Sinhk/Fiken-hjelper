@@ -67,7 +67,7 @@
                             <th>Deltaker</th>
                             <th>Speidergruppe</th>
                             <th>Kategori</th>
-                            <th class="fh-num-col">Beløp (NOK)</th>
+                            <th class="fh-num-col">Beløp (kr)</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -300,7 +300,7 @@
                            disabled="@(IsSubmitting || CreationBlockedReason is not null)" />
                     <span>
                         Jeg bekrefter at <strong>@ReadyDraftCount</strong> fakturautkast (sum @ReadyTotalNok.ToString("N2", NorwegianCulture) kr)
-                        skal opprettes som <strong>utkast</strong> i Fiken (MVA = Utenfor / OUTSIDE).
+                        skal opprettes som <strong>utkast</strong> i Fiken (MVA: Utenfor – kretsen er ikke MVA-pliktig).
                         @if (Plan.ZeroAmountDraftCount > 0)
                         {
                             <span class="fh-hint d-block">@Plan.ZeroAmountDraftCount utkast på 0 kr opprettes ikke.</span>

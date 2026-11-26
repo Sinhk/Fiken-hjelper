@@ -148,7 +148,7 @@
                                     <td>@finding.Counterparty</td>
                                     <td class="tabular-nums">@QualityCheckTextFormatter.FormatDate(finding.Date)</td>
                                     <td class="tabular-nums">@QualityCheckTextFormatter.FormatDate(finding.DueDate)</td>
-                                    <td class="fh-num-col tabular-nums">@finding.DaysOverdue</td>
+                                    <td class="fh-num-col tabular-nums">@(finding.DaysOverdue is > 0 ? finding.DaysOverdue.ToString() : "–")</td>
                                     <td class="fh-num-col tabular-nums">@(finding.OutstandingOre is { } ore ? Kr(ore) : "ukjent")</td>
                                     <td>@finding.Project</td>
                                     <td><MudText Typo="Typo.body2" Color="Color.Secondary">@finding.Note</MudText></td>
