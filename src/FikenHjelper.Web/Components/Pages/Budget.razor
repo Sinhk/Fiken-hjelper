@@ -7,6 +7,7 @@
 @inject ILogger<Budget> Logger
 
 <PageTitle>Budsjett og regnskap – Fiken-hjelper</PageTitle>
+<PageErrorBoundary>
 <MudProviders />
 
 <MudStack Spacing="4">
@@ -325,6 +326,7 @@
         }
     }
 </MudStack>
+</PageErrorBoundary>
 
 @code {
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
@@ -348,8 +350,22 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var budget = await BudgetStore.LoadAsync(disposeCts.Token);
-        var budgetYears = budget.Years.Select(y => y.Year).ToList();
+        var budgetYears = new List<int>();
+        try
+        {
+            var budget = await BudgetStore.LoadAsync(disposeCts.Token);
+            budgetYears = budget.Years.Select(y => y.Year).ToList();
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å lese budsjettfilen");
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å lese budsjettet");
+        }
+
         selectableYears = budgetYears
             .Append(DateTime.Today.Year)
             .Distinct()
@@ -357,7 +373,7 @@
             .ToList();
         lastYear = budgetYears.Count > 0 ? budgetYears.Max() : DateTime.Today.Year;
 
-        if (RendererInfo.IsInteractive)
+        if (RendererInfo.IsInteractive && errorMessage is null)
         {
             await LoadAsync(refresh: false);
         }
@@ -382,12 +398,14 @@
         catch (FikenApiException ex)
         {
             Logger.LogWarning(ex, "Fiken-feil ved henting av budsjettrapport");
-            errorMessage = ex.UserMessage;
+            comparison = null;
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente rapporten");
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å bygge budsjettrapport");
-            errorMessage = "Noe gikk galt under henting av rapporten. Se loggen for detaljer.";
+            comparison = null;
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente rapporten");
         }
         finally
         {

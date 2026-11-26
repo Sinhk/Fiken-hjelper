@@ -2,6 +2,7 @@ using System.Globalization;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Web.Components.Budgeting;
+using FikenHjelper.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Routing;
@@ -29,6 +30,8 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
     private int newYear = DateTime.Today.Year + 1;
     private bool isDirty;
     private bool isSaving;
+    private bool isConfirming;
+    private bool storeUnavailable;
     private bool hasCompany = true;
     private bool isLoadingProjects;
     private bool projectsLoaded;
@@ -56,7 +59,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     protected override async Task OnInitializedAsync()
     {
-        data = await BudgetStore.LoadAsync(disposeCts.Token);
+        if (!await LoadStoreAsync())
+        {
+            return;
+        }
+
         var initialYear = QueryYear is { } q && data.FindYear(q) is not null
             ? q
             : data.Years.Select(y => y.Year).DefaultIfEmpty(0).Max();
@@ -89,12 +96,12 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         catch (FikenApiException ex)
         {
             Logger.LogWarning(ex, "Fiken-feil ved henting av prosjekter");
-            errorMessage = $"Klarte ikke å hente prosjekter fra Fiken: {ex.UserMessage} Budsjettallene kan fortsatt redigeres.";
+            errorMessage = $"{UserErrors.Describe(ex, "Klarte ikke å hente prosjekter fra Fiken")} Budsjettallene kan fortsatt redigeres.";
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å hente prosjekter fra Fiken");
-            errorMessage = "Klarte ikke å hente prosjekter fra Fiken. Budsjettallene kan fortsatt redigeres.";
+            errorMessage = $"{UserErrors.Describe(ex, "Klarte ikke å hente prosjekter fra Fiken")} Budsjettallene kan fortsatt redigeres.";
         }
         finally
         {
@@ -106,6 +113,54 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             await LoadActivityAsync(current.Year);
         }
     }
+
+    /// <summary>
+    /// Leser budsjettet fra filen. Ved feil (skadet eller låst fil) vises en feilmelding og siden blir stående
+    /// med tomt budsjett, og lagring sperres så en skadet fil ikke overskrives.
+    /// </summary>
+    private async Task<bool> LoadStoreAsync()
+    {
+        try
+        {
+            data = await BudgetStore.LoadAsync(disposeCts.Token);
+            storeUnavailable = false;
+            return true;
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å lese budsjettfilen");
+            data = new BudgetData();
+            current = null;
+            selectedYear = 0;
+            storeUnavailable = true;
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å lese budsjettet");
+            return false;
+        }
+    }
+
+    private async Task ReloadStoreAsync()
+    {
+        errorMessage = null;
+        if (!await LoadStoreAsync())
+        {
+            return;
+        }
+
+        SelectYearCore(data.Years.Select(y => y.Year).DefaultIfEmpty(0).Max());
+        isDirty = false;
+        await LoadActivityAsync(selectedYear);
+    }
+
+    private string PickerButtonText(BudgetLine line) =>
+        isLoadingProjects ? "Henter prosjekter …"
+        : !hasCompany ? "Velg foretak i Innstillinger"
+        : projects.Count == 0 ? "Ingen prosjekter funnet"
+        : line.ProjectIds.Count == 0 ? "Velg prosjekter"
+        : "Endre";
 
     private IReadOnlyDictionary<long, ProjectActivity>? CurrentActivity =>
         current is null ? null : activityByYear.GetValueOrDefault(current.Year);
@@ -191,7 +246,11 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
         if (isDirty)
         {
-            data = await BudgetStore.LoadAsync();
+            if (!await LoadStoreAsync())
+            {
+                return;
+            }
+
             isDirty = false;
         }
 
@@ -294,8 +353,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             { d => d.Projects, projects },
             { d => d.Activity, CurrentActivity }
         };
-        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true };
-        var dialog = await Dialogs.ShowAsync<ProjectPickerDialog>($"Prosjekter for «{line.Name}»", parameters, options);
+        var dialog = await Dialogs.ShowAsync<ProjectPickerDialog>($"Prosjekter for «{line.Name}»", parameters, DialogOptionsFor());
         var result = await dialog.Result;
         if (result is { Canceled: false, Data: List<long> ids } && !ids.SequenceEqual(line.ProjectIds))
         {
@@ -308,6 +366,16 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             MarkDirty();
         }
     }
+
+    /// <summary>Felles valg for dialogene: ikke lukk ved klikk utenfor (mister lett valg), men med lukkeknapp og Esc.</summary>
+    private static DialogOptions DialogOptionsFor() => new()
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true,
+        CloseOnEscapeKey = true,
+        BackdropClick = false,
+        CloseButton = true
+    };
 
     /// <summary>Kobler prosjektet til posten med indeks <paramref name="lineIndex"/> (−1: ingen) og fjerner andre koblinger.</summary>
     private void SetProjectLine(long projectId, int lineIndex)
@@ -391,8 +459,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             { d => d.Year, current },
             { d => d.Amount, row.Activity.Amount }
         };
-        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true };
-        var dialog = await Dialogs.ShowAsync<ProjectSplitDialog>($"Fordel «{row.Project.Name}»", parameters, options);
+        var dialog = await Dialogs.ShowAsync<ProjectSplitDialog>($"Fordel «{row.Project.Name}»", parameters, DialogOptionsFor());
         var result = await dialog.Result;
         if (result is not { Canceled: false, Data: List<ProjectSplitDialog.SplitRow> rows })
         {
@@ -457,7 +524,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private async Task SaveAsync()
     {
-        if (isSaving || !TryValidate())
+        if (isSaving || storeUnavailable || !TryValidate())
         {
             return;
         }
@@ -482,7 +549,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å lagre budsjett");
-            Snackbar.Add("Klarte ikke å lagre budsjettet. Se loggen for detaljer.", Severity.Error);
+            Snackbar.Add(UserErrors.Describe(ex, "Klarte ikke å lagre budsjettet"), Severity.Error, o => o.RequireInteraction = true);
         }
         finally
         {
@@ -497,8 +564,14 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             return;
         }
 
-        isImporting = true;
         importPreview = null;
+        if (file.Size > MaxImportBytes)
+        {
+            Snackbar.Add("Filen er for stor (maks 10 MB).", Severity.Error);
+            return;
+        }
+
+        isImporting = true;
         try
         {
             await using var upload = file.OpenReadStream(MaxImportBytes);
@@ -529,10 +602,16 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
+        catch (IOException ex) when (ex.Message.Contains("exceeds", StringComparison.OrdinalIgnoreCase))
+        {
+            // OpenReadStream avviser filer over grensen selv om Size ikke var kjent på forhånd.
+            Logger.LogWarning(ex, "Importfil {FileName} er for stor", file.Name);
+            Snackbar.Add("Filen er for stor (maks 10 MB).", Severity.Error);
+        }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å lese importfil {FileName}", file.Name);
-            Snackbar.Add("Klarte ikke å lese filen. Sjekk at det er en .xlsx-fil.", Severity.Error);
+            Snackbar.Add("Klarte ikke å lese filen. Sjekk at det er en .xlsx-fil lastet ned fra Google Sheets, og at den ikke er åpen i et annet program.", Severity.Error);
         }
         finally
         {
@@ -572,7 +651,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private async Task ApplyImportAsync()
     {
-        if (importPreview is null || isSaving)
+        if (importPreview is null || isSaving || isConfirming || storeUnavailable)
         {
             return;
         }
@@ -634,7 +713,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Logger.LogError(ex, "Klarte ikke å lagre importert budsjett");
-            Snackbar.Add("Klarte ikke å lagre importen. Se loggen for detaljer.", Severity.Error);
+            Snackbar.Add(UserErrors.Describe(ex, "Klarte ikke å lagre importen"), Severity.Error, o => o.RequireInteraction = true);
         }
         finally
         {
@@ -652,7 +731,21 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private async Task<bool> ConfirmAsync(string title, string message)
     {
-        var result = await Dialogs.ShowMessageBoxAsync(title, message, yesText: "Ja", cancelText: "Avbryt");
-        return result == true;
+        // Dobbeltklikk skal ikke åpne to dialoger oppå hverandre.
+        if (isConfirming)
+        {
+            return false;
+        }
+
+        isConfirming = true;
+        try
+        {
+            var result = await Dialogs.ShowMessageBoxAsync(title, message, yesText: "Ja", cancelText: "Avbryt");
+            return result == true;
+        }
+        finally
+        {
+            isConfirming = false;
+        }
     }
 }
