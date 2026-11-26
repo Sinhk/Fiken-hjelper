@@ -277,7 +277,7 @@ public sealed class GrantReportTests
 
     [Theory]
     [InlineData("2027-02-10", "2027-05-01", 2027, 2027)]
-    [InlineData("2026-11-01", "2028-02-01", 2026, 2028)]
+    [InlineData("2026-11-01", "2028-02-01", 2026, 2027)]
     public void YearsToFetch_CoversUsePeriod(string from, string to, int first, int last)
     {
         var grant = GrantTestData.Project("A", GrantTestData.Leir);
@@ -295,6 +295,280 @@ public sealed class GrantReportTests
 
         grant.DecisionDate = new DateOnly(2026, 6, 1);
         Assert.Equal([2026, 2027], GrantReportBuilder.YearsToFetch(grant, 2027));
+    }
+}
+
+public sealed class GrantReviewFixTests
+{
+    private static readonly FikenProject[] NoProjects = [];
+
+    [Fact]
+    public void Operating_IgnoresProjects_InReportSharesAndSuggestions()
+    {
+        var grant = new Grant
+        {
+            Name = "Drift",
+            Grantor = "Eksempel fylke",
+            Kind = GrantKind.Operating,
+            GrantedAmount = 1000,
+            ProjectIds = [GrantTestData.Leir],
+            AccountRanges = [new AccountRange { From = 6800, To = 6899 }]
+        };
+        var other = GrantTestData.Project("Annet", GrantTestData.Leir);
+        var entries = new[]
+        {
+            GrantTestData.Cost(1, "6810", 100m, GrantTestData.Leir),
+            GrantTestData.Cost(2, "6810", 40m, null),
+            GrantTestData.Income(3, "3200", 70m, GrantTestData.Leir),
+            GrantTestData.Income(4, "3200", 70m, GrantTestData.Leir, "Eksempel fylke")
+        };
+
+        var report = GrantReportBuilder.Build(grant, [grant, other], entries);
+        Assert.Equal(40m, report.Used);
+        Assert.Equal(0m, report.OtherIncome);
+        Assert.Empty(report.Issues);
+        Assert.Empty(GrantReportBuilder.CheckProjectShares([grant, other]));
+        Assert.Empty(GrantPaymentSuggester.Suggest(grant, [grant], entries));
+        Assert.Contains(grant.Validate(), e => e.Contains("bare prosjekttilskudd"));
+    }
+
+    [Fact]
+    public void CostCredit_ReducesUsed_AndIncomeRefundReducesOtherIncome()
+    {
+        var grant = GrantTestData.Project("A", GrantTestData.Leir);
+        var credit = new FikenJournalEntry(2, 2, "Fri", 2, "Kreditnota", "2027-03-02",
+            [new FikenJournalEntryLine(-3000, "6800", null, [GrantTestData.Leir]), new FikenJournalEntryLine(3000, "1920", null, [])]);
+        var refund = new FikenJournalEntry(4, 4, "Fri", 4, "Refusjon", "2027-03-02",
+            [new FikenJournalEntryLine(2500, "3200", null, [GrantTestData.Leir]), new FikenJournalEntryLine(-2500, "1920", null, [])]);
+
+        var report = GrantReportBuilder.Build(grant, [grant],
+            [GrantTestData.Cost(1, "6800", 100m, GrantTestData.Leir), credit, GrantTestData.Income(3, "3200", 80m, GrantTestData.Leir), refund]);
+
+        Assert.Equal(70m, report.Used);
+        Assert.Equal(55m, report.OtherIncome);
+        Assert.Equal(-30m, report.UsedByAccount[0].Postings.Single(p => p.JournalEntryId == 2).FullAmount);
+    }
+
+    [Theory]
+    [InlineData(3000, false, true)]
+    [InlineData(3999, false, true)]
+    [InlineData(4000, true, false)]
+    [InlineData(7999, true, false)]
+    [InlineData(8000, false, true)]
+    [InlineData(8099, false, true)]
+    [InlineData(8100, true, false)]
+    [InlineData(8799, true, false)]
+    [InlineData(8800, false, false)]
+    [InlineData(2999, false, false)]
+    public void AccountClasses(int account, bool cost, bool income)
+    {
+        Assert.Equal(cost, GrantReportBuilder.IsCostAccount(account));
+        Assert.Equal(income, GrantReportBuilder.IsIncomeAccount(account));
+    }
+
+    [Fact]
+    public void Suggestion_AmountAndAccounts_MatchReceivedAfterLinking()
+    {
+        var grant = GrantTestData.Project("A", GrantTestData.Kurs);
+        var entry = new FikenJournalEntry(10, 10, "Fri", 10, "Tilskudd", "2027-04-01",
+        [
+            new FikenJournalEntryLine(-100000, "3400", null, [GrantTestData.Kurs]),
+            new FikenJournalEntryLine(-20000, "3200", null, [GrantTestData.Kurs]),
+            new FikenJournalEntryLine(5000, "3200", null, []),        // refusjon, reduserer netto
+            new FikenJournalEntryLine(40000, "6800", null, []),       // kostnad, ikke inntekt
+            new FikenJournalEntryLine(75000, "1920", null, [])
+        ]);
+
+        var suggestion = Assert.Single(GrantPaymentSuggester.Suggest(grant, [grant], [entry]));
+        Assert.Equal([3200, 3400], suggestion.Accounts);
+
+        grant.Payments = [new GrantPayment { JournalEntryId = 10 }];
+        Assert.Equal(suggestion.Amount, GrantReportBuilder.Build(grant, [grant], [entry]).Received);
+        Assert.Equal(1150m, suggestion.Amount);
+    }
+
+    [Fact]
+    public void EditedGrant_ReplacesStoredVersion_NoDoubleCounting()
+    {
+        var stored = GrantTestData.Project("A", GrantTestData.Leir);
+        stored.ProjectShares = new() { [GrantTestData.Leir] = 60m };
+        var other = GrantTestData.Project("B", GrantTestData.Leir);
+        other.ProjectShares = new() { [GrantTestData.Leir] = 40m };
+        var edited = new Grant { Id = stored.Id, Name = "A", Grantor = "X", ProjectIds = [GrantTestData.Leir], ProjectShares = new() { [GrantTestData.Leir] = 55m }, Payments = [new GrantPayment { JournalEntryId = 5 }] };
+        var income = GrantTestData.Income(5, "3200", 10m, GrantTestData.Leir);
+
+        var report = GrantReportBuilder.Build(edited, [stored, other], [income]);
+        Assert.Empty(report.Issues);                       // 55 + 40, ikke 60 + 55 + 40
+        Assert.Equal(0m, report.OtherIncome);              // utbetalingen er koblet i den redigerte versjonen
+
+        // Nytt (ikke lagret) tilskudd legges til.
+        var added = GrantTestData.Project("C", GrantTestData.Leir);
+        added.ProjectShares = new() { [GrantTestData.Leir] = 10m };
+        Assert.Contains(GrantReportBuilder.Build(added, [stored, other], []).Issues, i => i.Kind == GrantIssueKind.ShareOverAllocated);
+    }
+
+    [Fact]
+    public void YearsToFetch_UsesLinkedPaymentsOnly_ReportDeadline_AndCapsAtCurrentYear()
+    {
+        var grant = GrantTestData.Project("A", GrantTestData.Leir);
+        grant.AppliedDate = new DateOnly(2026, 5, 1);
+        grant.Payments = [new GrantPayment { Date = new DateOnly(2020, 1, 1), Amount = 5m }];
+        Assert.Equal([2026, 2027], GrantReportBuilder.YearsToFetch(grant, 2027));   // manuell dato ignoreres, aktivt går til nå
+
+        grant.Status = GrantStatus.Closed;
+        grant.ReportDeadline = new DateOnly(2027, 1, 15);
+        Assert.Equal([2026, 2027], GrantReportBuilder.YearsToFetch(grant, 2029).Take(2));
+        Assert.Equal([2026, 2027], GrantReportBuilder.YearsToFetch(grant, 2029));
+
+        grant.ReportDeadline = new DateOnly(2035, 1, 1);
+        Assert.Equal(2029, GrantReportBuilder.YearsToFetch(grant, 2029)[^1]);
+
+        grant.Payments = [new GrantPayment { JournalEntryId = 3, Date = new DateOnly(2025, 12, 1) }];
+        Assert.Equal(2025, GrantReportBuilder.YearsToFetch(grant, 2029)[0]);
+
+        var future = GrantTestData.Project("F", GrantTestData.Leir);
+        future.UseFrom = new DateOnly(2031, 1, 1);
+        Assert.Equal([2027], GrantReportBuilder.YearsToFetch(future, 2027));
+    }
+
+    [Fact]
+    public void Rounding_IsPerAccount_TwoEqualGrantsStayWithinOneRoundingOfProjectCost()
+    {
+        var a = GrantTestData.Project("A", GrantTestData.Leir);
+        var b = GrantTestData.Project("B", GrantTestData.Leir);
+        a.ProjectShares = new() { [GrantTestData.Leir] = 50m };
+        b.ProjectShares = new() { [GrantTestData.Leir] = 50m };
+        var entries = Enumerable.Range(1, 41).Select(i => GrantTestData.Cost(i, "6800", 10.01m, GrantTestData.Leir)).ToList();
+
+        var ra = GrantReportBuilder.Build(a, [a, b], entries);
+        var rb = GrantReportBuilder.Build(b, [a, b], entries);
+
+        var projectCost = 41 * 10.01m;
+        Assert.Equal(Math.Round(projectCost * 0.5m, 2, MidpointRounding.AwayFromZero), ra.Used);
+        Assert.True(ra.Used + rb.Used - projectCost <= 0.01m);
+        // Summen per konto er avrundet fra eksakte beløp, ikke summen av avrundede bilag (5,01 hver).
+        Assert.Equal(ra.Used, ra.UsedByAccount.Sum(x => x.Amount));
+    }
+
+    [Fact]
+    public void AccountNames_PreferMainAccountOverSubAccount()
+    {
+        var grant = GrantTestData.Project("A", GrantTestData.Leir);
+        var report = GrantReportBuilder.Build(grant, [grant], [GrantTestData.Cost(1, "6800", 10m, GrantTestData.Leir)],
+            [new FikenAccount("6800:10001", "Kundenavn AS"), new FikenAccount("6800", "Kontorrekvisita")]);
+        Assert.Equal("Kontorrekvisita", report.UsedByAccount[0].AccountName);
+    }
+
+    [Fact]
+    public void ManualUsed_IsRoundedToOre()
+    {
+        var grant = new Grant { Name = "D", Grantor = "X", Kind = GrantKind.Operating, ManualUses = [new GrantManualUse { Amount = 10.004m }, new GrantManualUse { Amount = 0.003m }] };
+        Assert.Equal(10.01m, GrantReportBuilder.Build(grant, [grant], null).ManualUsed);
+    }
+
+    [Fact]
+    public async Task Normalize_KeepsInvalidSharesForLinkedProjects_SoValidateReportsThem()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "fh-grants-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new JsonGrantStore(dir);
+            var grant = GrantTestData.Project("A", GrantTestData.Leir);
+            grant.ProjectShares = new() { [GrantTestData.Leir] = 150m };
+            await store.SaveAsync(new GrantData { Grants = [grant] }, TestContext.Current.CancellationToken);
+            var loaded = Assert.Single((await store.LoadAsync(TestContext.Current.CancellationToken)).Grants);
+            Assert.Equal(150m, loaded.ShareOf(GrantTestData.Leir));
+            Assert.Contains(loaded.Validate(), e => e.Contains("mellom 0 og 100"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void UsedUnregistered_IsDistinctFromMissingFikenData()
+    {
+        var withProjects = GrantTestData.Project("A", GrantTestData.Leir);
+        var noFiken = GrantReportBuilder.Build(withProjects, [withProjects], null);
+        Assert.Null(noFiken.Used);
+        Assert.True(noFiken.UsedNeedsFikenData);
+        Assert.False(noFiken.UsedIsUnregistered);
+
+        var empty = GrantTestData.Project("B");
+        var unregistered = GrantReportBuilder.Build(empty, [empty], null);
+        Assert.True(unregistered.UsedIsUnregistered);
+        Assert.False(unregistered.UsedNeedsFikenData);
+
+        // Driftstilskudd med både konto og manuell bruk, men uten Fiken-data, gir ikke en delsum.
+        var operating = new Grant { Name = "D", Grantor = "X", Kind = GrantKind.Operating, AccountRanges = [new AccountRange { From = 6800, To = 6899 }], ManualUses = [new GrantManualUse { Amount = 5m }] };
+        Assert.Null(GrantReportBuilder.Build(operating, [operating], null).Used);
+    }
+
+    [Fact]
+    public void SameEntryTwiceOnOneGrant_GivesOneMessageFromGrantData()
+    {
+        var a = GrantTestData.Project("A");
+        a.Payments = [new GrantPayment { JournalEntryId = 55 }, new GrantPayment { JournalEntryId = 55 }];
+        Assert.Single(new GrantData { Grants = [a] }.Validate(), e => e.Contains("55"));
+    }
+
+    [Fact]
+    public void OneSidedUsePeriod()
+    {
+        var entries = new[]
+        {
+            GrantTestData.Cost(1, "6800", 1m, GrantTestData.Leir, "2027-01-01"),
+            GrantTestData.Cost(2, "6800", 10m, GrantTestData.Leir, "2027-06-01"),
+            GrantTestData.Cost(3, "6800", 100m, GrantTestData.Leir, "2027-12-31")
+        };
+        var fromOnly = GrantTestData.Project("A", GrantTestData.Leir);
+        fromOnly.UseFrom = new DateOnly(2027, 6, 1);
+        Assert.Equal(110m, GrantReportBuilder.Build(fromOnly, [fromOnly], entries).Used);
+
+        var toOnly = GrantTestData.Project("B", GrantTestData.Leir);
+        toOnly.UseTo = new DateOnly(2027, 6, 1);
+        Assert.Equal(11m, GrantReportBuilder.Build(toOnly, [toOnly], entries).Used);
+    }
+
+    [Fact]
+    public void MissingOrInvalidEntryDate_ExcludedOnlyWhenPeriodIsSet()
+    {
+        var noDate = GrantTestData.Cost(1, "6800", 10m, GrantTestData.Leir, "2027-01-01") with { Date = null };
+        var badDate = GrantTestData.Cost(2, "6800", 20m, GrantTestData.Leir, "2027-01-01") with { Date = "ugyldig" };
+        var grant = GrantTestData.Project("A", GrantTestData.Leir);
+
+        Assert.Equal(30m, GrantReportBuilder.Build(grant, [grant], [noDate, badDate]).Used);
+
+        grant.UseFrom = new DateOnly(2027, 1, 1);
+        Assert.Equal(0m, GrantReportBuilder.Build(grant, [grant], [noDate, badDate]).Used);
+    }
+
+    [Fact]
+    public void Suggest_WithoutDecisionOrAppliedDate_HasNoDateLimit()
+    {
+        var grant = GrantTestData.Project("A", GrantTestData.Kurs);
+        var undated = GrantTestData.Income(2, "3400", 100m, GrantTestData.Kurs) with { Date = null };
+        var result = GrantPaymentSuggester.Suggest(grant, [grant],
+            [GrantTestData.Income(1, "3400", 100m, GrantTestData.Kurs, "A", "1999-01-01"), undated]);
+        Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public void BuildAll_GivesOneReportPerGrant_WithSharedContext()
+    {
+        var a = GrantTestData.Project("A", GrantTestData.Leir);
+        var b = GrantTestData.Project("B", GrantTestData.Leir);
+        a.ProjectShares = new() { [GrantTestData.Leir] = 25m };
+        b.ProjectShares = new() { [GrantTestData.Leir] = 75m };
+        var reports = GrantReportBuilder.BuildAll([a, b], [GrantTestData.Cost(1, "6800", 200m, GrantTestData.Leir)], null, NoProjects);
+
+        Assert.Equal([50m, 150m], reports.Select(r => r.Used));
+        Assert.Equal([a.Id, b.Id], reports.Select(r => r.Grant.Id));
+        Assert.Empty(GrantReportBuilder.BuildAll([], null));
     }
 }
 
@@ -595,7 +869,9 @@ public sealed class JsonGrantStoreTests
             Assert.Equal("Eksempel kommune", loaded.Grantor);
             Assert.Null(loaded.Scheme);
             Assert.Equal([900001L, 900002L], loaded.ProjectIds);
-            Assert.Equal([900001L], loaded.ProjectShares!.Keys);
+            // Ugyldig andel (0) på koblet prosjekt beholdes, så Validate() kan melde den. Andeler for ikke-koblede prosjekter fjernes.
+            Assert.Equal([900001L, 900002L], loaded.ProjectShares!.Keys.Order());
+            Assert.Contains(loaded.Validate(), e => e.Contains("mellom 0 og 100"));
             Assert.Equal([(6800, 6899)], loaded.AccountRanges.Select(r => (r.From, r.To)));
             Assert.Equal("x", Assert.Single(loaded.ManualUses).Description);
             Assert.Equal(2, loaded.Payments.Count);

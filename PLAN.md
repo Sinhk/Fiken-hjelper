@@ -246,7 +246,7 @@ FikenHjelper.slnx
 ### Beregning (`GrantReportBuilder`, ren logikk med tester)
 - **Innvilget:** `GrantedAmount`.
 - **Mottatt:** summen av `Payments`. For koblede posteringer brukes beløpet fra Fiken, så tallet alltid stemmer med regnskapet.
-- **Brukt (brutto):** kostnader (resultatkonti med negativt bidrag) på de koblede prosjektene i bruksperioden, ganget med tilskuddets andel av hvert prosjekt. Andre inntekter trekkes ikke fra (valgt 26.11.2026; netto kan legges til som eget tall senere). Bruker Fase 3s `TryGetResultAmount` og `PrimaryProjectId`, så fortegnsregelen finnes ett sted. Avrunding til øre som i Fase 3.
+- **Brukt (brutto):** kostnader (kostnadskonti 4000–7999 og 8100–8799, med fortegn slik at kreditnota og ompostering reduserer bruken) på de koblede prosjektene i bruksperioden, ganget med tilskuddets andel av hvert prosjekt. Andre inntekter trekkes ikke fra (valgt 26.11.2026; netto kan legges til som eget tall senere). Bruker Fase 3s `TryGetResultAmount` og `PrimaryProjectId`, så fortegnsregelen finnes ett sted. Avrunding til øre skjer én gang per konto (summen per konto avrundes, ikke hvert bilag).
 - **Driftstilskudd:** brukt = kostnader i bruksperioden på kontoene i `AccountRanges` (bare posteringer uten prosjekt, så ingenting telles dobbelt med prosjekttilskudd) pluss `ManualUses`. Uten noen av delene vises «brukt» som ikke registrert, ikke som 0.
 - **Hva det er brukt på:** kostnadene gruppert per konto (kontonavn fra kontoplanen), med liste over enkeltbilag under hver konto.
 - **Andre inntekter på prosjektet** (f.eks. deltakeravgift) vises for seg, fordi tilskuddsgivere ofte vil ha hele prosjektregnskapet.

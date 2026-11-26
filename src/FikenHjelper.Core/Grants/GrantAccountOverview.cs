@@ -29,11 +29,7 @@ public static class GrantAccountOverview
 
         return GrantReportBuilder.Distinct(journalEntries)
             .Where(e => linked.Contains(e.JournalEntryId))
-            .SelectMany(e => (e.Lines ?? [])
-                .Select(l => BudgetReportBuilder.TryGetResultAmount(l, out var account, out var amount) && amount > 0
-                    ? (Entry: e.JournalEntryId, Account: account, Amount: amount)
-                    : default)
-                .Where(x => x.Entry != 0))
+            .SelectMany(e => GrantReportBuilder.IncomeLines(e).Select(l => (Entry: e.JournalEntryId, l.Account, l.Amount)))
             .GroupBy(x => x.Account)
             .OrderBy(g => g.Key)
             .Select(g => new GrantAccountUsage(g.Key, names.GetValueOrDefault(g.Key), g.Select(x => x.Entry).Distinct().Count(), g.Sum(x => x.Amount)))

@@ -95,9 +95,10 @@ public sealed class JsonGrantStore : IGrantStore
     private static Grant NormalizeGrant(Grant g)
     {
         var ids = (g.ProjectIds ?? []).Where(id => id > 0).Distinct().ToList();
-        // Bare andeler for koblede prosjekter, og bare mellom 0 (ikke med) og 100 %.
+        // Andeler beholdes bare for koblede prosjekter. Ugyldige verdier (0 eller over 100) beholdes med vilje,
+        // så Grant.Validate() kan melde feilen. Validate skal kjøres før lagring; normaliseringen skjuler ikke feil.
         var shares = (g.ProjectShares ?? [])
-            .Where(kv => ids.Contains(kv.Key) && kv.Value is > 0 and <= 100)
+            .Where(kv => ids.Contains(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
 
         var ranges = (g.AccountRanges ?? [])

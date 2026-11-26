@@ -25,7 +25,7 @@ public sealed class GrantData
         var duplicates = Grants
             .SelectMany(g => (g.Payments ?? []).Where(p => p.JournalEntryId is > 0).Select(p => (Id: p.JournalEntryId!.Value, Grant: g)))
             .GroupBy(x => x.Id)
-            .Where(g => g.Count() > 1);
+            .Where(g => g.Select(x => x.Grant).Distinct().Count() > 1);
         foreach (var group in duplicates)
         {
             var names = string.Join(", ", group.Select(x => $"«{x.Grant.DisplayName}»").Distinct());
@@ -180,6 +180,11 @@ public sealed class Grant
             {
                 Add($"Kontointervallet {range.From}–{range.To} starter etter at det slutter.");
             }
+        }
+
+        if (Kind == GrantKind.Operating && ((ProjectIds?.Count ?? 0) > 0 || (ProjectShares?.Count ?? 0) > 0))
+        {
+            Add("Prosjekter og andeler gjelder bare prosjekttilskudd.");
         }
 
         if (Kind == GrantKind.Project && ((AccountRanges?.Count ?? 0) > 0 || (ManualUses?.Count ?? 0) > 0))

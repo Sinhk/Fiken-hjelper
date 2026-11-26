@@ -4,9 +4,15 @@ using FikenHjelper.Core.Fiken;
 
 namespace FikenHjelper.Core.Grants;
 
-/// <summary>Et enkeltbilag som er regnet som bruk av et tilskudd.</summary>
-/// <param name="FullAmount">Hele linjens beløp (positivt for kostnad, negativt for inntekt).</param>
-/// <param name="Amount">Tilskuddets del etter andel, avrundet til øre.</param>
+/// <summary>Et enkeltbilag som er regnet som bruk av et tilskudd (eller som annen inntekt på prosjektet).</summary>
+/// <param name="FullAmount">
+/// Hele linjens beløp før andel, med fortegn etter kontoklasse: kostnader er positive og en kreditnota eller
+/// ompostering på en kostnadskonto er negativ. For annen inntekt er inntekt positiv og en refusjon negativ.
+/// </param>
+/// <param name="Amount">
+/// Tilskuddets del etter andel, avrundet til øre for visning. Summen av bilagene kan avvike noen øre fra kontosummen,
+/// som regnes ut fra eksakte beløp og avrundes én gang.
+/// </param>
 public sealed record GrantPosting(
     long JournalEntryId,
     int? JournalEntryNumber,
@@ -54,10 +60,14 @@ public sealed record GrantReport(
     decimal? Remaining,
     decimal? Unused,
     IReadOnlyList<GrantIssue> Issues,
-    bool HasFikenData)
+    bool HasFikenData,
+    bool UsedNeedsFikenData = false)
 {
-    /// <summary>Brukt er ikke registrert (verken prosjekter, kontoer eller manuell bruk).</summary>
-    public bool UsedIsUnregistered => Used is null;
+    /// <summary>
+    /// Brukt er ikke registrert (verken prosjekter, kontoer eller manuell bruk). Er false når bruken er koblet,
+    /// men ikke kan regnes ut fordi Fiken-data mangler (se <see cref="UsedNeedsFikenData"/>).
+    /// </summary>
+    public bool UsedIsUnregistered => Used is null && !UsedNeedsFikenData;
 }
 
 /// <summary>
@@ -96,6 +106,8 @@ public static class GrantReportBuilder
         var entries = Distinct(journalEntries);
         var accountNames = AccountNames(accounts);
         var issues = new List<GrantIssue>();
+        // Med forhåndsvisning av et redigert tilskudd er det den redigerte versjonen som gjelder, ikke den lagrede.
+        var effective = WithGrant(allGrants, grant);
 
         // Utbetalinger.
         var byId = entries.ToDictionary(e => e.JournalEntryId);
@@ -128,24 +140,24 @@ public static class GrantReportBuilder
 
         var received = payments.Sum(p => p.Amount);
 
-        // Bruk.
-        var linkedEntryIds = allGrants
+        // Bruk. Prosjektlogikk gjelder bare prosjekttilskudd, kontologikk bare driftstilskudd.
+        var linkedEntryIds = effective
             .SelectMany(g => g.Payments ?? [])
             .Where(p => p.IsLinked)
             .Select(p => p.JournalEntryId!.Value)
             .ToHashSet();
-        var usedPostings = new List<GrantPosting>();
-        var otherIncome = new List<GrantPosting>();
-        var projectSet = (grant.ProjectIds ?? []).ToHashSet();
-        var ranges = grant.Kind == GrantKind.Operating ? grant.AccountRanges ?? [] : [];
-        var manual = grant.Kind == GrantKind.Operating ? grant.ManualUses ?? [] : [];
+        var used = new List<(GrantPosting Posting, decimal Exact)>();
+        var income = new List<(GrantPosting Posting, decimal Exact)>();
+        var isProject = grant.Kind == GrantKind.Project;
+        var projectSet = isProject ? (grant.ProjectIds ?? []).ToHashSet() : [];
+        var ranges = isProject ? [] : grant.AccountRanges ?? [];
+        var manual = isProject ? [] : grant.ManualUses ?? [];
 
         if (hasFikenData)
         {
             foreach (var entry in entries)
             {
-                var date = ParseDate(entry.Date);
-                if (!InPeriod(date, grant.UseFrom, grant.UseTo))
+                if (!InPeriod(ParseDate(entry.Date), grant.UseFrom, grant.UseTo))
                 {
                     continue;
                 }
@@ -160,36 +172,37 @@ public static class GrantReportBuilder
                     var projectId = BudgetReportBuilder.PrimaryProjectId(line);
                     if (projectId is { } p && projectSet.Contains(p))
                     {
-                        if (amount < 0)
+                        if (IsCostAccount(account))
                         {
-                            var cost = -amount;
-                            var fraction = (grant.ShareOf(p) ?? 100m) / 100m;
-                            usedPostings.Add(ToPosting(entry, account, p, cost, Round(cost * fraction)));
+                            // Kostnadskonti: debet er bruk, kredit (kreditnota, ompostering) reduserer bruken.
+                            var exact = -amount * (grant.ShareOf(p) ?? 100m) / 100m;
+                            used.Add((ToPosting(entry, account, p, -amount, Round(exact)), exact));
                         }
-                        else if (amount > 0 && !linkedEntryIds.Contains(entry.JournalEntryId))
+                        else if (IsIncomeAccount(account) && !linkedEntryIds.Contains(entry.JournalEntryId))
                         {
-                            otherIncome.Add(ToPosting(entry, account, p, amount, amount));
+                            income.Add((ToPosting(entry, account, p, amount, amount), amount));
                         }
                     }
-                    else if (projectId is null && amount < 0 && ranges.Any(r => r.Contains(account)))
+                    else if (projectId is null && IsCostAccount(account) && ranges.Any(r => r.Contains(account)))
                     {
-                        usedPostings.Add(ToPosting(entry, account, null, -amount, -amount));
+                        used.Add((ToPosting(entry, account, null, -amount, -amount), -amount));
                     }
                 }
             }
         }
 
-        var usedByAccount = GroupByAccount(usedPostings, accountNames);
-        var manualUsed = manual.Sum(u => u.Amount);
-        var registered = projectSet.Count > 0 && grant.Kind == GrantKind.Project || ranges.Count > 0 || manual.Count > 0;
-        decimal? used = registered && (hasFikenData || manual.Count > 0)
+        var usedByAccount = GroupByAccount(used, accountNames);
+        var manualUsed = Round(manual.Sum(u => u.Amount));
+        var fikenSource = projectSet.Count > 0 || ranges.Count > 0;
+        var needsFiken = fikenSource && !hasFikenData;
+        decimal? usedTotal = !needsFiken && (fikenSource || manual.Count > 0)
             ? usedByAccount.Sum(a => a.Amount) + manualUsed
             : null;
 
-        var otherByAccount = GroupByAccount(otherIncome, accountNames);
+        var otherByAccount = GroupByAccount(income, accountNames);
         decimal? granted = grant.GrantedAmount;
 
-        if (used is { } u && granted is { } gr && u > gr)
+        if (usedTotal is { } u && granted is { } gr && u > gr)
         {
             issues.Add(new GrantIssue(
                 GrantIssueKind.UsedExceedsGranted,
@@ -197,26 +210,48 @@ public static class GrantReportBuilder
                 [grant.Id]));
         }
 
-        issues.AddRange(CheckProjectShares(allGrants, projects).Where(i => i.GrantIds.Contains(grant.Id)));
+        issues.AddRange(CheckProjectShares(effective, projects).Where(i => i.GrantIds.Contains(grant.Id)));
 
         return new GrantReport(
             grant,
             granted,
             received,
             payments,
-            used,
+            usedTotal,
             manualUsed,
             usedByAccount,
             otherByAccount,
             otherByAccount.Sum(a => a.Amount),
             granted is null ? null : granted.Value - received,
-            used is null ? null : received - used.Value,
+            usedTotal is null ? null : received - usedTotal.Value,
             issues,
-            hasFikenData);
+            hasFikenData,
+            needsFiken);
     }
 
     /// <summary>
-    /// Kontrollerer andelene for hvert prosjekt over alle aktive tilskudd (ikke avslått eller trukket):
+    /// Kostnadskonti: 4000–7999 og 8100–8799 (finans og skatt). Bruk regnes etter kontoklasse, ikke etter fortegn,
+    /// så en kreditnota eller ompostering reduserer bruken.
+    /// </summary>
+    public static bool IsCostAccount(int account) => account is >= 4000 and <= 7999 or >= 8100 and <= 8799;
+
+    /// <summary>Inntektskonti: 3000–3999 og 8000–8099 (finansinntekter). En refusjon reduserer inntekten.</summary>
+    public static bool IsIncomeAccount(int account) => account is >= 3000 and <= 3999 or >= 8000 and <= 8099;
+
+    /// <summary>Lager listen over alle tilskudd der <paramref name="grant"/> erstatter det med samme Id (eller legges til).</summary>
+    internal static IReadOnlyList<Grant> WithGrant(IEnumerable<Grant> allGrants, Grant grant)
+    {
+        var list = allGrants.Select(g => g.Id == grant.Id ? grant : g).ToList();
+        if (!list.Contains(grant))
+        {
+            list.Add(grant);
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// Kontrollerer andelene for hvert prosjekt over alle aktive prosjekttilskudd (ikke avslått, trukket eller driftstilskudd):
     /// over 100 % i sum, eller manglende andel når prosjektet har flere tilskudd. Tilsvarer «ugyldig fordeling» i Fase 3.
     /// </summary>
     public static IReadOnlyList<GrantIssue> CheckProjectShares(
@@ -230,7 +265,7 @@ public static class GrantReportBuilder
         var issues = new List<GrantIssue>();
 
         var byProject = grants
-            .Where(g => g.IsActive)
+            .Where(g => g.IsActive && g.Kind == GrantKind.Project)
             .SelectMany(g => (g.ProjectIds ?? []).Distinct().Select(id => (Id: id, Grant: g)))
             .GroupBy(x => x.Id)
             .Where(g => g.Count() > 1)
@@ -269,22 +304,27 @@ public static class GrantReportBuilder
     }
 
     /// <summary>
-    /// Hvilke år posteringer må hentes for: fra tidligste kjente dato (bruksperiode, vedtak, søknad, utbetalinger)
-    /// til slutten av bruksperioden, eller <paramref name="currentYear"/> når perioden er åpen.
+    /// Hvilke år posteringer må hentes for: fra tidligste kjente dato (bruksperiode, vedtak eller søknad, rapporteringsfrist
+    /// og koblede utbetalinger) til siste kjente dato. Et tilskudd som ikke er avsluttet, avslått eller trukket hentes
+    /// til og med <paramref name="currentYear"/>, så sene utbetalinger kan foreslås. Aldri forbi <paramref name="currentYear"/>.
     /// </summary>
     public static IReadOnlyList<int> YearsToFetch(Grant grant, int currentYear)
     {
         ArgumentNullException.ThrowIfNull(grant);
-        var dates = new[] { grant.UseFrom, grant.UseTo, grant.DecisionDate, grant.AppliedDate }
-            .Concat((grant.Payments ?? []).Select(p => p.Date))
+        var years = new[] { grant.UseFrom, grant.UseTo, grant.DecisionDate ?? grant.AppliedDate, grant.ReportDeadline }
+            .Concat((grant.Payments ?? []).Where(p => p.IsLinked).Select(p => p.Date))
             .Where(d => d.HasValue)
             .Select(d => d!.Value.Year)
             .ToList();
 
-        var start = dates.Count > 0 ? dates.Min() : currentYear;
-        var end = grant.UseTo?.Year ?? currentYear;
-        end = Math.Max(end, dates.Count > 0 ? dates.Max() : end);
-        end = Math.Max(end, start);
+        var start = Math.Min(years.Count > 0 ? years.Min() : currentYear, currentYear);
+        var end = years.Count > 0 ? years.Max() : currentYear;
+        if (grant.Status is not (GrantStatus.Closed or GrantStatus.Rejected or GrantStatus.Withdrawn))
+        {
+            end = currentYear;
+        }
+
+        end = Math.Clamp(end, start, currentYear);
         return Enumerable.Range(start, end - start + 1).ToList();
     }
 
@@ -294,7 +334,8 @@ public static class GrantReportBuilder
     internal static Dictionary<int, string> AccountNames(IReadOnlyList<FikenAccount>? accounts)
     {
         var names = new Dictionary<int, string>();
-        foreach (var account in accounts ?? [])
+        // Hovedkontoer (uten «:») går foran underkontoer, så kontonavnet ikke blir et kundenavn.
+        foreach (var account in (accounts ?? []).OrderBy(a => a.Code?.Contains(':') == true))
         {
             if (BudgetReportBuilder.TryParseAccount(account.Code, out var number))
             {
@@ -305,12 +346,21 @@ public static class GrantReportBuilder
         return names;
     }
 
-    /// <summary>Summen av inntektsretning (kreditt) på resultatkontoer i posteringen, i kroner.</summary>
-    internal static decimal IncomeAmount(FikenJournalEntry entry) =>
+    /// <summary>
+    /// Netto inntekt i posteringen i kroner: resultatbidraget på inntektskonti (en refusjon reduserer).
+    /// Den ene regelen for «mottatt», også når forslag til utbetalinger viser beløp.
+    /// </summary>
+    internal static decimal IncomeAmount(FikenJournalEntry entry) => IncomeLines(entry).Sum(l => l.Amount);
+
+    /// <summary>Inntektskontoene (og beløpene) i posteringen, i kontorekkefølge.</summary>
+    internal static IReadOnlyList<(int Account, decimal Amount)> IncomeLines(FikenJournalEntry entry) =>
         (entry.Lines ?? [])
-            .Select(l => BudgetReportBuilder.TryGetResultAmount(l, out _, out var amount) ? amount : 0m)
-            .Where(a => a > 0)
-            .Sum();
+            .Select(l => BudgetReportBuilder.TryGetResultAmount(l, out var account, out var amount) && IsIncomeAccount(account)
+                ? (Account: account, Amount: amount)
+                : default)
+            .Where(x => x.Account != 0)
+            .OrderBy(x => x.Account)
+            .ToList();
 
     internal static DateOnly? ParseDate(string? date) =>
         DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
@@ -334,14 +384,20 @@ public static class GrantReportBuilder
     private static GrantPosting ToPosting(FikenJournalEntry entry, int account, long? projectId, decimal full, decimal share) =>
         new(entry.JournalEntryId, entry.JournalEntryNumber, entry.Date, entry.Description, account, projectId, full, share);
 
-    private static IReadOnlyList<GrantAccountSum> GroupByAccount(IEnumerable<GrantPosting> postings, IReadOnlyDictionary<int, string> names) =>
+    /// <summary>Summerer eksakte beløp per konto og avrunder én gang per konto.</summary>
+    private static IReadOnlyList<GrantAccountSum> GroupByAccount(
+        IEnumerable<(GrantPosting Posting, decimal Exact)> postings,
+        IReadOnlyDictionary<int, string> names) =>
         postings
-            .GroupBy(p => p.Account)
+            .GroupBy(p => p.Posting.Account)
             .OrderBy(g => g.Key)
             .Select(g =>
             {
-                var list = g.OrderBy(p => p.Date, StringComparer.Ordinal).ThenBy(p => p.JournalEntryNumber).ToList();
-                return new GrantAccountSum(g.Key, names.GetValueOrDefault(g.Key), list.Sum(p => p.Amount), list);
+                var list = g.Select(x => x.Posting)
+                    .OrderBy(p => p.Date, StringComparer.Ordinal)
+                    .ThenBy(p => p.JournalEntryNumber)
+                    .ToList();
+                return new GrantAccountSum(g.Key, names.GetValueOrDefault(g.Key), Round(g.Sum(x => x.Exact)), list);
             })
             .ToList();
 }
