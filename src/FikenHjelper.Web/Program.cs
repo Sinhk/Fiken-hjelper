@@ -223,6 +223,60 @@ app.MapGet("/budsjett/eksport", async (
         $"Budsjett og regnskap {period}.xlsx");
 });
 
+app.MapGet("/tilskudd/eksport", async (
+    Guid? id,
+    int? year,
+    GrantStatus? status,
+    GrantService grants,
+    ILogger<GrantService> logger,
+    CancellationToken ct) =>
+{
+    if (year is { } y && y is < BudgetData.MinYear or > BudgetData.MaxYear)
+    {
+        return Results.Text($"Året må være mellom {BudgetData.MinYear} og {BudgetData.MaxYear}.", "text/plain; charset=utf-8", statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var all = (await grants.LoadAsync(ct)).Grants;
+    var today = grants.Today;
+    var single = id is { } grantId ? all.FirstOrDefault(g => g.Id == grantId) : null;
+    if (id is not null && single is null)
+    {
+        return Results.Text("Fant ikke tilskuddet. Det kan være slettet.", "text/plain; charset=utf-8", statusCode: StatusCodes.Status404NotFound);
+    }
+
+    // Bare lesing fra Fiken. Posteringer hentes for årene tilskuddene dekker, og feil gir en norsk melding.
+    GrantFikenData fiken;
+    try
+    {
+        fiken = await grants.LoadFikenAsync(grants.YearsFor(single is null ? all : [single]), refresh: false, ct);
+    }
+    catch (FikenApiException ex)
+    {
+        return Results.Problem(ex.UserMessage, statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
+    }
+    catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+    {
+        logger.LogWarning(ex, "Fiken svarte ikke ved eksport av tilskudd");
+        return Results.Problem("Fiken svarte ikke. Prøv igjen om litt.", statusCode: StatusCodes.Status502BadGateway, title: "Klarte ikke å hente data fra Fiken");
+    }
+
+    if (single is not null)
+    {
+        var report = GrantReportBuilder.Build(single, all, fiken.Entries, fiken.Accounts, fiken.Projects);
+        return Results.File(
+            GrantWorkbookExporter.ExportGrant(report, fiken.Projects, today),
+            GrantWorkbookExporter.ContentType,
+            GrantWorkbookExporter.FileName(single, today));
+    }
+
+    var rows = GrantOverviewLogic.Filter(GrantService.BuildOverview(all, fiken).Reports, year, status);
+    var filter = GrantOverviewLogic.FilterText(year, status);
+    return Results.File(
+        GrantWorkbookExporter.ExportOverview(rows, today, filter),
+        GrantWorkbookExporter.ContentType,
+        GrantWorkbookExporter.OverviewFileName(year, status, today));
+});
+
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

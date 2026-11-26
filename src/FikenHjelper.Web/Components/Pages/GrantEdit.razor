@@ -2,7 +2,7 @@
 @page "/tilskudd/{Id:guid}"
 @rendermode InteractiveServer
 @using System.Globalization
-@implements IDisposable
+@implements IAsyncDisposable
 
 <PageTitle>@(isNew ? "Nytt tilskudd" : grant?.DisplayName ?? "Tilskudd") – Fiken-hjelper</PageTitle>
 <PageErrorBoundary>
@@ -349,7 +349,19 @@
         @if (report is not null)
         {
             <MudPaper Class="pa-4" Outlined>
-                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Resultat</MudText>
+                <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Resultat</MudText>
+                    <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy"
+                                   OnClick="CopyTableAsync" Disabled="@Clipboard.IsCopying">Kopier som tabell</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Notes"
+                                   OnClick="CopyMarkdownAsync" Disabled="@Clipboard.IsCopying">Kopier som Markdown</MudButton>
+                        <MudTooltip Text="@(CanExport ? "Laster ned det lagrede tilskuddet med tall fra Fiken." : "Lagre tilskuddet først. Eksporten bruker den lagrede versjonen.")">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
+                                       Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="@(!CanExport)">Last ned Excel</MudButton>
+                        </MudTooltip>
+                    </MudStack>
+                </MudStack>
                 <MudGrid Spacing="2" Class="mb-3">
                     <MudItem xs="6" md="2">
                         <MudPaper Outlined Class="pa-3">

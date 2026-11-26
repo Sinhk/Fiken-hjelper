@@ -197,11 +197,11 @@ public static class QualityCheckTextFormatter
 
     private static bool IsNumberColumn(int index) => index is DaysColumn or AmountColumn;
 
-    private static string Encode(string value) => WebUtility.HtmlEncode(value);
+    internal static string Encode(string value) => WebUtility.HtmlEncode(value);
 
-    private static string CleanTab(string value) =>
+    internal static string CleanTab(string value) =>
         value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
 
-    private static string EscapeMarkdown(string value) =>
+    internal static string EscapeMarkdown(string value) =>
         CleanTab(value).Replace("|", "\\|");
 }

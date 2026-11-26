@@ -167,6 +167,44 @@ public static class GrantOverviewLogic
         return new GrantTotal(values.Sum(), values.Count, rows.Count);
     }
 
+    /// <summary>Forklaringer til delsummer, f.eks. «innvilget for 2 av 3 tilskudd». Tom når alle summer er komplette.</summary>
+    public static IReadOnlyList<string> PartialNotes(GrantTotals totals)
+    {
+        ArgumentNullException.ThrowIfNull(totals);
+        var notes = new List<string>();
+        void Add(string name, GrantTotal total)
+        {
+            if (total.HasValue && total.IsPartial)
+            {
+                notes.Add($"{name} for {total.Counted} av {total.Total} tilskudd");
+            }
+        }
+
+        Add("søkt", totals.Applied);
+        Add("innvilget", totals.Granted);
+        Add("mottatt", totals.Received);
+        Add("brukt", totals.Used);
+        Add("gjenstår", totals.Remaining);
+        return notes;
+    }
+
+    /// <summary>Beskrivelse av filteret på norsk, f.eks. «år 2027, status Innvilget», eller null når alt vises.</summary>
+    public static string? FilterText(int? year, GrantStatus? status)
+    {
+        var parts = new List<string>();
+        if (year is { } y)
+        {
+            parts.Add($"år {y}");
+        }
+
+        if (status is { } s)
+        {
+            parts.Add($"status {Grant.StatusText(s)}");
+        }
+
+        return parts.Count == 0 ? null : string.Join(", ", parts);
+    }
+
     public static IReadOnlyList<GrantReport> Filter(IEnumerable<GrantReport> reports, int? year, GrantStatus? status) =>
         reports
             .Where(r => (year is null || OverlapsYear(r.Grant, year.Value)) && (status is null || r.Grant.Status == status))

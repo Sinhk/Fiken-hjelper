@@ -1,9 +1,11 @@
 @page "/tilskudd"
 @rendermode InteractiveServer
 @using System.Globalization
-@implements IDisposable
+@implements IAsyncDisposable
 @inject GrantService Service
 @inject ILogger<GrantsOverview> Logger
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
 
 <PageTitle>Tilskudd – Fiken-hjelper</PageTitle>
 <PageErrorBoundary>
@@ -37,6 +39,12 @@
                            OnClick="() => LoadFikenAsync(refresh: true)" Disabled="isLoading">
                     Oppdater fra Fiken
                 </MudButton>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ContentCopy"
+                           OnClick="CopyTableAsync" Disabled="@(rows.Count == 0 || Clipboard.IsCopying)">Kopier som tabell</MudButton>
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Notes"
+                           OnClick="CopyMarkdownAsync" Disabled="@(rows.Count == 0 || Clipboard.IsCopying)">Kopier som Markdown</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
+                           Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="@(grants.Count == 0)">Last ned Excel</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="tilskudd/ny">
                     Nytt tilskudd
                 </MudButton>
@@ -171,7 +179,7 @@
                     </tr>
                 </tfoot>
             </MudSimpleTable>
-            @if (PartialNotes(totals) is { Count: > 0 } notes)
+            @if (GrantOverviewLogic.PartialNotes(totals) is { Count: > 0 } notes)
             {
                 <MudText Typo="Typo.caption" Class="mt-2 d-block">
                     * Delsum, siden noen tilskudd mangler verdi: @string.Join("; ", notes).
@@ -239,6 +247,50 @@
     private string? loadError;
     private string? fikenError;
     private GrantTotals totals = GrantOverviewLogic.Totals([]);
+    private ClipboardCopier? clipboard;
+
+    private static readonly Dictionary<string, object> downloadAttributes = new()
+    {
+        ["download"] = "",
+        ["data-enhance-nav"] = "false"
+    };
+
+    private ClipboardCopier Clipboard => clipboard ??= new ClipboardCopier(JS, Snackbar, Logger);
+
+    private string ExportUrl
+    {
+        get
+        {
+            var query = new List<string>();
+            if (year is { } y)
+            {
+                query.Add($"year={y}");
+            }
+
+            if (status is { } s)
+            {
+                query.Add($"status={s}");
+            }
+
+            return query.Count == 0 ? "tilskudd/eksport" : "tilskudd/eksport?" + string.Join('&', query);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Clipboard.PreloadAsync();
+        }
+    }
+
+    private async Task CopyTableAsync() =>
+        await Clipboard.CopyTableAsync(
+            GrantTextFormatter.OverviewToHtml(rows, GrantOverviewLogic.FilterText(year, status)),
+            GrantTextFormatter.OverviewToTabSeparated(rows, GrantOverviewLogic.FilterText(year, status)));
+
+    private async Task CopyMarkdownAsync() =>
+        await Clipboard.CopyMarkdownAsync(GrantTextFormatter.OverviewToMarkdown(rows, GrantOverviewLogic.FilterText(year, status)));
 
     protected override async Task OnInitializedAsync()
     {
@@ -302,25 +354,6 @@
     private static string Sum(GrantTotal total) =>
         !total.HasValue ? "–" : Kr(total.Sum) + (total.IsPartial ? " *" : string.Empty);
 
-    private static List<string> PartialNotes(GrantTotals t)
-    {
-        var notes = new List<string>();
-        void Add(string name, GrantTotal total)
-        {
-            if (total.HasValue && total.IsPartial)
-            {
-                notes.Add($"{name} for {total.Counted} av {total.Total} tilskudd");
-            }
-        }
-
-        Add("søkt", t.Applied);
-        Add("innvilget", t.Granted);
-        Add("mottatt", t.Received);
-        Add("brukt", t.Used);
-        Add("gjenstår", t.Remaining);
-        return notes;
-    }
-
     private static string Kr(decimal? value) => value is { } v ? v.ToString("N0", Nb) : "–";
 
     private static string DeadlineText(GrantDeadline d) => d.State == GrantDeadlineState.Overdue
@@ -329,9 +362,13 @@
             ? $"{d.Label} i dag"
             : $"{d.Label} {d.Date:dd.MM.yyyy} (om {d.Days} d)";
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         disposeCts.Cancel();
         disposeCts.Dispose();
+        if (clipboard is not null)
+        {
+            await clipboard.DisposeAsync();
+        }
     }
 }
