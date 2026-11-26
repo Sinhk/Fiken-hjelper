@@ -2,7 +2,7 @@
 @page "/tilskudd/{Id:guid}"
 @rendermode InteractiveServer
 @using System.Globalization
-@implements IDisposable
+@implements IAsyncDisposable
 
 <PageTitle>@(isNew ? "Nytt tilskudd" : grant?.DisplayName ?? "Tilskudd") – Fiken-hjelper</PageTitle>
 <PageErrorBoundary>
@@ -349,7 +349,19 @@
         @if (report is not null)
         {
             <MudPaper Class="pa-4" Outlined>
-                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Resultat</MudText>
+                <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Resultat</MudText>
+                    <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy"
+                                   OnClick="CopyTableAsync" Disabled="@(Clipboard.IsCopying || IsLoading)">Kopier som tabell</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Notes"
+                                   OnClick="CopyMarkdownAsync" Disabled="@(Clipboard.IsCopying || IsLoading)">Kopier som Markdown</MudButton>
+                        <MudTooltip Text="@(CanExport ? "Laster ned det lagrede tilskuddet med tall fra Fiken." : "Lagre tilskuddet først. Eksporten bruker den lagrede versjonen.")">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
+                                       Href="@ExportUrl" UserAttributes="downloadAttributes" Disabled="@(!CanExport)">Last ned Excel</MudButton>
+                        </MudTooltip>
+                    </MudStack>
+                </MudStack>
                 <MudGrid Spacing="2" Class="mb-3">
                     <MudItem xs="6" md="2">
                         <MudPaper Outlined Class="pa-3">
@@ -360,7 +372,14 @@
                     <MudItem xs="6" md="2">
                         <MudPaper Outlined Class="pa-3">
                             <MudText Typo="Typo.caption">Mottatt</MudText>
-                            <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(report.Received)</MudText>
+                            @if (GrantTextFormatter.ReceivedMissingText(report) is { } receivedMissing)
+                            {
+                                <MudText Typo="Typo.h6" Color="Color.Secondary">@receivedMissing</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(report.Received)</MudText>
+                            }
                         </MudPaper>
                     </MudItem>
                     <MudItem xs="6" md="3">
@@ -383,13 +402,14 @@
                     <MudItem xs="6" md="2">
                         <MudPaper Outlined Class="pa-3">
                             <MudText Typo="Typo.caption">Gjenstår å motta</MudText>
-                            <MudText Typo="Typo.h6" Class="tabular-nums">@KrOrDash(report.Remaining)</MudText>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@KrOrDash(GrantOverviewLogic.RemainingOrNull(report))</MudText>
                         </MudPaper>
                     </MudItem>
                     <MudItem xs="12" md="3">
                         <MudPaper Outlined Class="pa-3">
                             <MudText Typo="Typo.caption">Ubrukt (mottatt − brukt)</MudText>
-                            <MudText Typo="Typo.h6" Class="tabular-nums" Color="@(report.Unused < 0 ? Color.Error : Color.Default)">@KrOrDash(report.Unused)</MudText>
+                            @{ var unused = GrantOverviewLogic.ReceivedOrNull(report) is null ? null : report.Unused; }
+                            <MudText Typo="Typo.h6" Class="tabular-nums" Color="@(unused < 0 ? Color.Error : Color.Default)">@KrOrDash(unused)</MudText>
                         </MudPaper>
                     </MudItem>
                 </MudGrid>
@@ -403,7 +423,8 @@
                 @if (report.UsedByAccount.Count == 0 && report.ManualUsed == 0m)
                 {
                     <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
-                        @(report.UsedNeedsFikenData ? "Mangler Fiken-data, så bruken kan ikke vises." : "Ingen kostnader funnet i bruksperioden.")
+                        @(report.UsedNeedsFikenData ? "Mangler Fiken-data, så bruken kan ikke vises."
+                            : report.UsedIsUnregistered ? "Bruk er ikke registrert." : "Ingen kostnader funnet i bruksperioden.")
                     </MudText>
                 }
                 else

@@ -5,6 +5,7 @@ using FikenHjelper.Web.Components.Grants;
 using FikenHjelper.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
+using Microsoft.JSInterop;
 using MudBlazor;
 
 namespace FikenHjelper.Web.Components.Pages;
@@ -20,6 +21,7 @@ public partial class GrantEdit
     [Inject] private ISnackbar Snackbar { get; set; } = default!;
     [Inject] private NavigationManager Navigation { get; set; } = default!;
     [Inject] private ILogger<GrantEdit> Logger { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
 
     [Parameter] public Guid? Id { get; set; }
 
@@ -44,6 +46,45 @@ public partial class GrantEdit
     private readonly InputErrorTracker inputErrors = new();
 
     private bool IsLoading => loadingCount > 0;
+
+    private static readonly Dictionary<string, object> downloadAttributes = new()
+    {
+        ["download"] = "",
+        ["data-enhance-nav"] = "false"
+    };
+
+    private ClipboardCopier? clipboard;
+
+    private ClipboardCopier Clipboard => clipboard ??= new ClipboardCopier(JS, Snackbar, Logger);
+
+    /// <summary>Eksporten bruker det lagrede tilskuddet, så den er først tilgjengelig når alt er lagret.</summary>
+    private bool CanExport => grant is not null && !isNew && !isDirty;
+
+    private string ExportUrl => $"tilskudd/eksport?id={grant?.Id}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Clipboard.PreloadAsync();
+        }
+    }
+
+    private async Task CopyTableAsync()
+    {
+        if (report is not null)
+        {
+            await Clipboard.CopyTableAsync(GrantTextFormatter.ToHtml(report), GrantTextFormatter.ToTabSeparated(report));
+        }
+    }
+
+    private async Task CopyMarkdownAsync()
+    {
+        if (report is not null)
+        {
+            await Clipboard.CopyMarkdownAsync(GrantTextFormatter.ToMarkdown(report));
+        }
+    }
 
     private string? SafeLink =>
         Uri.TryCreate(grant?.Link?.Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.AbsoluteUri : null;
@@ -483,9 +524,13 @@ public partial class GrantEdit
             ? d.ToString("dd.MM.yyyy", Nb)
             : date ?? string.Empty;
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         disposeCts.Cancel();
         disposeCts.Dispose();
+        if (clipboard is not null)
+        {
+            await clipboard.DisposeAsync();
+        }
     }
 }
