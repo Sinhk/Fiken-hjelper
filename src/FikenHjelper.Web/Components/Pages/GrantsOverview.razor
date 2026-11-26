@@ -1,0 +1,337 @@
+@page "/tilskudd"
+@rendermode InteractiveServer
+@using System.Globalization
+@implements IDisposable
+@inject GrantService Service
+@inject ILogger<GrantsOverview> Logger
+
+<PageTitle>Tilskudd – Fiken-hjelper</PageTitle>
+<PageErrorBoundary>
+<MudProviders />
+
+<MudStack Spacing="4">
+    <MudPaper Class="pa-4" Outlined>
+        <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.h5" HtmlTag="h1">Søknader og tilskudd</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Hva kretsen har søkt om, fått innvilget, fått utbetalt og brukt. Bruken hentes fra Fiken-prosjektene som er koblet til tilskuddet.
+                </MudText>
+            </MudStack>
+            <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                <MudSelect T="int?" Label="År" Value="year" ValueChanged="v => { year = v; Rebuild(); }" Clearable
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense Style="min-width: 8rem">
+                    @foreach (var y in selectableYears)
+                    {
+                        <MudSelectItem T="int?" Value="y">@y</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="GrantStatus?" Label="Status" Value="status" ValueChanged="v => { status = v; Rebuild(); }" Clearable
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense Style="min-width: 11rem">
+                    @foreach (var s in Enum.GetValues<GrantStatus>())
+                    {
+                        <MudSelectItem T="GrantStatus?" Value="s">@Grant.StatusText(s)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="() => LoadFikenAsync(refresh: true)" Disabled="isLoading">
+                    Oppdater fra Fiken
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="tilskudd/ny">
+                    Nytt tilskudd
+                </MudButton>
+            </MudStack>
+        </MudStack>
+
+        @if (isLoading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
+        }
+
+        @if (!string.IsNullOrWhiteSpace(loadError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@loadError</MudAlert>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(fikenError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@fikenError</MudAlert>
+        }
+
+        @if (!fiken.HasCompany && string.IsNullOrWhiteSpace(fikenError) && string.IsNullOrWhiteSpace(loadError) && RendererInfo.IsInteractive && !isLoading)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                Ingen Fiken-foretak er valgt, så «brukt» kan ikke hentes fra Fiken. Tilskudd med manuell bruk og manuelle utbetalinger vises likevel.
+                Koble til Fiken under <MudLink Href="innstillinger">Innstillinger</MudLink>.
+            </MudAlert>
+        }
+
+        @if (overview.Issues.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                <MudText Typo="Typo.body2"><strong>Kontroller</strong></MudText>
+                <ul class="mb-0">
+                    @foreach (var issue in overview.Issues)
+                    {
+                        <li>
+                            @issue.Message
+                            @if (issue.GrantIds.Count > 0)
+                            {
+                                <MudLink Href="@($"tilskudd/{issue.GrantIds[0]}")">Åpne</MudLink>
+                            }
+                        </li>
+                    }
+                </ul>
+            </MudAlert>
+        }
+
+        @if (grants.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">
+                Ingen tilskudd er registrert ennå. Trykk «Nytt tilskudd» for å legge inn den første søknaden.
+            </MudAlert>
+        }
+        else if (rows.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">Ingen tilskudd passer filteret.</MudAlert>
+        }
+        else
+        {
+            <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto" Class="fh-table">
+                <thead>
+                    <tr>
+                        <th>Navn</th>
+                        <th>Tilskuddsgiver</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th class="fh-num-col">Søkt (kr)</th>
+                        <th class="fh-num-col">Innvilget (kr)</th>
+                        <th class="fh-num-col">Mottatt (kr)</th>
+                        <th class="fh-num-col">Brukt (kr)</th>
+                        <th class="fh-num-col">Gjenstår å motta (kr)</th>
+                        <th>Frister</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in rows)
+                    {
+                        <tr @key="r.Grant.Id">
+                            <td><MudLink Href="@($"tilskudd/{r.Grant.Id}")">@r.Grant.DisplayName</MudLink></td>
+                            <td>@r.Grant.Grantor</td>
+                            <td>@Grant.KindText(r.Grant.Kind)</td>
+                            <td>@Grant.StatusText(r.Grant.Status)</td>
+                            <td class="fh-num-col tabular-nums">@Kr(r.Grant.AppliedAmount)</td>
+                            <td class="fh-num-col tabular-nums">@Kr(r.Granted)</td>
+                            <td class="fh-num-col tabular-nums">
+                                @if (GrantOverviewLogic.ReceivedOrNull(r) is { } received)
+                                {
+                                    @Kr(received)
+                                }
+                                else
+                                {
+                                    <span class="mud-text-secondary" title="Koblede utbetalinger kan ikke leses uten Fiken-data">–</span>
+                                }
+                            </td>
+                            <td class="fh-num-col tabular-nums">
+                                @if (r.UsedIsUnregistered)
+                                {
+                                    <span class="mud-text-secondary">ikke registrert</span>
+                                }
+                                else if (r.UsedNeedsFikenData)
+                                {
+                                    <span class="mud-text-secondary">mangler Fiken-data</span>
+                                }
+                                else
+                                {
+                                    @Kr(r.Used)
+                                }
+                            </td>
+                            <td class="fh-num-col tabular-nums">@Kr(GrantOverviewLogic.RemainingOrNull(r))</td>
+                            <td>
+                                @foreach (var d in GrantOverviewLogic.Deadlines(r.Grant, Service.Today))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Color="@(d.State == GrantDeadlineState.Overdue ? Color.Error : Color.Warning)">
+                                        @DeadlineText(d)
+                                    </MudChip>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr class="budget-total">
+                        <th scope="row" colspan="4">Sum (@rows.Count tilskudd)</th>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Applied)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Granted)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Received)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Used)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Remaining)</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </MudSimpleTable>
+            @if (PartialNotes(totals) is { Count: > 0 } notes)
+            {
+                <MudText Typo="Typo.caption" Class="mt-2 d-block">
+                    * Delsum, siden noen tilskudd mangler verdi: @string.Join("; ", notes).
+                </MudText>
+            }
+            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">
+                Brukt er brutto kostnader (konto 4000–7999 og 8100–8799) på de koblede prosjektene i bruksperioden, ganget med tilskuddets andel.
+                Gjenstår å motta = innvilget − mottatt. Filteret på år viser tilskudd der bruksperioden overlapper året eller vedtaket er fattet i året.
+            </MudText>
+        }
+    </MudPaper>
+
+    <MudExpansionPanels Outlined>
+        <MudExpansionPanel Text="Hvilke kontoer er tilskudd ført på?">
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
+                Kontoene utbetalingene som er koblet til Fiken faktisk ligger på. Er de spredt over flere kontoer, er tilskudd ikke ført konsekvent.
+            </MudText>
+            @if (!fiken.HasCompany || fiken.Entries is null)
+            {
+                <MudText Typo="Typo.body2">Krever Fiken-data.</MudText>
+            }
+            else if (overview.AccountUsage.Count == 0)
+            {
+                <MudText Typo="Typo.body2">Ingen utbetalinger er koblet til Fiken-posteringer ennå.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense Style="max-width: 40rem">
+                    <thead>
+                        <tr>
+                            <th>Konto</th>
+                            <th class="fh-num-col">Utbetalinger</th>
+                            <th class="fh-num-col">Beløp (kr)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var a in overview.AccountUsage)
+                        {
+                            <tr>
+                                <td>@a.Account @a.AccountName</td>
+                                <td class="fh-num-col tabular-nums">@a.PaymentCount</td>
+                                <td class="fh-num-col tabular-nums">@Kr(a.Amount)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+</MudStack>
+</PageErrorBoundary>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+    private readonly CancellationTokenSource disposeCts = new();
+
+    private IReadOnlyList<Grant> grants = [];
+    private GrantFikenData fiken = GrantFikenData.None;
+    private GrantOverview overview = new([], [], []);
+    private IReadOnlyList<GrantReport> rows = [];
+    private IReadOnlyList<int> selectableYears = [];
+    private int? year;
+    private GrantStatus? status;
+    private bool isLoading;
+    private string? loadError;
+    private string? fikenError;
+    private GrantTotals totals = GrantOverviewLogic.Totals([]);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            grants = (await Service.LoadAsync(disposeCts.Token)).Grants;
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å lese tilskuddsfilen");
+            loadError = UserErrors.Describe(ex, "Klarte ikke å lese tilskuddene", "Tilskuddsfilen (grants.json i datamappen)");
+            return;
+        }
+
+        selectableYears = GrantOverviewLogic.SelectableYears(grants, Service.CurrentYear);
+        Rebuild();
+        if (RendererInfo.IsInteractive && loadError is null)
+        {
+            await LoadFikenAsync(refresh: false);
+        }
+    }
+
+    private async Task LoadFikenAsync(bool refresh)
+    {
+        isLoading = true;
+        fikenError = null;
+        StateHasChanged();
+        try
+        {
+            fiken = await Service.LoadFikenAsync(Service.YearsFor(grants), refresh, disposeCts.Token);
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Klarte ikke å hente Fiken-data for tilskudd");
+            fiken = GrantFikenData.None;
+            fikenError = UserErrors.Describe(ex, "Klarte ikke å hente data fra Fiken")
+                + " Tilskuddene vises uten tall fra Fiken.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+
+        Rebuild();
+    }
+
+    private void Rebuild()
+    {
+        overview = GrantService.BuildOverview(grants, fiken);
+        rows = GrantOverviewLogic.Filter(overview.Reports, year, status);
+        totals = GrantOverviewLogic.Totals(rows);
+    }
+
+    private static string Sum(GrantTotal total) =>
+        !total.HasValue ? "–" : Kr(total.Sum) + (total.IsPartial ? " *" : string.Empty);
+
+    private static List<string> PartialNotes(GrantTotals t)
+    {
+        var notes = new List<string>();
+        void Add(string name, GrantTotal total)
+        {
+            if (total.HasValue && total.IsPartial)
+            {
+                notes.Add($"{name} for {total.Counted} av {total.Total} tilskudd");
+            }
+        }
+
+        Add("søkt", t.Applied);
+        Add("innvilget", t.Granted);
+        Add("mottatt", t.Received);
+        Add("brukt", t.Used);
+        Add("gjenstår", t.Remaining);
+        return notes;
+    }
+
+    private static string Kr(decimal? value) => value is { } v ? v.ToString("N0", Nb) : "–";
+
+    private static string DeadlineText(GrantDeadline d) => d.State == GrantDeadlineState.Overdue
+        ? $"{d.Label} {d.Date:dd.MM.yyyy} er passert"
+        : d.Days == 0
+            ? $"{d.Label} i dag"
+            : $"{d.Label} {d.Date:dd.MM.yyyy} (om {d.Days} d)";
+
+    public void Dispose()
+    {
+        disposeCts.Cancel();
+        disposeCts.Dispose();
+    }
+}

@@ -1,0 +1,161 @@
+@using System.Globalization
+
+@* Velger Fiken-prosjekter for ett tilskudd: søk, forslag etter likhet med tilskuddets navn øverst,
+   og en merknad når prosjektet allerede er koblet til andre tilskudd. *@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField T="string" @bind-Value="search" Immediate OnKeyDown="HandleSearchKey"
+                          Placeholder="Søk på navn eller nummer" Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Clearable AutoFocus aria-label="Søk etter prosjekt" />
+            <MudCheckBox T="bool" @bind-Value="showCompleted" Dense Size="Size.Small">Vis avsluttede prosjekter</MudCheckBox>
+
+            <div style="max-height: 55vh; overflow-y: auto">
+                @{
+                    var groups = BuildGroups();
+                }
+                @if (groups.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="pa-2">Ingen prosjekter passer.</MudText>
+                }
+                @foreach (var group in groups)
+                {
+                    <MudText Typo="Typo.overline" HtmlTag="h3" Class="mt-2">@group.Title</MudText>
+                    @foreach (var (project, match) in group.Items)
+                    {
+                        <div>
+                            <MudCheckBox T="bool" Value="selected.Contains(project.ProjectId)"
+                                         ValueChanged="v => Toggle(project.ProjectId, v)" Dense Size="Size.Small">
+                                @project.Name
+                                @if (!string.IsNullOrWhiteSpace(project.Number))
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> (@project.Number)</MudText>
+                                }
+                                @if (project.Completed)
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Secondary"> – avsluttet</MudText>
+                                }
+                                @if (match is { } m)
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Primary"> – @(m.Reason == NameMatchReason.Exact ? "samme navn" : $"likhet {m.Score} %")</MudText>
+                                }
+                                @if (UsedBy.TryGetValue(project.ProjectId, out var others))
+                                {
+                                    <MudText Inline Typo="Typo.caption" Color="Color.Warning"> – også koblet til @others</MudText>
+                                }
+                            </MudCheckBox>
+                        </div>
+                    }
+                }
+            </div>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="mr-auto ml-4">@selected.Count valgt</MudText>
+        <MudButton OnClick="Cancel">Avbryt</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Bruk</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private sealed record Group(string Title, IReadOnlyList<(FikenProject Project, NameMatch<FikenProject>? Match)> Items);
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>Navnet på tilskuddet, som forslagene rangeres etter.</summary>
+    [Parameter] public string? GrantName { get; set; }
+
+    [Parameter, EditorRequired] public IReadOnlyList<FikenProject> Projects { get; set; } = [];
+
+    [Parameter] public IReadOnlyList<long> Selected { get; set; } = [];
+
+    /// <summary>Prosjekt-id til navnene på andre aktive tilskudd som bruker prosjektet.</summary>
+    [Parameter] public IReadOnlyDictionary<long, string> UsedBy { get; set; } = new Dictionary<long, string>();
+
+    private HashSet<long> selected = [];
+    private string? search;
+    private bool showCompleted;
+
+    protected override void OnInitialized() => selected = [.. Selected];
+
+    private IReadOnlyList<Group> BuildGroups()
+    {
+        var searching = !string.IsNullOrWhiteSpace(search);
+        var all = Projects.GroupBy(p => p.ProjectId).Select(g => g.First())
+            .Where(p => !searching || Matches(p, search!))
+            .ToList();
+
+        var chosen = all.Where(p => selected.Contains(p.ProjectId)).Select(p => (p, (NameMatch<FikenProject>?)null)).ToList();
+        var rest = all.Where(p => !selected.Contains(p.ProjectId) && (showCompleted || searching || !p.Completed)).ToList();
+        var suggestions = ProjectNameMatcher.Rank(GrantName, rest, p => p.Name);
+        var suggested = suggestions.Select(m => (m.Item, (NameMatch<FikenProject>?)m)).ToList();
+        var suggestedIds = suggestions.Select(m => m.Item.ProjectId).ToHashSet();
+        var others = rest.Where(p => !suggestedIds.Contains(p.ProjectId))
+            .OrderBy(p => p.Name, StringComparer.Create(CultureInfo.GetCultureInfo("nb-NO"), ignoreCase: true))
+            .Select(p => (p, (NameMatch<FikenProject>?)null))
+            .ToList();
+
+        var groups = new List<Group>();
+        if (chosen.Count > 0)
+        {
+            groups.Add(new Group("Valgt", chosen));
+        }
+
+        if (suggested.Count > 0)
+        {
+            groups.Add(new Group("Forslag", suggested));
+        }
+
+        if (others.Count > 0)
+        {
+            groups.Add(new Group("Andre prosjekter", others));
+        }
+
+        return groups;
+    }
+
+    private static bool Matches(FikenProject project, string text) =>
+        project.Name.Contains(text, StringComparison.CurrentCultureIgnoreCase)
+        || (project.Number?.Contains(text, StringComparison.CurrentCultureIgnoreCase) ?? false);
+
+    private void Toggle(long id, bool on)
+    {
+        if (on)
+        {
+            selected.Add(id);
+        }
+        else
+        {
+            selected.Remove(id);
+        }
+    }
+
+    // Behold rekkefølgen prosjektene allerede hadde, og legg nye til sist.
+    private void Submit() => MudDialog.Close(DialogResult.Ok(
+        Selected.Where(selected.Contains).Concat(selected.Except(Selected)).ToList()));
+
+    private void Cancel() => MudDialog.Cancel();
+
+    // Enter i søkefeltet: ett treff velges (og søket tømmes, så neste Enter lagrer), tomt søk lagrer valget.
+    private void HandleSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter")
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            Submit();
+            return;
+        }
+
+        var all = BuildGroups().SelectMany(g => g.Items).ToList();
+        if (all is [var only])
+        {
+            selected.Add(only.Project.ProjectId);
+            search = null;
+        }
+    }
+}

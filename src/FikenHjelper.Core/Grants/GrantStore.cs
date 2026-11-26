@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FikenHjelper.Core.Config;
 
 namespace FikenHjelper.Core.Grants;
 
@@ -7,6 +8,13 @@ public interface IGrantStore
 {
     Task<GrantData> LoadAsync(CancellationToken ct = default);
     Task SaveAsync(GrantData data, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomisk les-endre-skriv: leser, kjører <paramref name="update"/> og lagrer, uten at andre kan skrive imellom
+    /// (heller ikke andre prosesser). Returnerer feilmeldingene fra <paramref name="update"/> eller fra
+    /// <see cref="GrantData.Validate"/>. Ved feil lagres ingenting.
+    /// </summary>
+    Task<IReadOnlyList<string>> UpdateAsync(Func<GrantData, IReadOnlyList<string>> update, CancellationToken ct = default);
 }
 
 /// <summary>Lagrer tilskudd i <c>grants.json</c>. Samme mønster som <c>JsonBudgetStore</c>.</summary>
@@ -23,11 +31,13 @@ public sealed class JsonGrantStore : IGrantStore
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _directory;
     private readonly string _path;
+    private readonly string _lockPath;
 
     public JsonGrantStore(string dataDirectory)
     {
         _directory = dataDirectory;
         _path = Path.Combine(dataDirectory, "grants.json");
+        _lockPath = Path.Combine(dataDirectory, "grants.lock");
     }
 
     public async Task<GrantData> LoadAsync(CancellationToken ct = default)
@@ -35,14 +45,7 @@ public sealed class JsonGrantStore : IGrantStore
         await _gate.WaitAsync(ct);
         try
         {
-            if (!File.Exists(_path))
-            {
-                return new GrantData();
-            }
-
-            await using var stream = File.OpenRead(_path);
-            var data = await JsonSerializer.DeserializeAsync<GrantData>(stream, JsonOptions, ct);
-            return Normalize(data ?? new GrantData());
+            return await ReadAsync(ct);
         }
         finally
         {
@@ -53,30 +56,76 @@ public sealed class JsonGrantStore : IGrantStore
     public async Task SaveAsync(GrantData data, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(data);
-        var normalized = Normalize(data);
-
         await _gate.WaitAsync(ct);
         try
         {
-            Directory.CreateDirectory(_directory);
-            var tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
-            try
-            {
-                await using (var stream = File.Create(tempPath))
-                {
-                    await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, ct);
-                }
-
-                File.Move(tempPath, _path, overwrite: true);
-            }
-            finally
-            {
-                File.Delete(tempPath);
-            }
+            using var fileLock = await CrossProcessFileLock.AcquireAsync(_lockPath, ct);
+            await WriteAsync(data, ct);
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> UpdateAsync(Func<GrantData, IReadOnlyList<string>> update, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        await _gate.WaitAsync(ct);
+        try
+        {
+            using var fileLock = await CrossProcessFileLock.AcquireAsync(_lockPath, ct);
+            var data = await ReadAsync(ct);
+            var errors = update(data);
+            if (errors.Count > 0)
+            {
+                return errors;
+            }
+
+            errors = Normalize(data).Validate();
+            if (errors.Count > 0)
+            {
+                return errors;
+            }
+
+            await WriteAsync(data, ct);
+            return [];
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<GrantData> ReadAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_path))
+        {
+            return new GrantData();
+        }
+
+        await using var stream = File.OpenRead(_path);
+        var data = await JsonSerializer.DeserializeAsync<GrantData>(stream, JsonOptions, ct);
+        return Normalize(data ?? new GrantData());
+    }
+
+    private async Task WriteAsync(GrantData data, CancellationToken ct)
+    {
+        var normalized = Normalize(data);
+        Directory.CreateDirectory(_directory);
+        var tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await using (var stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, ct);
+            }
+
+            File.Move(tempPath, _path, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(tempPath);
         }
     }
 

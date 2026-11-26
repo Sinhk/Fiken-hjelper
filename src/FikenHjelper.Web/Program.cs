@@ -1,6 +1,7 @@
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
+using FikenHjelper.Core.Grants;
 using FikenHjelper.Core.MinSpeiding;
 using FikenHjelper.Core.QualityCheck;
 using FikenHjelper.Web.Auth;
@@ -48,8 +49,11 @@ builder.Services.AddSingleton<ILocalConfigStore>(sp =>
 
 builder.Services.AddSingleton<IBudgetStore>(sp =>
     new JsonBudgetStore(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
+builder.Services.AddSingleton<IGrantStore>(sp =>
+    new JsonGrantStore(sp.GetRequiredService<ILocalConfigStore>().DataDirectory));
 builder.Services.AddSingleton<FikenDataCache>();
 builder.Services.AddScoped<BudgetReportService>();
+builder.Services.AddScoped<GrantService>();
 
 builder.Services.AddSingleton<FikenOAuthStateStore>();
 builder.Services.AddHttpClient(FikenOAuthService.HttpClientName, client =>
