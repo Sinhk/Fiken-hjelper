@@ -403,6 +403,9 @@ public sealed class BudgetWorkbookTests
         overview.Cell("B2").Value = 100;
         overview.Cell("C2").Value = 80;
         overview.Cell("D2").FormulaA1 = "C2-B2";
+        overview.Cell("E1").Value = "Budsjett 2027";
+        overview.Cell("E2").FormulaA1 = "B2-C2";
+        overview.Cell("E3").FormulaA1 = "B3-C3";
         overview.Cell("A3").Value = "Drift";
         overview.Cell("B3").Value = -50;
         overview.Cell("C3").Value = -40;
@@ -425,6 +428,9 @@ public sealed class BudgetWorkbookTests
             var patchedXml = xml
                 .Replace(">C2-B2</", " t=\"shared\" ref=\"D2:D3\" si=\"0\">C2-B2</")
                 .Replace(">C3-B3</", " t=\"shared\" si=\"0\"></");
+            patchedXml = patchedXml.Replace(">B2-C2</", " t=\"shared\" ref=\"E2:E3\" si=\"1\">B2-C2</").Replace(">B3-C3</", " t=\"shared\" si=\"1\"></");
+            patchedXml = System.Text.RegularExpressions.Regex.Replace(patchedXml, "<v>[^<]*</v>", "");
+            Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(patchedXml, "t=\"shared\"").Count);
             Assert.NotEqual(xml, patchedXml);
 
             entry.Delete();
@@ -441,7 +447,8 @@ public sealed class BudgetWorkbookTests
             shared.Position = 0;
             var result = BudgetWorkbookImporter.Import(shared, []);
 
-            Assert.Equal(2, result.Years.Single().Lines.Count);
+            var y27 = result.Years.Single(y => y.Year == 2027);
+            Assert.Equal(new[] { 20m, -10m }, y27.Lines.Select(l => l.Amount).ToArray());
         }
         finally
         {
