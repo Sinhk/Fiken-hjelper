@@ -398,7 +398,7 @@ public sealed class McpStdioEndToEndTests : IDisposable
                  {
                      "get_fiken_context", "list_inbox_documents", "list_ehf_documents", "get_inbox_document",
                      "suggest_accounting_and_projects", "preview_purchase_draft", "create_purchase_draft",
-                     "get_budget_status", "explain_project_variance", "find_accounting_anomalies"
+                     "get_budget_status", "explain_project_variance", "find_accounting_anomalies", "get_grant_status"
                  })
         {
             Assert.Contains(expected, names);

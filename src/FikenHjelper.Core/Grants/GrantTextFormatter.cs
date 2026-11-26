@@ -95,7 +95,7 @@ public static class GrantTextFormatter
 
         var received = GrantOverviewLogic.ReceivedOrNull(report);
         var remaining = GrantOverviewLogic.RemainingOrNull(report);
-        var unused = received is null ? null : report.Unused;
+        var unused = GrantOverviewLogic.UnusedOrNull(report);
 
         var summary = new Table(["Felt", "Verdi"], [false, true], [], false);
         void Row(string label, string value) => summary.Rows.Add([label, value]);

@@ -212,16 +212,26 @@ public sealed class GrantService(
 
     public static GrantOverview BuildOverview(IReadOnlyList<Grant> grants, GrantFikenData data)
     {
-        ArgumentNullException.ThrowIfNull(grants);
         ArgumentNullException.ThrowIfNull(data);
+        return BuildOverview(grants, data.Entries, data.Accounts, data.Projects);
+    }
 
-        var reportList = GrantReportBuilder.BuildAll(grants, data.Entries, data.Accounts, data.Projects);
-        var issues = GrantReportBuilder.CheckProjectShares(grants, data.Projects).ToList();
+    /// <summary>Som over, men med posteringer oppgitt direkte (null uten Fiken-data), f.eks. filtrert til en dato.</summary>
+    public static GrantOverview BuildOverview(
+        IReadOnlyList<Grant> grants,
+        IReadOnlyList<FikenJournalEntry>? entries,
+        IReadOnlyList<FikenAccount> accounts,
+        IReadOnlyList<FikenProject> projects)
+    {
+        ArgumentNullException.ThrowIfNull(grants);
+
+        var reportList = GrantReportBuilder.BuildAll(grants, entries, accounts, projects);
+        var issues = GrantReportBuilder.CheckProjectShares(grants, projects).ToList();
         // Fordelingsmeldingene står allerede i listen over. Resten (brukt over innvilget, utbetaling mangler) kommer fra rapportene.
         issues.AddRange(reportList
             .SelectMany(r => r.Issues)
             .Where(i => i.Kind is not (GrantIssueKind.ShareMissing or GrantIssueKind.ShareOverAllocated)));
-        var usage = data.Entries is null ? [] : GrantAccountOverview.Build(grants, data.Entries, data.Accounts);
+        var usage = entries is null ? [] : GrantAccountOverview.Build(grants, entries, accounts);
         return new GrantOverview(reportList, issues, usage);
     }
 }

@@ -114,7 +114,7 @@ public static class GrantWorkbookExporter
         ws.Cell(row - 1, 1).Style.Font.Bold = true;
         var received = GrantOverviewLogic.ReceivedOrNull(report);
         var remaining = GrantOverviewLogic.RemainingOrNull(report);
-        var unused = received is null ? null : report.Unused;
+        var unused = GrantOverviewLogic.UnusedOrNull(report);
         Field("Innvilget (kr)", report.Granted, report.Granted is null ? "Ikke satt" : null);
         Field("Mottatt (kr)", received, GrantTextFormatter.ReceivedMissingText(report) is { } receivedMissing ? Capitalize(receivedMissing) : null);
         Field("Brukt (kr)", report.Used, GrantTextFormatter.UsedMissingText(report) is { } missing ? Capitalize(missing) : null);

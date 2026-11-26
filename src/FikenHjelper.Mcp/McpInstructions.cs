@@ -24,6 +24,9 @@ public static class McpInstructions
         4. preview_purchase_draft → brukeren bekrefter → create_purchase_draft.
 
         Budsjett og kontroll: get_budget_status, explain_project_variance og find_accounting_anomalies gir tall til styremøter.
+        Tilskudd: get_grant_status (bare lesing) viser søknader og tilskudd fra Fiken-hjelper med frister, innvilget, mottatt, brukt, gjenstår,
+        bruk per konto og kontrollfunn. Felt som mangler er ukjent eller ikke registrert, ikke 0. Tilskudd endres bare i Fiken-hjelper Web.
+
         Budsjettfortegn: inntekt positiv, kostnad negativ; positivt avvik er gunstig.
         """;
 }
@@ -52,6 +55,8 @@ public sealed class FikenPrompts
         1. Kall get_budget_status og oppsummer totalt budsjett mot regnskap.
         2. Velg de 3–5 største avvikene og bruk explain_project_variance for å forklare dem kort (hvilke kontoer/posteringer).
         3. Kall find_accounting_anomalies og list det som bør ryddes før møtet (ufordelte posteringer, forfalte fakturaer, ubehandlede bilag).
+        4. Kall get_grant_status og ta med tilskudd som krever oppfølging: frister som nærmer seg eller er passert, innvilget men ikke mottatt,
+           brukt mer enn innvilget. Si tydelig fra når tall mangler (ikke registrert eller mangler Fiken-data), og ikke gjett.
         Skriv i et format som er lett å lime inn i Word/Google Docs.
         """;
 }

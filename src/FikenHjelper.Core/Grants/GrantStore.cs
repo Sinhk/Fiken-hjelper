@@ -45,6 +45,9 @@ public sealed class JsonGrantStore : IGrantStore
         await _gate.WaitAsync(ct);
         try
         {
+            // Samme rekkefølge som UpdateAsync (først _gate, så fillåsen), så de ikke kan låse hverandre.
+            // Lesing under fillåsen hindrer at en annen prosess (MCP) leser mens Web bytter ut filen.
+            using var fileLock = await CrossProcessFileLock.AcquireAsync(_lockPath, ct);
             return await ReadAsync(ct);
         }
         finally
