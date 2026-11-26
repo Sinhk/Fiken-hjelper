@@ -239,7 +239,7 @@ public static class GrantReportBuilder
     public static bool IsIncomeAccount(int account) => account is >= 3000 and <= 3999 or >= 8000 and <= 8099;
 
     /// <summary>Lager listen over alle tilskudd der <paramref name="grant"/> erstatter det med samme Id (eller legges til).</summary>
-    internal static IReadOnlyList<Grant> WithGrant(IEnumerable<Grant> allGrants, Grant grant)
+    public static IReadOnlyList<Grant> WithGrant(IEnumerable<Grant> allGrants, Grant grant)
     {
         var list = allGrants.Select(g => g.Id == grant.Id ? grant : g).ToList();
         if (!list.Contains(grant))

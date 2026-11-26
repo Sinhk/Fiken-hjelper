@@ -1,0 +1,497 @@
+@page "/tilskudd/ny"
+@page "/tilskudd/{Id:guid}"
+@rendermode InteractiveServer
+@using System.Globalization
+@implements IDisposable
+
+<PageTitle>@(isNew ? "Nytt tilskudd" : grant?.DisplayName ?? "Tilskudd") – Fiken-hjelper</PageTitle>
+<PageErrorBoundary>
+<MudProviders />
+<NavigationLock ConfirmExternalNavigation="isDirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
+
+<MudStack Spacing="4">
+    <MudPaper Class="pa-4" Outlined>
+        <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <MudText Typo="Typo.h5" HtmlTag="h1">@(isNew ? "Nytt tilskudd" : grant?.DisplayName ?? "Tilskudd")</MudText>
+            <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ArrowBack" Href="tilskudd">
+                    Til oversikten
+                </MudButton>
+                @if (grant is not null)
+                {
+                    @if (isDirty)
+                    {
+                        <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">Ulagrede endringer</MudChip>
+                    }
+                    @if (!isNew)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                                   OnClick="DeleteAsync" Disabled="isSaving">Slett</MudButton>
+                    }
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="SaveAsync" Disabled="@(isSaving || !isDirty && !isNew)">Lagre</MudButton>
+                }
+            </MudStack>
+        </MudStack>
+
+        @if (isLoading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
+        }
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(fikenMessage))
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">@fikenMessage</MudAlert>
+        }
+        else if (RendererInfo.IsInteractive && !fiken.HasCompany && grant is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                Ingen Fiken-foretak er valgt. Du kan fylle ut tilskuddet og registrere manuelle utbetalinger og manuell bruk,
+                men prosjekter, forslag til utbetalinger og «brukt» fra Fiken krever tilkobling under
+                <MudLink Href="innstillinger">Innstillinger</MudLink>.
+            </MudAlert>
+        }
+
+        @if (validationErrors.Count > 0)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">
+                <MudText Typo="Typo.body2"><strong>Tilskuddet ble ikke lagret:</strong></MudText>
+                <ul class="mb-0">
+                    @foreach (var e in validationErrors)
+                    {
+                        <li>@e</li>
+                    }
+                </ul>
+            </MudAlert>
+        }
+
+        @if (grant is null)
+        {
+            @if (notFound)
+            {
+                <MudAlert Severity="Severity.Info">
+                    Fant ikke tilskuddet. Det kan være slettet. Gå tilbake til <MudLink Href="tilskudd">oversikten</MudLink>.
+                </MudAlert>
+            }
+        }
+        else
+        {
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Navn" Value="grant.Name" ValueChanged="v => SetAsync(() => grant.Name = v ?? string.Empty)"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Required />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Tilskuddsgiver" Value="grant.Grantor" ValueChanged="v => SetAsync(() => grant.Grantor = v ?? string.Empty)"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Ordning (valgfri)" Value="grant.Scheme" ValueChanged="v => SetAsync(() => grant.Scheme = v)"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudSelect T="GrantKind" Label="Type" Value="grant.Kind" ValueChanged="v => SetAsync(() => grant.Kind = v)"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense>
+                        @foreach (var k in Enum.GetValues<GrantKind>())
+                        {
+                            <MudSelectItem Value="k">@Grant.KindText(k)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudSelect T="GrantStatus" Label="Status" Value="grant.Status" ValueChanged="v => SetAsync(() => grant.Status = v)"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense>
+                        @foreach (var s in Enum.GetValues<GrantStatus>())
+                        {
+                            <MudSelectItem Value="s">@Grant.StatusText(s)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="6" md="3">
+                    <DateOnlyPicker Label="Søknadsfrist" Value="grant.ApplicationDeadline" ValueChanged="v => SetAsync(() => grant.ApplicationDeadline = v)" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DateOnlyPicker Label="Søkt (dato)" Value="grant.AppliedDate" ValueChanged="v => SetAsync(() => grant.AppliedDate = v)" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DateOnlyPicker Label="Vedtaksdato" Value="grant.DecisionDate" ValueChanged="v => SetAsync(() => grant.DecisionDate = v)" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DateOnlyPicker Label="Rapporteringsfrist" Value="grant.ReportDeadline" ValueChanged="v => SetAsync(() => grant.ReportDeadline = v)" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DateOnlyPicker Label="Bruksperiode fra" Value="grant.UseFrom" ValueChanged="v => SetAsync(() => grant.UseFrom = v)" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DateOnlyPicker Label="Bruksperiode til" Value="grant.UseTo" ValueChanged="v => SetAsync(() => grant.UseTo = v)" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DecimalField Value="grant.AppliedAmount" ValueChanged="v => SetAsync(() => grant.AppliedAmount = v)" Grouped Clearable
+                                  Min="0" RangeMessage="Beløpet kan ikke være negativt."
+                                  Label="Søkt beløp (kr)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <DecimalField Value="grant.GrantedAmount" ValueChanged="v => SetAsync(() => grant.GrantedAmount = v)" Grouped Clearable
+                                  Min="0" RangeMessage="Beløpet kan ikke være negativt."
+                                  Label="Innvilget beløp (kr)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Lenke (søknad eller portal)" Value="grant.Link" ValueChanged="v => SetAsync(() => grant.Link = v)"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Error="@(!string.IsNullOrWhiteSpace(grant.Link) && SafeLink is null)"
+                                  ErrorText="Lenken må starte med http:// eller https://" Clearable />
+                    @if (SafeLink is { } link)
+                    {
+                        <MudLink Href="@link" Target="_blank" rel="noopener noreferrer" Typo="Typo.body2">Åpne lenken</MudLink>
+                    }
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string" Label="Notater" Value="grant.Notes" ValueChanged="v => SetAsync(() => grant.Notes = v)"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Lines="2" Sizing="InputSizing.Auto" />
+                </MudItem>
+            </MudGrid>
+        }
+    </MudPaper>
+
+    @if (grant is not null)
+    {
+        @if (grant.Kind == GrantKind.Project)
+        {
+            <MudPaper Class="pa-4" Outlined>
+                <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Prosjekter i Fiken</MudText>
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AddLink" OnClick="PickProjectsAsync"
+                               Disabled="@(!fiken.HasCompany)">Velg prosjekter</MudButton>
+                </MudStack>
+                @if (grant.ProjectIds.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Ingen prosjekter er koblet. Koble prosjektene pengene skal brukes på, så hentes «brukt» fra Fiken.
+                    </MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense Style="max-width: 60rem">
+                        <thead>
+                            <tr>
+                                <th>Prosjekt</th>
+                                <th>Andel av prosjektets kostnader</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var id in grant.ProjectIds)
+                            {
+                                var projectId = id;
+                                var others = OtherGrantsOnProject(projectId);
+                                var missingShare = others.Count > 0 && grant.ShareOf(projectId) is null && grant.IsActive;
+                                <tr @key="projectId">
+                                    <td>@ProjectName(projectId)</td>
+                                    <td>
+                                        <DecimalField Value="grant.ShareOf(projectId)" ValueChanged="v => SetShareAsync(projectId, v)"
+                                                      Min="0.01m" Max="100m" RangeMessage="Andelen må være mellom 0 og 100 %."
+                                                      Placeholder="100" Margin="Margin.Dense" Style="max-width: 9rem"
+                                                      Adornment="Adornment.End" AdornmentText="%"
+                                                      aria-label="@($"Andel i prosent for {ProjectName(projectId)}")" />
+                                        @if (others.Count > 0)
+                                        {
+                                            <MudText Typo="Typo.caption" Color="@(missingShare ? Color.Error : Color.Secondary)">
+                                                @(missingShare ? "Andel må oppgis. " : "")Prosjektet er også koblet til @string.Join(", ", others.Select(o => $"«{o.DisplayName}»")).
+                                            </MudText>
+                                        }
+                                    </td>
+                                    <td>
+                                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" aria-label="@($"Fjern {ProjectName(projectId)}")"
+                                                       OnClick="() => RemoveProjectAsync(projectId)" />
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1 d-block">
+                        Tomt felt betyr 100 %. Summen for et prosjekt over alle aktive tilskudd kan være under 100 % (resten er kretsens egen andel), men ikke over.
+                    </MudText>
+                }
+
+                @foreach (var issue in shareIssues)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense Class="mt-2">@issue.Message</MudAlert>
+                }
+            </MudPaper>
+        }
+        else
+        {
+            <MudPaper Class="pa-4" Outlined>
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-1">Bruk av driftstilskuddet</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
+                    Kostnader uten prosjekt på kontoene under regnes som bruk i bruksperioden. Bruk som ikke kan leses fra Fiken, legges inn manuelt.
+                </MudText>
+
+                <MudText Typo="Typo.subtitle2" Class="mb-1">Kontointervall</MudText>
+                @foreach (var range in grant.AccountRanges)
+                {
+                    var r = range;
+                    <MudStack Row AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                        <MudNumericField T="int" Label="Fra konto" Value="r.From" ValueChanged="v => SetAsync(() => r.From = v)" HideSpinButtons
+                                         Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 9rem" Min="0" Max="9999" />
+                        <MudNumericField T="int" Label="Til konto" Value="r.To" ValueChanged="v => SetAsync(() => r.To = v)" HideSpinButtons
+                                         Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 9rem" Min="0" Max="9999" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" aria-label="Fjern kontointervall"
+                                       OnClick="() => SetAsync(() => grant.AccountRanges.Remove(r))" />
+                    </MudStack>
+                }
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mb-3"
+                           OnClick="() => SetAsync(() => grant.AccountRanges.Add(new AccountRange { From = 6800, To = 6899 }))">Legg til kontointervall</MudButton>
+
+                <MudText Typo="Typo.subtitle2" Class="mb-1">Manuell bruk</MudText>
+                @foreach (var use in grant.ManualUses)
+                {
+                    var u = use;
+                    <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                        <DateOnlyPicker Label="Dato" Value="u.Date" ValueChanged="v => SetAsync(() => u.Date = v)" Style="max-width: 11rem" />
+                        <DecimalField Value="u.Amount" ValueChanged="v => SetAsync(() => u.Amount = v ?? 0m)" AllowEmpty="false" Grouped
+                                      Label="Beløp (kr)" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 10rem" />
+                        <MudTextField T="string" Label="Beskrivelse" Value="u.Description" ValueChanged="v => SetAsync(() => u.Description = v)"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width: 16rem" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" aria-label="Fjern manuell bruk"
+                                       OnClick="() => SetAsync(() => grant.ManualUses.Remove(u))" />
+                    </MudStack>
+                }
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="() => SetAsync(() => grant.ManualUses.Add(new GrantManualUse()))">Legg til manuell bruk</MudButton>
+            </MudPaper>
+        }
+
+        <MudPaper Class="pa-4" Outlined>
+            <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                <MudText Typo="Typo.h6" HtmlTag="h2">Utbetalinger</MudText>
+                <MudStack Row Spacing="2">
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="() => SetAsync(() => grant.Payments.Add(new GrantPayment()))">Legg til manuell</MudButton>
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Search" OnClick="FindPaymentsAsync"
+                               Disabled="@(!fiken.HasCompany || fiken.Entries is null || isLoading)">Finn utbetaling i Fiken</MudButton>
+                </MudStack>
+            </MudStack>
+            @if (grant.Payments.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Ingen utbetalinger er registrert.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense Style="overflow-x: auto">
+                    <thead>
+                        <tr>
+                            <th>Kilde</th>
+                            <th>Dato</th>
+                            <th>Bilag</th>
+                            <th>Beskrivelse</th>
+                            <th class="fh-num-col">Beløp (kr)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (var i = 0; i < grant.Payments.Count; i++)
+                        {
+                            var payment = grant.Payments[i];
+                            var rep = report is not null && i < report.Payments.Count ? report.Payments[i] : null;
+                            <tr @key="payment">
+                                @if (payment.IsLinked)
+                                {
+                                    <td>Fiken</td>
+                                    <td>@(rep?.Date?.ToString("dd.MM.yyyy", Nb) ?? "")</td>
+                                    <td>@EntryNumber(payment.JournalEntryId)</td>
+                                    <td>
+                                        @rep?.Description
+                                        @if (rep?.Missing == true)
+                                        {
+                                            <MudText Typo="Typo.caption" Color="Color.Error">Finnes ikke i hentede posteringer. Beløpet er ikke regnet med.</MudText>
+                                        }
+                                        else if (fiken.Entries is null)
+                                        {
+                                            <MudText Typo="Typo.caption" Color="Color.Secondary">Mangler Fiken-data. Beløpet hentes fra Fiken.</MudText>
+                                        }
+                                    </td>
+                                    <td class="fh-num-col tabular-nums">@Kr(rep?.Amount ?? 0m)</td>
+                                }
+                                else
+                                {
+                                    <td>Manuell</td>
+                                    <td><DateOnlyPicker Label="Dato" Value="payment.Date" ValueChanged="v => SetAsync(() => payment.Date = v)" Style="min-width: 10rem" /></td>
+                                    <td></td>
+                                    <td>
+                                        <MudTextField T="string" Label="Notat" Value="payment.Note" ValueChanged="v => SetAsync(() => payment.Note = v)"
+                                                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+                                    </td>
+                                    <td class="fh-num-col">
+                                        <DecimalField Value="payment.Amount" ValueChanged="v => SetAsync(() => payment.Amount = v)" Grouped
+                                                      Label="Beløp (kr)" Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width: 9rem" />
+                                    </td>
+                                }
+                                <td>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                                   aria-label="@(payment.IsLinked ? "Fjern koblingen til Fiken-posteringen" : "Fjern utbetalingen")"
+                                                   OnClick="() => SetAsync(() => grant.Payments.Remove(payment))" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+
+        @if (report is not null)
+        {
+            <MudPaper Class="pa-4" Outlined>
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Resultat</MudText>
+                <MudGrid Spacing="2" Class="mb-3">
+                    <MudItem xs="6" md="2">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudText Typo="Typo.caption">Innvilget</MudText>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@KrOrDash(report.Granted)</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="6" md="2">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudText Typo="Typo.caption">Mottatt</MudText>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(report.Received)</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudText Typo="Typo.caption">Brukt</MudText>
+                            @if (report.UsedIsUnregistered)
+                            {
+                                <MudText Typo="Typo.h6" Color="Color.Secondary">ikke registrert</MudText>
+                            }
+                            else if (report.UsedNeedsFikenData)
+                            {
+                                <MudText Typo="Typo.h6" Color="Color.Secondary">mangler Fiken-data</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.h6" Class="tabular-nums">@KrOrDash(report.Used)</MudText>
+                            }
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="6" md="2">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudText Typo="Typo.caption">Gjenstår å motta</MudText>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@KrOrDash(report.Remaining)</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudPaper Outlined Class="pa-3">
+                            <MudText Typo="Typo.caption">Ubrukt (mottatt − brukt)</MudText>
+                            <MudText Typo="Typo.h6" Class="tabular-nums" Color="@(report.Unused < 0 ? Color.Error : Color.Default)">@KrOrDash(report.Unused)</MudText>
+                        </MudPaper>
+                    </MudItem>
+                </MudGrid>
+
+                @foreach (var issue in report.Issues.Where(i => i.Kind is not (GrantIssueKind.ShareMissing or GrantIssueKind.ShareOverAllocated)))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense Class="mb-2">@issue.Message</MudAlert>
+                }
+
+                <MudText Typo="Typo.subtitle1" HtmlTag="h3" Class="mb-1">Bruk per konto</MudText>
+                @if (report.UsedByAccount.Count == 0 && report.ManualUsed == 0m)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+                        @(report.UsedNeedsFikenData ? "Mangler Fiken-data, så bruken kan ikke vises." : "Ingen kostnader funnet i bruksperioden.")
+                    </MudText>
+                }
+                else
+                {
+                    <div class="mb-3">@AccountTable(report.UsedByAccount, "used", report.ManualUsed)</div>
+                }
+
+                <MudText Typo="Typo.subtitle1" HtmlTag="h3" Class="mb-1">Andre inntekter på prosjektet</MudText>
+                @if (report.OtherIncomeByAccount.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Ingen andre inntekter (som deltakeravgift) på de koblede prosjektene. Utbetalinger koblet til tilskuddet telles ikke med her.</MudText>
+                }
+                else
+                {
+                    @AccountTable(report.OtherIncomeByAccount, "income", 0m)
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1 d-block">
+                        Vises for seg og trekkes ikke fra «brukt». Sum: @Kr(report.OtherIncome) kr.
+                    </MudText>
+                }
+            </MudPaper>
+        }
+    }
+</MudStack>
+</PageErrorBoundary>
+
+@code {
+    private RenderFragment AccountTable(IReadOnlyList<GrantAccountSum> accounts, string kind, decimal manual) => __builder =>
+    {
+        <MudSimpleTable Dense Hover Style="overflow-x: auto">
+            <thead>
+                <tr>
+                    <th>Konto</th>
+                    <th class="fh-num-col">Beløp (kr)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var account in accounts)
+                {
+                    var key = $"{kind}:{account.Account}";
+                    var isOpen = expanded.Contains(key);
+                    <tr @key="key">
+                        <td>
+                            <MudButton Variant="Variant.Text" Size="Size.Small" Class="text-none justify-start px-1"
+                                       StartIcon="@(isOpen ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                       OnClick="() => Toggle(key)" aria-expanded="@(isOpen ? "true" : "false")">
+                                @account.Account @account.AccountName (@account.Postings.Count bilag)
+                            </MudButton>
+                        </td>
+                        <td class="fh-num-col tabular-nums">@Kr(account.Amount)</td>
+                    </tr>
+                    @if (isOpen)
+                    {
+                        <tr>
+                            <td colspan="2" class="budget-detail">
+                                <MudSimpleTable Dense Class="ms-6">
+                                    <thead>
+                                        <tr>
+                                            <th>Dato</th>
+                                            <th>Bilag</th>
+                                            <th>Beskrivelse</th>
+                                            <th class="fh-num-col">Hele beløpet</th>
+                                            <th class="fh-num-col">Tilskuddets del</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var p in account.Postings)
+                                        {
+                                            <tr>
+                                                <td>@FormatDate(p.Date)</td>
+                                                <td>@p.JournalEntryNumber</td>
+                                                <td>@p.Description</td>
+                                                <td class="fh-num-col tabular-nums">@Kr(p.FullAmount)</td>
+                                                <td class="fh-num-col tabular-nums">@Kr(p.Amount)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </MudSimpleTable>
+                            </td>
+                        </tr>
+                    }
+                }
+                @if (manual != 0m)
+                {
+                    <tr>
+                        <td>Manuell bruk</td>
+                        <td class="fh-num-col tabular-nums">@Kr(manual)</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    };
+}

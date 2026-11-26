@@ -8,6 +8,7 @@
               OnBlur="HandleBlur"
               InputMode="DecimalKeyboard"
               Margin="Margin"
+              Variant="Variant"
               Class="@Class"
               Immediate="Immediate"
               Clearable="Clearable"
@@ -37,6 +38,8 @@
     [Parameter] public bool Grouped { get; set; }
 
     [Parameter] public Margin Margin { get; set; } = Margin.None;
+
+    [Parameter] public Variant Variant { get; set; } = Variant.Text;
 
     [Parameter] public string? Class { get; set; }
 
