@@ -4,7 +4,7 @@
 <MudDialog>
     <DialogContent>
         <MudStack Spacing="2">
-            <MudTextField T="string" @bind-Value="search" Immediate DebounceInterval="150"
+            <MudTextField T="string" @bind-Value="search" Immediate OnKeyDown="HandleSearchKey"
                           Placeholder="Søk på navn eller nummer" Adornment="Adornment.Start"
                           AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense"
                           Clearable AutoFocus aria-label="Søk etter prosjekt" />
@@ -112,6 +112,28 @@
         Line.ProjectIds.Where(selected.Contains).Concat(selected.Except(Line.ProjectIds)).ToList()));
 
     private void Cancel() => MudDialog.Cancel();
+
+    // Enter i søkefeltet: ett treff velges (og søket tømmes, så neste Enter lagrer), tomt søk lagrer valget.
+    // Flere treff gjør ingenting, siden det er uklart hvilket som menes.
+    private void HandleSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter")
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            Submit();
+            return;
+        }
+
+        if (Options is [var only])
+        {
+            selected.Add(only.Project.ProjectId);
+            search = null;
+        }
+    }
 
     private static string GroupTitle(ProjectPickerGroup group) => group switch
     {

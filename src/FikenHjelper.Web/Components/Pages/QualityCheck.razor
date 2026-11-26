@@ -10,6 +10,7 @@
 @inject ILogger<QualityCheck> Logger
 
 <PageTitle>Kvalitetssjekk – Fiken-hjelper</PageTitle>
+<PageErrorBoundary>
 <MudProviders />
 
 <MudStack Spacing="4">
@@ -25,20 +26,22 @@
                 <MudDatePicker @key="datePickerKey" Label="Forfalt per" Date="ReferenceDateTime" DateChanged="HandleDateChanged"
                                Culture="Nb" DateFormat="dd.MM.yyyy" Editable
                                Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 11rem" />
-                <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
-                    <MudButton OnClick="SetToday">I dag</MudButton>
-                    <MudButton OnClick="SetLastYearEnd">31.12.@(today.Year - 1)</MudButton>
+                <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small" OverrideStyles="false" role="group" aria-label="Hurtigvalg for dato">
+                    <MudButton Variant="@(IsToday ? Variant.Filled : Variant.Outlined)" Color="@(IsToday ? Color.Primary : Color.Default)"
+                               OnClick="SetToday" UserAttributes="@PressedAttributes(IsToday)">I dag</MudButton>
+                    <MudButton Variant="@(IsLastYearEnd ? Variant.Filled : Variant.Outlined)" Color="@(IsLastYearEnd ? Color.Primary : Color.Default)"
+                               OnClick="SetLastYearEnd" UserAttributes="@PressedAttributes(IsLastYearEnd)">31.12.@(today.Year - 1)</MudButton>
                 </MudButtonGroup>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
-                           OnClick="LoadAsync" Disabled="isLoading">
+                           OnClick="LoadAsync" Disabled="@(isLoading || !hasCompany)">
                     Hent på nytt
                 </MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy"
-                           OnClick="CopyTableAsync" Disabled="report is null">
+                           OnClick="CopyTableAsync" Disabled="@(report is null || isCopying)">
                     Kopier tabell
                 </MudButton>
                 <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Notes"
-                           OnClick="CopyMarkdownAsync" Disabled="report is null">
+                           OnClick="CopyMarkdownAsync" Disabled="@(report is null || isCopying)">
                     Kopier som Markdown
                 </MudButton>
             </MudStack>
@@ -145,7 +148,7 @@
                                     <td>@finding.Counterparty</td>
                                     <td class="tabular-nums">@QualityCheckTextFormatter.FormatDate(finding.Date)</td>
                                     <td class="tabular-nums">@QualityCheckTextFormatter.FormatDate(finding.DueDate)</td>
-                                    <td class="fh-num-col tabular-nums">@finding.DaysOverdue</td>
+                                    <td class="fh-num-col tabular-nums">@(finding.DaysOverdue is > 0 ? finding.DaysOverdue.ToString() : "–")</td>
                                     <td class="fh-num-col tabular-nums">@(finding.OutstandingOre is { } ore ? Kr(ore) : "ukjent")</td>
                                     <td>@finding.Project</td>
                                     <td><MudText Typo="Typo.body2" Color="Color.Secondary">@finding.Note</MudText></td>
@@ -165,6 +168,7 @@
         }
     }
 </MudStack>
+</PageErrorBoundary>
 
 @code {
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
@@ -175,12 +179,20 @@
     private DateOnly referenceDate;
     private bool hasCompany = true;
     private bool isLoading;
+    private bool isCopying;
     private string? errorMessage;
     private IJSObjectReference? clipboardModule;
     private int datePickerKey;
     private readonly CancellationTokenSource disposeCts = new();
 
     private DateTime? ReferenceDateTime => referenceDate.ToDateTime(TimeOnly.MinValue);
+
+    private bool IsToday => referenceDate == today;
+
+    private bool IsLastYearEnd => referenceDate == new DateOnly(today.Year - 1, 12, 31);
+
+    private static Dictionary<string, object> PressedAttributes(bool pressed) =>
+        new() { ["aria-pressed"] = pressed ? "true" : "false" };
 
     protected override async Task OnInitializedAsync()
     {
@@ -248,12 +260,12 @@
         catch (FikenApiException ex)
         {
             Logger.LogWarning(ex, "Fiken-feil ved kvalitetssjekk");
-            errorMessage = ex.UserMessage;
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente åpne poster fra Fiken");
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å kjøre kvalitetssjekk");
-            errorMessage = "Noe gikk galt under henting fra Fiken. Se loggen for detaljer.";
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente åpne poster fra Fiken");
         }
         finally
         {
@@ -318,6 +330,12 @@
 
     private async Task CopyAsync(string function, string successMessage, params object[] args)
     {
+        if (isCopying)
+        {
+            return;
+        }
+
+        isCopying = true;
         try
         {
             clipboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/clipboard.js");
@@ -347,6 +365,10 @@
         catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
         {
             Logger.LogDebug(ex, "Kopiering avbrutt fordi forbindelsen til nettleseren ble brutt");
+        }
+        finally
+        {
+            isCopying = false;
         }
     }
 

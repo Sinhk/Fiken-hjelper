@@ -7,6 +7,7 @@
 @inject ILogger<Budget> Logger
 
 <PageTitle>Budsjett og regnskap – Fiken-hjelper</PageTitle>
+<PageErrorBoundary>
 <MudProviders />
 
 <MudStack Spacing="4">
@@ -83,20 +84,20 @@
             <MudGrid Spacing="2" Class="mb-3">
                 <MudItem xs="6" md="3">
                     <MudPaper Outlined Class="pa-3">
-                        <MudText Typo="Typo.caption">Budsjettert resultat @main.Year</MudText>
+                        <MudText Typo="Typo.caption">Budsjettert resultat @main.Year (kr)</MudText>
                         <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(main.TotalBudget)</MudText>
                     </MudPaper>
                 </MudItem>
                 <MudItem xs="6" md="3">
                     <MudPaper Outlined Class="pa-3">
-                        <MudText Typo="Typo.caption">Regnskap @main.Year</MudText>
+                        <MudText Typo="Typo.caption">Regnskap @main.Year (kr)</MudText>
                         <MudText Typo="Typo.h6" Class="tabular-nums">@Kr(main.TotalActual)</MudText>
                     </MudPaper>
                 </MudItem>
                 <MudItem xs="6" md="3">
                     <MudPaper Outlined Class="pa-3">
-                        <MudText Typo="Typo.caption">Avvik</MudText>
-                        <MudText Typo="Typo.h6" Class="tabular-nums" Color="VarianceColor(main.TotalVariance)">@Kr(main.TotalVariance)</MudText>
+                        <MudText Typo="Typo.caption">Avvik @main.Year (kr)</MudText>
+                        <MudText Typo="Typo.h6" Class="tabular-nums" Color="VarianceColor(main.TotalVariance)">@VarianceText(main.TotalVariance)</MudText>
                     </MudPaper>
                 </MudItem>
                 <MudItem xs="6" md="3">
@@ -109,7 +110,7 @@
                 </MudItem>
             </MudGrid>
 
-            <MudSimpleTable Dense Hover Bordered FixedHeader Style="overflow-x: auto" Class="budget-table">
+            <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto" Class="budget-table">
                 <thead>
                     <tr>
                         <th rowspan="2">Budsjettpost</th>
@@ -121,9 +122,9 @@
                     <tr>
                         @foreach (var year in comparison.Years)
                         {
-                            <th class="fh-num-col">Budsjett</th>
-                            <th class="fh-num-col">Regnskap</th>
-                            <th class="fh-num-col">Avvik</th>
+                            <th class="fh-num-col">Budsjett (kr)</th>
+                            <th class="fh-num-col">Regnskap (kr)</th>
+                            <th class="fh-num-col">Avvik (kr)</th>
                         }
                     </tr>
                 </thead>
@@ -154,7 +155,9 @@
                                     <td class="fh-num-col tabular-nums" title="@(line.IsManualActual ? "Manuelt tall" : null)">
                                         @Kr(line.Actual)@(line.IsManualActual ? "*" : "")
                                     </td>
-                                    <td class="fh-num-col tabular-nums @VarianceClass(line.Variance)" title="@Pct(line.VariancePercent)">@Kr(line.Variance)</td>
+                                    <td class="fh-num-col tabular-nums @VarianceClass(line.Variance)" title="@VarianceTitle(line.Variance, line.VariancePercent)">
+                                        @VarianceCell(line.Variance, line.VariancePercent)
+                                    </td>
                                 }
                             }
                         </tr>
@@ -194,7 +197,7 @@
                                                                     </MudText>
                                                                 }
                                                             </MudText>
-                                                            <MudText Typo="Typo.body2" Class="tabular-nums">@Kr(p.Amount)</MudText>
+                                                            <MudText Typo="Typo.body2" Class="tabular-nums">@Kr(p.Amount) kr</MudText>
                                                         </MudStack>
                                                     }
                                                 }
@@ -208,19 +211,19 @@
                 </tbody>
                 <tfoot>
                     <tr class="budget-total">
-                        <th scope="row">Resultat</th>
+                        <th scope="row">Resultat (kr)</th>
                         @foreach (var year in comparison.Years)
                         {
                             var r = comparison.Reports[year];
                             <td class="fh-num-col tabular-nums">@Kr(r.TotalBudget)</td>
                             <td class="fh-num-col tabular-nums">@Kr(r.TotalActual)</td>
-                            <td class="fh-num-col tabular-nums @VarianceClass(r.TotalVariance)">@Kr(r.TotalVariance)</td>
+                            <td class="fh-num-col tabular-nums @VarianceClass(r.TotalVariance)">@VarianceCell(r.TotalVariance, null)</td>
                         }
                     </tr>
                 </tfoot>
             </MudSimpleTable>
             <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">
-                Avvik = regnskap − budsjett. Positivt avvik er gunstig. * = manuelt registrert tall. Klikk på en post for å se prosjektene.
+                Alle beløp er i kroner. Avvik = regnskap − budsjett, med prosentavvik under. ▲ + er gunstig, ▼ − er ugunstig. * = manuelt registrert tall. Klikk på en post for å se prosjektene.
             </MudText>
         }
     </MudPaper>
@@ -242,19 +245,19 @@
                     <tbody>
                         <tr>
                             <td>Resultat i Fiken (konto 3000–8799)</td>
-                            <td class="fh-num-col tabular-nums"><strong>@Kr(report.FikenResult ?? 0)</strong></td>
+                            <td class="fh-num-col tabular-nums"><strong>@Kr(report.FikenResult ?? 0) kr</strong></td>
                         </tr>
                         <tr>
                             <td>Fordelt på budsjettposter</td>
-                            <td class="fh-num-col tabular-nums">@Kr(report.Lines.Where(l => !l.IsManualActual).Sum(l => l.Actual))</td>
+                            <td class="fh-num-col tabular-nums">@Kr(report.Lines.Where(l => !l.IsManualActual).Sum(l => l.Actual)) kr</td>
                         </tr>
                         <tr>
                             <td>Prosjekter uten budsjettpost</td>
-                            <td class="fh-num-col tabular-nums">@Kr(report.UnlinkedTotal)</td>
+                            <td class="fh-num-col tabular-nums">@Kr(report.UnlinkedTotal) kr</td>
                         </tr>
                         <tr>
                             <td>Posteringer uten prosjekt</td>
-                            <td class="fh-num-col tabular-nums">@Kr(report.UnallocatedTotal)</td>
+                            <td class="fh-num-col tabular-nums">@Kr(report.UnallocatedTotal) kr</td>
                         </tr>
                     </tbody>
                 </MudSimpleTable>
@@ -311,7 +314,7 @@
                                     <PropertyColumn Property="p => p.Date" Title="Dato" />
                                     <PropertyColumn Property="p => p.Account" Title="Konto" />
                                     <PropertyColumn Property="p => p.Description" Title="Beskrivelse" />
-                                    <PropertyColumn Property="p => p.Amount" Title="Beløp" Format="N2" Culture="Nb"
+                                    <PropertyColumn Property="p => p.Amount" Title="Beløp (kr)" Format="N2" Culture="Nb"
                                                     HeaderClass="fh-num-col" CellClass="fh-num-col tabular-nums" Filterable="false" />
                                 </Columns>
                                 <PagerContent>
@@ -325,6 +328,7 @@
         }
     }
 </MudStack>
+</PageErrorBoundary>
 
 @code {
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
@@ -348,8 +352,22 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var budget = await BudgetStore.LoadAsync(disposeCts.Token);
-        var budgetYears = budget.Years.Select(y => y.Year).ToList();
+        var budgetYears = new List<int>();
+        try
+        {
+            var budget = await BudgetStore.LoadAsync(disposeCts.Token);
+            budgetYears = budget.Years.Select(y => y.Year).ToList();
+        }
+        catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Klarte ikke å lese budsjettfilen");
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å lese budsjettet");
+        }
+
         selectableYears = budgetYears
             .Append(DateTime.Today.Year)
             .Distinct()
@@ -357,7 +375,7 @@
             .ToList();
         lastYear = budgetYears.Count > 0 ? budgetYears.Max() : DateTime.Today.Year;
 
-        if (RendererInfo.IsInteractive)
+        if (RendererInfo.IsInteractive && errorMessage is null)
         {
             await LoadAsync(refresh: false);
         }
@@ -382,12 +400,14 @@
         catch (FikenApiException ex)
         {
             Logger.LogWarning(ex, "Fiken-feil ved henting av budsjettrapport");
-            errorMessage = ex.UserMessage;
+            comparison = null;
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente rapporten");
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å bygge budsjettrapport");
-            errorMessage = "Noe gikk galt under henting av rapporten. Se loggen for detaljer.";
+            comparison = null;
+            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente rapporten");
         }
         finally
         {
@@ -424,7 +444,38 @@
 
     private static string Kr(decimal value) => value.ToString("N0", Nb);
 
-    private static string? Pct(decimal? value) => value?.ToString("P0", Nb);
+    private static string SignedKr(decimal value) =>
+        value > 0 ? "+" + Kr(value) : Kr(value);
+
+    // Fortegn og prosent med fast minus (U+2212), slik at tallene ikke bare skilles på farge.
+    private static string? SignedPct(decimal? value) =>
+        value is not { } v
+            ? null
+            : v > 0 ? "+" + (v * 100).ToString("0.#", Nb) + " %"
+            : v < 0 ? "−" + (Math.Abs(v) * 100).ToString("0.#", Nb) + " %"
+            : "0 %";
+
+    private static string VarianceText(decimal variance) => VarianceArrow(variance) + SignedKr(variance);
+
+    private static string VarianceArrow(decimal variance) =>
+        variance > 0 ? "▲ " : variance < 0 ? "▼ " : string.Empty;
+
+    private static string VarianceTitle(decimal variance, decimal? percent) =>
+        percent is null
+            ? "Avvik i kroner (ingen prosent uten budsjett)"
+            : $"Avvik i kroner og i prosent av budsjettet ({SignedPct(percent)})";
+
+    private static RenderFragment VarianceCell(decimal variance, decimal? percent) => builder =>
+    {
+        builder.AddContent(0, VarianceText(variance));
+        if (SignedPct(percent) is { } pct)
+        {
+            builder.OpenElement(1, "div");
+            builder.AddAttribute(2, "class", "budget-pct");
+            builder.AddContent(3, pct);
+            builder.CloseElement();
+        }
+    };
 
     private static string VarianceClass(decimal variance) =>
         variance < 0 ? "mud-error-text" : variance > 0 ? "mud-success-text" : string.Empty;

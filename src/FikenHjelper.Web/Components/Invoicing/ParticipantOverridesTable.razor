@@ -35,7 +35,7 @@
                     <th>Speidergruppe</th>
                     <th>Kategori</th>
                     <th>Status</th>
-                    <th class="fh-num-col">Pris (NOK)</th>
+                    <th class="fh-num-col">Pris (kr)</th>
                     <th>Svar / detaljer</th>
                 </tr>
             </thead>
@@ -180,6 +180,16 @@
                             {
                                 @string.Join(" | ", participant.Answers.Select(kv => $"{kv.Key}: {kv.Value}"))
                             }
+                        </td>
+                    </tr>
+                }
+                @if (FilteredParticipants.Count == 0)
+                {
+                    <tr>
+                        <td colspan="8" class="fh-hint">
+                            @(EventData.Participants.Count == 0
+                                ? "Arrangementet har ingen deltakere."
+                                : "Ingen treff. Prøv et annet søk eller fjern filteret.")
                         </td>
                     </tr>
                 }

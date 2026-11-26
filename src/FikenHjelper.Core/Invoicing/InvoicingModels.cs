@@ -81,9 +81,15 @@ public sealed record PlannedInvoiceDraft(
 {
     public decimal TotalNok => TotalOre / 100m;
 
+    /// <summary>
+    /// The draft sums to 0 kr (e.g. a group whose only participant is staff at 0 kr).
+    /// Such drafts are shown in the preview but not created in Fiken.
+    /// </summary>
+    public bool IsZeroAmount => TotalOre <= 0;
+
     // A draft with a participant whose price is unknown would be created as a 0 kr line,
     // so it is held back until a price is set or the category is excluded.
-    public bool IsReadyToCreate => SelectedContactId.HasValue && Lines.Count > 0 && !HasMissingPrice;
+    public bool IsReadyToCreate => SelectedContactId.HasValue && Lines.Count > 0 && !HasMissingPrice && !IsZeroAmount;
 }
 
 public sealed record InvoicePlanResult(
@@ -99,6 +105,14 @@ public sealed record InvoicePlanResult(
 {
     public decimal TotalNok => TotalOre / 100m;
     public decimal DistrictCoveredTotalNok => DistrictCoveredTotalOre / 100m;
+
+    /// <summary>Drafts that would be created in Fiken right now.</summary>
+    public IReadOnlyList<PlannedInvoiceDraft> ReadyDrafts => Drafts.Where(d => d.IsReadyToCreate).ToList();
+
+    public decimal ReadyTotalNok => Drafts.Where(d => d.IsReadyToCreate).Sum(d => d.TotalOre) / 100m;
+
+    /// <summary>Drafts with a known total of 0 kr; they are not created in Fiken.</summary>
+    public int ZeroAmountDraftCount => Drafts.Count(d => d.IsZeroAmount && !d.HasMissingPrice);
 }
 
 public sealed record DraftCreationItemResult(

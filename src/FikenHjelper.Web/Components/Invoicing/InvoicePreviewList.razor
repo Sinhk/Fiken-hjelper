@@ -22,6 +22,13 @@
             <span class="fh-kpi-label">Mangler Fiken-kunde</span>
             <span class="fh-kpi-value">@Plan.UnmatchedDraftCount</span>
         </div>
+        @if (Plan.ZeroAmountDraftCount > 0)
+        {
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">Ikke opprettet – 0 kr</span>
+                <span class="fh-kpi-value">@Plan.ZeroAmountDraftCount</span>
+            </div>
+        }
     </div>
 
     @if (Plan.GlobalWarnings.Count > 0)
@@ -60,7 +67,7 @@
                             <th>Deltaker</th>
                             <th>Speidergruppe</th>
                             <th>Kategori</th>
-                            <th class="fh-num-col">Beløp (NOK)</th>
+                            <th class="fh-num-col">Beløp (kr)</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -98,9 +105,10 @@
 
     @foreach (var draft in Plan.Drafts)
     {
+        var isZeroAmountOnly = draft.IsZeroAmount && !draft.HasMissingPrice;
         var cardStatus = draft.DuplicateDraftExists
             ? "duplicate"
-            : (!draft.SelectedContactId.HasValue || draft.HasMissingPrice ? "unmatched" : "ok");
+            : (!draft.SelectedContactId.HasValue || draft.HasMissingPrice || isZeroAmountOnly ? "unmatched" : "ok");
         var customerSelectId = $"cust-{draft.DraftKey}";
         var createOpen = openCreateDraftKeys.Contains(draft.DraftKey);
 
@@ -121,6 +129,10 @@
                         @if (draft.HasMissingPrice)
                         {
                             <span class="fh-badge fh-badge-danger">Mangler pris</span>
+                        }
+                        @if (isZeroAmountOnly)
+                        {
+                            <span class="fh-badge fh-badge-warn">Ikke opprettet – 0 kr</span>
                         }
                         @if (draft.DuplicateDraftExists)
                         {
@@ -146,7 +158,8 @@
                                       SelectedValueChanged="@(val => HandleCustomerSelectedValueChanged(draft.DraftKey, val))"
                                       Placeholder="Søk etter kunde i Fiken…"
                                       EmptyOptionText="-- Velg kunde i Fiken --"
-                                      AllowClear="true" />
+                                      AllowClear="true"
+                                      Disabled="IsSubmitting" />
                 </div>
 
                 <div class="fh-actions align-self-end">
@@ -154,6 +167,7 @@
                     {
                         <button type="button"
                                 class="btn btn-outline-primary btn-sm"
+                                disabled="@IsSubmitting"
                                 @onclick="() => OnManualCustomerSelected.InvokeAsync((draft.DraftKey, draft.SuggestedContactId))">
                             Bruk forslag
                         </button>
@@ -163,6 +177,7 @@
                     {
                         <button type="button"
                                 class="btn btn-outline-secondary btn-sm"
+                                disabled="@IsSubmitting"
                                 @onclick="() => OnRememberGroupMapping.InvokeAsync((draft.RecipientKey, draft.SelectedContactId.Value))">
                             Husk kobling for gruppe
                         </button>
@@ -173,6 +188,7 @@
                         <button type="button"
                                 class="btn btn-outline-secondary btn-sm"
                                 aria-expanded="@createOpen"
+                                disabled="@IsSubmitting"
                                 @onclick="() => ToggleCreateCustomerForm(draft)">
                             @(createOpen ? "Lukk ny kunde" : "Opprett ny kunde i Fiken")
                         </button>
@@ -182,29 +198,49 @@
 
             @if (createOpen)
             {
+                var nameMissing = string.IsNullOrWhiteSpace(newCustomerNames.GetValueOrDefault(draft.DraftKey));
                 <div class="fh-inline-create">
                     <div class="fh-grid-2">
                         <div class="fh-field mb-0">
                             <label for="new-name-@draft.DraftKey">Kundenavn i Fiken</label>
                             <input id="new-name-@draft.DraftKey"
                                    type="text"
-                                   @bind="newCustomerNames[draft.DraftKey]" />
+                                   disabled="@IsSubmitting"
+                                   @bind="newCustomerNames[draft.DraftKey]"
+                                   @bind:event="oninput" />
                         </div>
                         <div class="fh-field mb-0">
                             <label for="new-email-@draft.DraftKey">E-post for faktura (valgfritt)</label>
                             <input id="new-email-@draft.DraftKey"
                                    type="email"
+                                   disabled="@IsSubmitting"
                                    @bind="newCustomerEmails[draft.DraftKey]" />
                         </div>
                     </div>
                     <div class="fh-actions mt-2">
                         <button type="button"
                                 class="btn btn-primary btn-sm"
-                                disabled="@IsSubmitting"
+                                disabled="@(IsSubmitting || nameMissing || CreationBlockedReason is not null)"
                                 @onclick="() => SubmitCreateCustomerAsync(draft.DraftKey)">
                             Opprett kunde og koble til utkast
                         </button>
+                        @if (CreationBlockedReason is not null)
+                        {
+                            <span class="fh-hint">@CreationBlockedReason</span>
+                        }
+                        else if (nameMissing)
+                        {
+                            <span class="fh-hint">Skriv inn kundenavn.</span>
+                        }
                     </div>
+                </div>
+            }
+
+            @if (CustomerMessage is { } customerMsg
+                && string.Equals(customerMsg.DraftKey, draft.DraftKey, StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="fh-alert @(customerMsg.IsError ? "fh-alert-danger" : "fh-alert-info") mt-2 mb-2" role="status" aria-live="polite">
+                    @customerMsg.Message
                 </div>
             }
 
@@ -259,10 +295,16 @@
 
             <div class="fh-actions mb-2">
                 <label class="fh-checkbox-option">
-                    <input type="checkbox" @bind="confirmCreation" />
+                    <input type="checkbox"
+                           @bind="confirmCreation"
+                           disabled="@(IsSubmitting || CreationBlockedReason is not null)" />
                     <span>
                         Jeg bekrefter at <strong>@ReadyDraftCount</strong> fakturautkast (sum @ReadyTotalNok.ToString("N2", NorwegianCulture) kr)
-                        skal opprettes som <strong>utkast</strong> i Fiken (MVA = Utenfor / OUTSIDE).
+                        skal opprettes som <strong>utkast</strong> i Fiken (MVA: Utenfor – kretsen er ikke MVA-pliktig).
+                        @if (Plan.ZeroAmountDraftCount > 0)
+                        {
+                            <span class="fh-hint d-block">@Plan.ZeroAmountDraftCount utkast på 0 kr opprettes ikke.</span>
+                        }
                     </span>
                 </label>
             </div>
@@ -275,16 +317,32 @@
             }
 
             <div class="fh-actions">
-                <button type="submit" class="btn btn-primary" disabled="@IsSubmitting">
+                <button type="submit"
+                        class="btn btn-primary"
+                        disabled="@(IsSubmitting || CreationBlockedReason is not null)"
+                        aria-describedby="@(CreationBlockedReason is not null ? "create-drafts-blocked" : null)">
                     @(IsSubmitting ? "Oppretter fakturautkast i Fiken…" : $"Opprett {ReadyDraftCount} fakturautkast i Fiken")
                 </button>
+                @if (CreationBlockedReason is not null)
+                {
+                    <span id="create-drafts-blocked" class="fh-hint">@CreationBlockedReason</span>
+                }
+            </div>
+
+            <div role="status" aria-live="polite">
+                @if (!string.IsNullOrWhiteSpace(CreationMessage))
+                {
+                    <div class="fh-alert @(CreationMessageIsError ? "fh-alert-danger" : "fh-alert-info") mt-2 mb-0">
+                        @CreationMessage
+                    </div>
+                }
             </div>
         </form>
     }
 
     @if (CreationResults.Count > 0)
     {
-        <section class="fh-card" role="status" aria-live="polite">
+        <section class="fh-card">
             <h3>Resultat fra Fiken</h3>
             <ul class="mb-0">
                 @foreach (var res in CreationResults)
@@ -316,6 +374,7 @@
 
     private bool confirmCreation;
     private string? validationError;
+    private (int Count, decimal Total)? confirmedSnapshot;
 
     [Parameter] public string EventTitle { get; set; } = string.Empty;
     [Parameter] public string? SelectedProjectLabel { get; set; }
@@ -323,6 +382,16 @@
     [Parameter, EditorRequired] public IReadOnlyList<FikenContact> FikenCustomers { get; set; } = [];
     [Parameter] public bool IsSubmitting { get; set; }
     [Parameter, EditorRequired] public IReadOnlyList<DraftCreationItemResult> CreationResults { get; set; } = [];
+
+    /// <summary>Why drafts cannot be created right now (not connected, no company, demo data), or null.</summary>
+    [Parameter] public string? CreationBlockedReason { get; set; }
+
+    /// <summary>Result or error from the last creation run, shown next to the create button.</summary>
+    [Parameter] public string? CreationMessage { get; set; }
+    [Parameter] public bool CreationMessageIsError { get; set; }
+
+    /// <summary>Result of the last "create customer" action, shown in the draft card it belongs to.</summary>
+    [Parameter] public CustomerCreationMessage? CustomerMessage { get; set; }
 
     [Parameter] public EventCallback<(string DraftKey, long? ContactId)> OnManualCustomerSelected { get; set; }
     [Parameter] public EventCallback<(string RecipientName, long ContactId)> OnRememberGroupMapping { get; set; }
@@ -332,8 +401,19 @@
     private IReadOnlyList<FikenContact> ActiveCustomers =>
         FikenCustomers.Where(c => c.Customer && !c.Inactive).OrderBy(c => c.Name).ToList();
 
-    private int ReadyDraftCount => Plan.Drafts.Count(d => d.IsReadyToCreate);
-    private decimal ReadyTotalNok => Plan.Drafts.Where(d => d.IsReadyToCreate).Sum(d => d.TotalNok);
+    private int ReadyDraftCount => Plan.ReadyDrafts.Count;
+    private decimal ReadyTotalNok => Plan.ReadyTotalNok;
+
+    protected override void OnParametersSet()
+    {
+        // The confirmation is for a specific number of drafts and total: any change requires a new confirmation.
+        var current = (ReadyDraftCount, ReadyTotalNok);
+        if (confirmedSnapshot != current)
+        {
+            confirmCreation = false;
+            confirmedSnapshot = current;
+        }
+    }
 
     private Task HandleCustomerSelectedValueChanged(string draftKey, string raw)
         => OnManualCustomerSelected.InvokeAsync((draftKey, long.TryParse(raw, out var id) ? id : null));
@@ -353,7 +433,7 @@
     private async Task SubmitCreateCustomerAsync(string draftKey)
     {
         var name = newCustomerNames.TryGetValue(draftKey, out var n) ? n.Trim() : string.Empty;
-        if (string.IsNullOrWhiteSpace(name))
+        if (string.IsNullOrWhiteSpace(name) || IsSubmitting || CreationBlockedReason is not null)
         {
             return;
         }
@@ -369,6 +449,17 @@
     private async Task HandleCreateDraftsSubmit()
     {
         validationError = null;
+        if (IsSubmitting)
+        {
+            return;
+        }
+
+        if (CreationBlockedReason is not null)
+        {
+            validationError = CreationBlockedReason;
+            return;
+        }
+
         if (ReadyDraftCount == 0)
         {
             validationError = "Ingen utkast er klare for opprettelse. Koble minst én mottaker til en kunde i Fiken først.";
@@ -381,7 +472,15 @@
             return;
         }
 
-        await OnCreateDraftsRequested.InvokeAsync();
+        try
+        {
+            await OnCreateDraftsRequested.InvokeAsync();
+        }
+        finally
+        {
+            // Every run needs a fresh confirmation.
+            confirmCreation = false;
+        }
     }
 
     private static bool IsGroupDraft(PlannedInvoiceDraft draft)

@@ -1,5 +1,5 @@
 <fieldset class="fh-fieldset">
-    <legend>2. Hent deltakere fra Min speiding</legend>
+    <legend>Hent deltakere fra Min speiding</legend>
 
     @if (SavedEvents.Count > 0)
     {
@@ -22,7 +22,7 @@
                    type="text"
                    inputmode="numeric"
                    value="@ProjectId"
-                   @onchange="HandleProjectIdChanged"
+                   @oninput="HandleProjectIdChanged"
                    placeholder="f.eks. 12345"
                    autocorrect="off"
                    autocapitalize="none"
@@ -44,7 +44,7 @@
                 <input id="ms-api-key"
                        type="@(showApiKey ? "text" : "password")"
                        value="@ApiKey"
-                       @onchange="HandleApiKeyChanged"
+                       @oninput="HandleApiKeyChanged"
                        autocomplete="off"
                        autocorrect="off"
                        autocapitalize="none"
@@ -98,7 +98,8 @@
     <div class="fh-actions mb-3">
         <button type="button"
                 class="btn btn-primary"
-                disabled="@IsLoadingEvent"
+                disabled="@(IsLoadingEvent || FetchBlockedReason is not null)"
+                aria-describedby="@(FetchBlockedReason is not null ? "ms-fetch-hint" : null)"
                 @onclick="OnFetchFromMinSpeiding">
             @(IsLoadingEvent ? "Henter deltakere…" : "Hent fra Min speiding")
         </button>
@@ -108,6 +109,10 @@
                 @onclick="OnLoadDemo">
             Last inn demodata
         </button>
+        @if (FetchBlockedReason is not null)
+        {
+            <span id="ms-fetch-hint" class="fh-hint">@FetchBlockedReason</span>
+        }
     </div>
 
     <div class="fh-grid-2">
@@ -212,6 +217,14 @@
     [Parameter] public bool IsLoadingEvent { get; set; }
     [Parameter] public EventCallback OnFetchFromMinSpeiding { get; set; }
     [Parameter] public EventCallback OnLoadDemo { get; set; }
+
+    private string? FetchBlockedReason => (string.IsNullOrWhiteSpace(ProjectId), string.IsNullOrWhiteSpace(ApiKey)) switch
+    {
+        (true, true) => "Fyll inn prosjekt-ID og API-nøkkel for deltakerliste for å hente fra Min speiding.",
+        (true, false) => "Fyll inn prosjekt-ID for å hente fra Min speiding.",
+        (false, true) => "Fyll inn API-nøkkel for deltakerliste for å hente fra Min speiding.",
+        _ => null
+    };
 
     private void ToggleApiKeyVisibility() => showApiKey = !showApiKey;
     private void ToggleQuestionsApiKeyVisibility() => showQuestionsApiKey = !showQuestionsApiKey;

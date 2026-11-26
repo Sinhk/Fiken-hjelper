@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 
 <PageTitle>Rediger budsjett – Fiken-hjelper</PageTitle>
+<PageErrorBoundary>
 <MudProviders />
 <NavigationLock ConfirmExternalNavigation="isDirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
@@ -17,7 +18,13 @@
 
         @if (!string.IsNullOrWhiteSpace(errorMessage))
         {
-            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+            <MudAlert Severity="Severity.Error" Class="mb-3">
+                @errorMessage
+                @if (storeUnavailable)
+                {
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="ReloadStoreAsync">Prøv å lese på nytt</MudButton>
+                }
+            </MudAlert>
         }
 
         @if (!hasCompany)
@@ -39,23 +46,26 @@
             </MudSelect>
             <MudNumericField T="int" Label="Nytt år" @bind-Value="newYear" Variant="Variant.Outlined" Margin="Margin.Dense"
                              HideSpinButtons Style="max-width: 7rem" Min="2000" Max="2100" />
-            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddYearAsync">Opprett år</MudButton>
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddYearAsync" Disabled="storeUnavailable">Opprett år</MudButton>
             <MudSpacer />
             @if (isDirty)
             {
                 <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">Ulagrede endringer</MudChip>
             }
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
-                       OnClick="SaveAsync" Disabled="@(!isDirty || isSaving)">
+                       OnClick="SaveAsync" Disabled="@(!isDirty || isSaving || storeUnavailable)">
                 Lagre
             </MudButton>
         </MudStack>
 
         @if (current is null)
         {
-            <MudAlert Severity="Severity.Info">
-                Ingen budsjett er lagt inn ennå. Importer fra regnearket nedenfor, eller opprett et år og legg inn poster.
-            </MudAlert>
+            @if (!storeUnavailable)
+            {
+                <MudAlert Severity="Severity.Info">
+                    Ingen budsjett er lagt inn ennå. Importer fra regnearket nedenfor, eller opprett et år og legg inn poster.
+                </MudAlert>
+            }
         }
         else
         {
@@ -113,7 +123,7 @@
                                     <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
                                                OnClick="() => OpenPickerAsync(line)" Disabled="@(projects.Count == 0)"
                                                aria-label="@($"Velg prosjekter for {line.Name}")">
-                                        @(projects.Count == 0 ? "Ingen prosjekter lastet" : line.ProjectIds.Count == 0 ? "Velg prosjekter" : "Endre")
+                                        @PickerButtonText(line)
                                     </MudButton>
                                 </div>
                                 @foreach (var missing in projectsLoaded ? line.ProjectIds.Where(id => !projectsById.ContainsKey(id)) : [])
@@ -213,8 +223,8 @@
 
                     @if (visible.Count == 0)
                     {
-                        <MudAlert Severity="Severity.Success">
-                            @(rows.Count == 0 ? $"Ingen prosjekter har posteringer i {current.Year}." : "Alle prosjekter med posteringer er koblet til en budsjettpost.")
+                        <MudAlert Severity="@(rows.Count > 0 && !string.IsNullOrWhiteSpace(projectSearch) ? Severity.Info : Severity.Success)">
+                            @(rows.Count == 0 ? $"Ingen prosjekter har posteringer i {current.Year}." : !string.IsNullOrWhiteSpace(projectSearch) ? "Ingen treff." : "Alle prosjekter med posteringer er koblet til en budsjettpost.")
                         </MudAlert>
                     }
                     else
@@ -312,10 +322,10 @@
             År uten eget prosjektark får regnskapstallene som manuelle tall.
         </MudText>
 
-        <MudFileUpload T="IBrowserFile" Accept=".xlsx" FilesChanged="ReadImportFileAsync" MaxFileSize="MaxImportBytes">
+        <MudFileUpload T="IBrowserFile" Accept=".xlsx" FilesChanged="ReadImportFileAsync">
             <CustomContent>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.UploadFile"
-                           OnClick="@context.OpenFilePickerAsync" Disabled="@(isImporting || isLoadingProjects)">
+                           OnClick="@context.OpenFilePickerAsync" Disabled="@(isImporting || isLoadingProjects || storeUnavailable)">
                     @(isLoadingProjects ? "Henter prosjekter fra Fiken …" : "Velg .xlsx-fil")
                 </MudButton>
             </CustomContent>
@@ -398,7 +408,7 @@
             }
 
             <MudStack Row Spacing="2" Class="mt-2">
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyImportAsync" Disabled="@(importSelection.Count == 0 || isSaving)">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyImportAsync" Disabled="@(importSelection.Count == 0 || isSaving || isConfirming || storeUnavailable)">
                     Importer valgte år
                 </MudButton>
                 <MudButton Variant="Variant.Text" OnClick="() => importPreview = null">Avbryt</MudButton>
@@ -406,3 +416,4 @@
         }
     </MudPaper>
 </MudStack>
+</PageErrorBoundary>
