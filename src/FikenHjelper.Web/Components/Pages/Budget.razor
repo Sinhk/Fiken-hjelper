@@ -190,7 +190,7 @@
                                                     @foreach (var p in line.Projects)
                                                     {
                                                         <MudStack Row Justify="Justify.SpaceBetween" Spacing="4">
-                                                            <MudText Typo="Typo.body2">
+                                                            <MudText Typo="Typo.body2" HtmlTag="div">
                                                                 @p.Name
                                                                 @foreach (var link in GrantLinksFor(p.ProjectId))
                                                                 {

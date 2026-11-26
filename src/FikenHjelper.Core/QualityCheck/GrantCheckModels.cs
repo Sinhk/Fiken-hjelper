@@ -35,8 +35,15 @@ public sealed record GrantCheckFinding(
 public sealed record GrantCheckSection(
     IReadOnlyList<GrantCheckFinding> Findings,
     int GrantCount,
-    string? MissingDataNote = null)
+    string? MissingDataNote = null,
+    string? Error = null)
 {
+    /// <summary>Seksjonen når tilskuddene ikke kunne leses. Gir synlig varsel i stedet for å skjule seksjonen.</summary>
+    public static GrantCheckSection Failed(string message) => new([], 0, null, message);
+
+    /// <summary>Teksten som vises over funnene: feilen hvis tilskuddene ikke kunne leses, ellers merknaden om manglende Fiken-data.</summary>
+    public string? Notice => Error ?? MissingDataNote;
+
     public const string Title = "Tilskudd";
 
     public const string Key = "tilskudd";
@@ -44,6 +51,6 @@ public sealed record GrantCheckSection(
     public int OverdueCount => Findings.Count(f => f.Status == QualityStatus.Overdue);
 
     public QualityStatus Status => Findings.Count == 0
-        ? (MissingDataNote is null ? QualityStatus.Ok : QualityStatus.CheckManually)
+        ? (Notice is null ? QualityStatus.Ok : QualityStatus.CheckManually)
         : Findings.Max(f => f.Status);
 }

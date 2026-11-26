@@ -80,7 +80,7 @@
             <MudGrid Spacing="2">
                 @foreach (var section in report.Sections)
                 {
-                    <MudItem xs="12" md="4">
+                    <MudItem xs="12" sm="6" md="3">
                         <MudPaper Outlined Class="pa-3">
                             <MudStack Row AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                                 <MudText Typo="Typo.caption">@section.Title</MudText>
@@ -105,7 +105,7 @@
                 }
                 @if (report.Grants is { } grantSummary)
                 {
-                    <MudItem xs="12" md="4">
+                    <MudItem xs="12" sm="6" md="3">
                         <MudPaper Outlined Class="pa-3">
                             <MudStack Row AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                                 <MudText Typo="Typo.caption">@GrantCheckSection.Title</MudText>
@@ -113,14 +113,14 @@
                                     @GrantSummaryStatusText(grantSummary)
                                 </MudChip>
                             </MudStack>
-                            <MudText Typo="Typo.h6" Class="tabular-nums">@grantSummary.Findings.Count funn</MudText>
+                            <MudText Typo="Typo.h6" Class="tabular-nums">@(grantSummary.Error is null ? $"{grantSummary.Findings.Count} funn" : "Feil")</MudText>
                             <MudText Typo="Typo.body2" Color="Color.Secondary">
-                                @grantSummary.GrantCount tilskudd kontrollert
+                                @(grantSummary.Error is null ? $"{grantSummary.GrantCount} tilskudd kontrollert" : "Tilskudd kunne ikke leses")
                                 @if (grantSummary.OverdueCount > 0)
                                 {
                                     <span> · frist passert eller forfalt: @grantSummary.OverdueCount stk</span>
                                 }
-                                @if (grantSummary.MissingDataNote is not null)
+                                @if (grantSummary.MissingDataNote is not null && grantSummary.Error is null)
                                 {
                                     <span> · mangler Fiken-data</span>
                                 }
@@ -198,17 +198,17 @@
         {
             <MudPaper Class="pa-4" Outlined @key="GrantCheckSection.Key">
                 <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">@GrantCheckSection.Title</MudText>
-                @if (grantSection.MissingDataNote is not null)
+                @if (grantSection.Notice is not null)
                 {
-                    <MudAlert Severity="Severity.Warning" Dense Class="mb-2">@grantSection.MissingDataNote</MudAlert>
+                    <MudAlert Severity="@(grantSection.Error is null ? Severity.Warning : Severity.Error)" Dense Class="mb-2">@grantSection.Notice</MudAlert>
                 }
-                @if (grantSection.Findings.Count == 0)
+                @if (grantSection.Findings.Count == 0 && grantSection.Error is null)
                 {
-                    <MudText Color="@(grantSection.MissingDataNote is null ? Color.Success : Color.Default)">
-                        @(grantSection.MissingDataNote is null ? "Ingen funn." : "Ingen funn i kontrollene som ble kjørt.")
+                    <MudText Color="@(grantSection.Notice is null ? Color.Success : Color.Default)">
+                        @(grantSection.Notice is null ? "Ingen funn." : "Ingen funn i kontrollene som ble kjørt.")
                     </MudText>
                 }
-                else
+                else if (grantSection.Findings.Count > 0)
                 {
                     <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto">
                         <thead>
@@ -250,6 +250,7 @@
     private QualityCheckData? data;
     private QualityCheckReport? report;
     private IReadOnlyList<Grant>? grantList;
+    private string? grantLoadError;
     private GrantFikenData? grantFiken;
     private string? grantError;
     private DateOnly today;
@@ -354,15 +355,22 @@
     private async Task LoadGrantsAsync(bool refresh, CancellationToken ct)
     {
         grantError = null;
+        grantLoadError = null;
         grantFiken = null;
         try
         {
             grantList = (await Grants.LoadAsync(ct)).Grants;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             Logger.LogError(ex, "Klarte ikke å lese tilskudd");
             grantList = null;
+            grantLoadError = UserErrors.Describe(ex, "Klarte ikke å lese tilskudd (grants.json)");
+            return;
+        }
+
+        if (grantList.Count == 0)
+        {
             return;
         }
 
@@ -370,8 +378,9 @@
         {
             grantFiken = await Grants.LoadFikenAsync(Grants.YearsFor(grantList), refresh, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
+            // Også tidsavbrudd (TaskCanceledException uten at vi selv avbrøt): resten av kvalitetssjekken skal fungere.
             Logger.LogWarning(ex, "Klarte ikke å hente posteringer for tilskudd");
             grantError = UserErrors.Describe(ex, "Klarte ikke å hente posteringer fra Fiken");
         }
@@ -380,9 +389,11 @@
     // Dato endres uten nye kall til Fiken: reglene kjøres på nytt på data som allerede er hentet.
     private void Rebuild()
     {
-        var grants = grantList is null
-            ? null
-            : GrantCheckRules.Build(grantList, grantFiken ?? GrantFikenData.None, referenceDate, grantError);
+        var grants = grantLoadError is not null
+            ? GrantCheckSection.Failed(grantLoadError)
+            : grantList is null
+                ? null
+                : GrantCheckRules.Build(grantList, grantFiken ?? GrantFikenData.None, referenceDate, grantError);
         var baseReport = data?.BuildReport(referenceDate)
             ?? (grants is null ? null : new QualityCheckReport(referenceDate, DateTimeOffset.Now, []));
         report = baseReport is null ? null : baseReport with { Grants = grants };
@@ -506,6 +517,7 @@
     private static string GrantSummaryStatusText(GrantCheckSection section) => section.Status switch
     {
         QualityStatus.Ok => "OK",
+        _ when section.Error is not null => "Feil",
         QualityStatus.Overdue => "Frist/forfalt",
         QualityStatus.CheckManually => "Sjekk",
         _ => "Frister nærmer seg"

@@ -79,7 +79,7 @@ public static class QualityCheckTextFormatter
             AppendGrantNote(sb, grants);
             if (grants.Findings.Count == 0)
             {
-                sb.Append("Ingen funn.\n");
+                sb.Append(grants.Error is null ? "Ingen funn.\n" : "");
             }
             else
             {
@@ -148,14 +148,14 @@ public static class QualityCheckTextFormatter
         if (report.Grants is { } grants)
         {
             sb.Append("<h3>").Append(Encode(GrantHeading(grants))).Append("</h3>\n");
-            if (grants.MissingDataNote is not null)
+            if (grants.Notice is not null)
             {
-                sb.Append("<p>").Append(Encode(grants.MissingDataNote)).Append("</p>\n");
+                sb.Append("<p>").Append(Encode(grants.Notice!)).Append("</p>\n");
             }
 
             if (grants.Findings.Count == 0)
             {
-                sb.Append("<p>Ingen funn.</p>\n");
+                sb.Append(grants.Error is null ? "<p>Ingen funn.</p>\n" : "");
             }
             else
             {
@@ -217,7 +217,7 @@ public static class QualityCheckTextFormatter
             AppendGrantNote(sb, grants, markdown: true);
             if (grants.Findings.Count == 0)
             {
-                sb.Append("Ingen funn.\n");
+                sb.Append(grants.Error is null ? "Ingen funn.\n" : "");
             }
             else
             {
@@ -238,16 +238,18 @@ public static class QualityCheckTextFormatter
     private const int GrantAmountColumn = 4;
 
     private static string GrantHeading(GrantCheckSection section) =>
-        section.Findings.Count == 0
+        section.Error is not null
+            ? $"{GrantCheckSection.Title}: kunne ikke kontrolleres"
+            : section.Findings.Count == 0
             ? $"{GrantCheckSection.Title}: ingen funn"
             : $"{GrantCheckSection.Title}: {section.Findings.Count} funn"
                 + (section.OverdueCount > 0 ? $" (frist passert eller forfalt: {section.OverdueCount})" : "");
 
     private static void AppendGrantNote(StringBuilder sb, GrantCheckSection section, bool markdown = false)
     {
-        if (section.MissingDataNote is not null)
+        if (section.Notice is not null)
         {
-            sb.Append(markdown ? EscapeMarkdown(section.MissingDataNote) : CleanTab(section.MissingDataNote)).Append(markdown ? "\n\n" : "\n");
+            sb.Append(markdown ? EscapeMarkdown(section.Notice) : CleanTab(section.Notice)).Append(markdown ? "\n\n" : "\n");
         }
     }
 

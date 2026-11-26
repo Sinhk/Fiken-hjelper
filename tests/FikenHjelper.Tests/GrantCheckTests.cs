@@ -323,6 +323,138 @@ public sealed class GrantCheckTests : GrantFikenTestBase
 
         Assert.Empty(section.Findings);
         Assert.Equal(0, section.GrantCount);
+        Assert.Null(section.MissingDataNote);
+        Assert.Equal(QualityStatus.Ok, section.Status);
+    }
+
+    [Fact]
+    public async Task DateScope_UsedIgnoresCostsAfterReferenceDate()
+    {
+        var grant = Make("Kurs", GrantStatus.Granted, GrantTestData.Kurs);
+        grant.GrantedAmount = 1000;
+        var data = await LoadAsync([grant], EntryJson(1, "6800", 150000, GrantTestData.Kurs, "2027-07-01"));
+
+        Assert.DoesNotContain(Build([grant], data, Ref).Findings, f => f.Kind == GrantCheckKind.UsedExceedsGranted);
+        Assert.Contains(Build([grant], data, new DateOnly(2027, 7, 1)).Findings, f => f.Kind == GrantCheckKind.UsedExceedsGranted);
+    }
+
+    [Fact]
+    public void DateScope_ManualUseAndManualPaymentAfterReferenceDateAreIgnored()
+    {
+        var grant = new Grant
+        {
+            Name = "Drift",
+            Kind = GrantKind.Operating,
+            Status = GrantStatus.Granted,
+            GrantedAmount = 1000,
+            DecisionDate = Ref.AddDays(-90),
+            ManualUses = [new GrantManualUse { Date = Ref.AddDays(1), Amount = 5000 }],
+            Payments = [new GrantPayment { Date = Ref.AddDays(1), Amount = 1000 }]
+        };
+
+        var findings = Build([grant]).Findings;
+
+        Assert.DoesNotContain(findings, f => f.Kind == GrantCheckKind.UsedExceedsGranted);
+        Assert.Contains(findings, f => f.Kind == GrantCheckKind.NotReceived);
+        Assert.DoesNotContain(Build([grant], date: Ref.AddDays(1)).Findings, f => f.Kind == GrantCheckKind.NotReceived);
+    }
+
+    [Fact]
+    public async Task DateScope_LinkedPaymentAfterReferenceDate_IsNotReportedMissing_ButTrulyMissingIs()
+    {
+        var grant = Make("Kurs", GrantStatus.Granted, GrantTestData.Kurs);
+        grant.GrantedAmount = 10000;
+        grant.DecisionDate = Ref.AddDays(-90);
+        grant.Payments.Add(new GrantPayment { JournalEntryId = 2, Date = new DateOnly(2027, 7, 1) });
+        grant.Payments.Add(new GrantPayment { JournalEntryId = 999, Date = new DateOnly(2027, 3, 1) });
+        var data = await LoadAsync([grant], EntryJson(2, "3400", -1000000, null, "2027-07-01"));
+
+        var findings = Build([grant], data).Findings.Where(f => f.Kind == GrantCheckKind.PaymentNotFound).ToList();
+
+        var finding = Assert.Single(findings);
+        Assert.Contains("999", finding.Detail);
+    }
+
+    [Fact]
+    public async Task DateScope_LinkedPaymentAfterReferenceDate_IsNotCountedAsReceived()
+    {
+        var grant = Make("Kurs", GrantStatus.Granted, GrantTestData.Kurs);
+        grant.GrantedAmount = 10000;
+        grant.DecisionDate = Ref.AddDays(-90);
+        grant.Payments.Add(new GrantPayment { JournalEntryId = 2, Date = new DateOnly(2027, 7, 1) });
+        var data = await LoadAsync([grant], EntryJson(2, "3400", -1000000, null, "2027-07-01"));
+
+        var finding = Assert.Single(Build([grant], data).Findings, f => f.Kind == GrantCheckKind.NotReceived);
+
+        Assert.Equal(10000m, finding.Amount);
+        Assert.DoesNotContain(Build([grant], data, new DateOnly(2027, 7, 2)).Findings, f => f.Kind == GrantCheckKind.NotReceived);
+    }
+
+    [Fact]
+    public async Task ClosedAndReported_SkipCostsOutsidePeriod_ClosedSkipsUsedExceedsGranted()
+    {
+        var closed = Make("Avsluttet", GrantStatus.Closed, GrantTestData.Kurs);
+        closed.GrantedAmount = 100;
+        closed.UseFrom = new DateOnly(2027, 2, 1);
+        var reported = Make("Rapportert", GrantStatus.Reported, GrantTestData.Leir);
+        reported.GrantedAmount = 100;
+        reported.UseFrom = new DateOnly(2027, 2, 1);
+        var data = await LoadAsync([closed, reported],
+            EntryJson(1, "6800", 150000, GrantTestData.Kurs, "2027-03-01"),
+            EntryJson(2, "6800", 150000, GrantTestData.Kurs, "2027-01-10"),
+            EntryJson(3, "6800", 150000, GrantTestData.Leir, "2027-03-01"),
+            EntryJson(4, "6800", 150000, GrantTestData.Leir, "2027-01-10"));
+
+        var findings = Build([closed, reported], data).Findings;
+
+        Assert.DoesNotContain(findings, f => f.Kind == GrantCheckKind.CostsOutsidePeriod);
+        Assert.DoesNotContain(findings, f => f.GrantId == closed.Id && f.Kind == GrantCheckKind.UsedExceedsGranted);
+        Assert.Contains(findings, f => f.GrantId == reported.Id && f.Kind == GrantCheckKind.UsedExceedsGranted);
+    }
+
+    [Fact]
+    public async Task CostsOutsidePeriod_IsWeightedByShare_AndMentionsIt()
+    {
+        var grant = Make("Kurs", GrantStatus.Granted, GrantTestData.Kurs);
+        grant.UseFrom = new DateOnly(2027, 2, 1);
+        grant.ProjectShares = new() { [GrantTestData.Kurs] = 40m };
+        var data = await LoadAsync([grant], EntryJson(1, "6800", 100000, GrantTestData.Kurs, "2027-01-15"));
+
+        var finding = Assert.Single(Build([grant], data).Findings, f => f.Kind == GrantCheckKind.CostsOutsidePeriod);
+
+        Assert.Equal(400m, finding.Amount);
+        Assert.Contains("andel (40 %)", finding.Detail);
+    }
+
+    [Fact]
+    public void FailedSection_ShowsErrorInStatusAndFormats()
+    {
+        var section = GrantCheckSection.Failed("Lesefeil i grants.json.");
+        var report = new QualityCheckReport(Ref, DateTimeOffset.UnixEpoch, [], section);
+
+        Assert.Equal(QualityStatus.CheckManually, section.Status);
+        foreach (var text in new[] { QualityCheckTextFormatter.ToTabSeparated(report), QualityCheckTextFormatter.ToMarkdown(report), QualityCheckTextFormatter.ToHtml(report) })
+        {
+            Assert.Contains("kunne ikke kontrolleres", text);
+            Assert.Contains("Lesefeil i grants.json.", text);
+            Assert.DoesNotContain("Ingen funn.", text);
+        }
+    }
+
+    [Fact]
+    public void UnusedOrNull_IsNullWhenReceivedOrUsedUnknown()
+    {
+        var known = Make("Kjent", GrantStatus.Granted);
+        known.Payments.Add(new GrantPayment { Amount = 500, Date = Ref });
+        known.ManualUses = [];
+        var report = GrantReportBuilder.Build(known, [known], null);
+        Assert.Null(GrantOverviewLogic.UnusedOrNull(report));
+
+        var operating = new Grant { Name = "D", Kind = GrantKind.Operating, Payments = [new GrantPayment { Amount = 500 }], ManualUses = [new GrantManualUse { Amount = 200 }] };
+        Assert.Equal(300m, GrantOverviewLogic.UnusedOrNull(GrantReportBuilder.Build(operating, [operating], null)));
+
+        var linked = new Grant { Name = "L", Kind = GrantKind.Operating, Payments = [new GrantPayment { JournalEntryId = 5 }], ManualUses = [new GrantManualUse { Amount = 200 }] };
+        Assert.Null(GrantOverviewLogic.UnusedOrNull(GrantReportBuilder.Build(linked, [linked], null)));
     }
 
     [Fact]
@@ -356,7 +488,7 @@ public sealed class GrantCheckTests : GrantFikenTestBase
     [Fact]
     public void Formats_ShowMissingDataNoteAndEmptyResult()
     {
-        var section = GrantCheckRules.Build([], GrantFikenData.None, Ref);
+        var section = GrantCheckRules.Build([Make("Kurs", GrantStatus.Submitted)], GrantFikenData.None, Ref);
         var report = new QualityCheckReport(Ref, DateTimeOffset.UnixEpoch, [], section);
 
         Assert.Contains("Tilskudd: ingen funn", QualityCheckTextFormatter.ToTabSeparated(report));
@@ -524,6 +656,48 @@ public sealed class GrantToolTests : GrantFikenTestBase
     }
 
     [Fact]
+    public async Task GetGrantStatus_EmptySelection_HasNoFalseMissingDataAndNoFikenCalls()
+    {
+        await SaveAsync(Kurs());
+        var tools = CreateTools(withFiken: false);
+
+        var json = ToJson(await tools.GetGrantStatus(name: "finnes ikke", ct: TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, json.GetProperty("count").GetInt32());
+        Assert.False(json.TryGetProperty("missingFikenData", out _));
+        Assert.Contains("navn «finnes ikke»", json.GetProperty("filter").GetString());
+        Assert.Empty(Api.Calls);
+    }
+
+    [Fact]
+    public async Task GetGrantStatus_UnusedIsOmittedWhenReceivedOrUsedUnknown_AndAccountsSortedByAbsolute()
+    {
+        var grant = Kurs();
+        grant.Payments.Add(new GrantPayment { Amount = 500, Date = new DateOnly(2027, 2, 1) });
+        await SaveAsync(grant);
+
+        var withoutFiken = ToJson(await CreateTools(withFiken: false).GetGrantStatus(ct: TestContext.Current.CancellationToken));
+        Assert.False(withoutFiken.GetProperty("grants")[0].TryGetProperty("unused", out _));
+
+        var withFiken = ToJson(await CreateTools().GetGrantStatus(ct: TestContext.Current.CancellationToken));
+        Assert.Equal(-1300m, withFiken.GetProperty("grants")[0].GetProperty("unused").GetDecimal());
+    }
+
+    [Fact]
+    public async Task GetGrantStatus_FikenTimeout_FallsBackToLocalGrants()
+    {
+        await SaveAsync(Kurs());
+        Api.On(HttpMethod.Get, "companies/test-as/projects", (_, _) => throw new TaskCanceledException("tidsavbrudd", new TimeoutException()));
+        var tools = CreateTools(withFiken: false);
+
+        var json = ToJson(await tools.GetGrantStatus(ct: TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, json.GetProperty("count").GetInt32());
+        Assert.False(json.GetProperty("hasFikenData").GetBoolean());
+        Assert.Contains("Mangler Fiken-data", json.GetProperty("missingFikenData").GetString());
+    }
+
+    [Fact]
     public async Task GetGrantStatus_RejectsBadInput()
     {
         var tools = CreateTools(withFiken: false);
@@ -532,5 +706,72 @@ public sealed class GrantToolTests : GrantFikenTestBase
         await Assert.ThrowsAsync<McpException>(() => tools.GetGrantStatus(status: "tull", ct: ct));
         await Assert.ThrowsAsync<McpException>(() => tools.GetGrantStatus(grantId: "ikke-guid", ct: ct));
         await Assert.ThrowsAsync<McpException>(() => tools.GetGrantStatus(year: 1800, ct: ct));
+    }
+}
+
+public sealed class GrantStoreLockTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "fh-grantlock-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_dir))
+        {
+            Directory.Delete(_dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAndUpdateFromTwoStoreInstances_DoNotDeadlock_AndReadsAreConsistent()
+    {
+        // To instanser mot samme mappe tilsvarer Web og MCP (to prosesser): bare fillåsen deles.
+        var writer = new JsonGrantStore(_dir);
+        var reader = new JsonGrantStore(_dir);
+        var ct = TestContext.Current.CancellationToken;
+
+        var work = Task.WhenAll(
+            Task.Run(async () =>
+            {
+                for (var i = 0; i < 25; i++)
+                {
+                    var errors = await writer.UpdateAsync(d => { d.Grants.Add(new Grant { Name = $"Tilskudd {i}" }); return []; }, ct);
+                    Assert.Empty(errors);
+                }
+            }, ct),
+            Task.Run(async () =>
+            {
+                for (var i = 0; i < 50; i++)
+                {
+                    var data = await reader.LoadAsync(ct);
+                    Assert.InRange(data.Grants.Count, 0, 25);
+                }
+            }, ct),
+            Task.Run(async () =>
+            {
+                for (var i = 0; i < 50; i++)
+                {
+                    await writer.LoadAsync(ct);
+                }
+            }, ct));
+
+        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(30), ct));
+        Assert.Same(work, finished);
+        await work;
+        Assert.Equal(25, (await reader.LoadAsync(ct)).Grants.Count);
+    }
+
+    [Fact]
+    public async Task LoadWaitsWhileAnotherProcessHoldsTheLock()
+    {
+        var store = new JsonGrantStore(_dir);
+        var ct = TestContext.Current.CancellationToken;
+        using var held = await FikenHjelper.Core.Config.CrossProcessFileLock.AcquireAsync(Path.Combine(_dir, "grants.lock"), ct);
+
+        var load = store.LoadAsync(ct);
+        await Task.Delay(300, ct);
+        Assert.False(load.IsCompleted);
+
+        held.Dispose();
+        Assert.Empty((await load).Grants);
     }
 }

@@ -408,7 +408,7 @@
                     <MudItem xs="12" md="3">
                         <MudPaper Outlined Class="pa-3">
                             <MudText Typo="Typo.caption">Ubrukt (mottatt − brukt)</MudText>
-                            @{ var unused = GrantOverviewLogic.ReceivedOrNull(report) is null ? null : report.Unused; }
+                            @{ var unused = GrantOverviewLogic.UnusedOrNull(report); }
                             <MudText Typo="Typo.h6" Class="tabular-nums" Color="@(unused < 0 ? Color.Error : Color.Default)">@KrOrDash(unused)</MudText>
                         </MudPaper>
                     </MudItem>

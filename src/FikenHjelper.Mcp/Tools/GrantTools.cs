@@ -52,9 +52,22 @@ public sealed class GrantTools(
             .ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 
-        var (fiken, fikenProblem) = selected.Count == 0
-            ? (GrantFikenData.None, null)
-            : await LoadFikenAsync(selected, refresh, ct);
+        var filterText = FilterText(GrantOverviewLogic.FilterText(y, statusFilter), id, name);
+        if (selected.Count == 0)
+        {
+            // Ingen tilskudd i utvalget: ikke hent Fiken-data og ikke meld «mangler Fiken-data».
+            return new
+            {
+                note = Note,
+                today = today.ToString("yyyy-MM-dd"),
+                count = 0,
+                totalGrantsRegistered = all.Count,
+                filter = filterText,
+                grants = Array.Empty<object>()
+            };
+        }
+
+        var (fiken, fikenProblem) = await LoadFikenAsync(selected, refresh, ct);
 
         var check = GrantCheckRules.Build(all, fiken, today, fikenProblem);
         var rows = selected.Select(g =>
@@ -69,7 +82,7 @@ public sealed class GrantTools(
             today = today.ToString("yyyy-MM-dd"),
             count = rows.Count,
             totalGrantsRegistered = all.Count,
-            filter = GrantOverviewLogic.FilterText(y, statusFilter),
+            filter = filterText,
             hasFikenData = fiken.Entries is not null,
             missingFikenData = check.MissingDataNote,
             grants = rows
@@ -83,10 +96,16 @@ public sealed class GrantTools(
             await context.GetCompanySlugAsync(ct);
             return (await grants.LoadFikenAsync(grants.YearsFor(selected), refresh, ct), null);
         }
-        catch (Exception ex) when (ex is FikenApiException or HttpRequestException or TimeoutException)
+        catch (Exception ex) when (ex is FikenApiException or HttpRequestException or TimeoutException
+                                   || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
             // Tilskuddene ligger lokalt og kan vises uten Fiken. Manglende tall merkes i svaret.
-            var message = ex is HttpRequestException ? "Fikk ikke kontakt med Fiken." : ex.Message;
+            var message = ex switch
+            {
+                HttpRequestException => "Fikk ikke kontakt med Fiken.",
+                FikenApiException => ex.Message,
+                _ => "Fiken svarte ikke i tide."
+            };
             return (GrantFikenData.None, message);
         }
     }
@@ -178,10 +197,10 @@ public sealed class GrantTools(
             used = report.Used,
             usedStatus,
             remainingToReceive = remaining,
-            unused = report.Unused,
+            unused = GrantOverviewLogic.UnusedOrNull(report),
             otherIncome = report.OtherIncome != 0 ? report.OtherIncome : (decimal?)null,
             usedByAccount = report.UsedByAccount
-                .OrderByDescending(a => a.Amount)
+                .OrderByDescending(a => Math.Abs(a.Amount))
                 .Take(top)
                 .Select(a => new { account = a.Account, name = a.AccountName, amount = a.Amount, postings = a.Postings.Count })
                 .ToList(),
@@ -189,6 +208,27 @@ public sealed class GrantTools(
             findings,
             notes
         };
+    }
+
+    private static string? FilterText(string? basis, Guid? id, string? name)
+    {
+        var parts = new List<string>();
+        if (basis is not null)
+        {
+            parts.Add(basis);
+        }
+
+        if (id is { } g)
+        {
+            parts.Add($"id {g}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            parts.Add($"navn «{name.Trim()}»");
+        }
+
+        return parts.Count == 0 ? null : string.Join(", ", parts);
     }
 
     private static string? Iso(DateOnly? date) => date?.ToString("yyyy-MM-dd");

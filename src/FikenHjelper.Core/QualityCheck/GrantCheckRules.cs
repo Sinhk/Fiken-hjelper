@@ -1,5 +1,6 @@
 using System.Globalization;
 using FikenHjelper.Core.Budgeting;
+using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.Grants;
 
 namespace FikenHjelper.Core.QualityCheck;
@@ -31,8 +32,15 @@ public static class GrantCheckRules
 
         var findings = new List<GrantCheckFinding>();
         var hasFiken = data.Entries is not null;
-        var overview = GrantService.BuildOverview(grants, data);
+
+        // «Per dato» gjelder alle kontrollene: brukt og mottatt regnes bare med posteringer og manuelle linjer til og med
+        // referansedatoen. Sidene bruker uendret GrantReportBuilder; filtreringen skjer her, på kopier av tilskuddene.
+        var scoped = grants.Select(g => ScopeToDate(g, data.Entries, referenceDate)).ToList();
+        var scopedEntries = data.Entries?.Where(e => GrantReportBuilder.ParseDate(e.Date) is not { } d || d <= referenceDate).ToList();
+        var overview = GrantService.BuildOverview(scoped, scopedEntries, data.Accounts, data.Projects);
         var reports = overview.Reports.ToDictionary(r => r.Grant.Id);
+        // Koblede utbetalinger som ikke finnes avgjøres mot alle hentede posteringer, ikke de filtrerte.
+        var unfiltered = GrantService.BuildOverview(grants, data);
 
         foreach (var grant in grants)
         {
@@ -61,7 +69,9 @@ public static class GrantCheckRules
             }
         }
 
-        foreach (var issue in overview.Issues)
+        var issues = overview.Issues.Where(i => i.Kind != GrantIssueKind.PaymentNotFound)
+            .Concat(unfiltered.Issues.Where(i => i.Kind == GrantIssueKind.PaymentNotFound));
+        foreach (var issue in issues)
         {
             var (kind, check) = issue.Kind switch
             {
@@ -73,7 +83,7 @@ public static class GrantCheckRules
             foreach (var id in issue.GrantIds.Distinct())
             {
                 var grant = grants.FirstOrDefault(g => g.Id == id);
-                if (grant is null)
+                if (grant is null || (kind == GrantCheckKind.UsedExceedsGranted && grant.Status == GrantStatus.Closed))
                 {
                     continue;
                 }
@@ -97,19 +107,39 @@ public static class GrantCheckRules
         return new GrantCheckSection(sorted, grants.Count, MissingNote(grants, data, loadError));
     }
 
+    /// <summary>
+    /// Kopi av tilskuddet uten manuell bruk og manuelle utbetalinger datert etter <paramref name="referenceDate"/>, og uten koblede
+    /// utbetalinger der posteringen (eller lagret dato) er datert etter. Udaterte linjer beholdes.
+    /// </summary>
+    private static Grant ScopeToDate(Grant grant, IReadOnlyList<FikenJournalEntry>? entries, DateOnly referenceDate)
+    {
+        var dates = (entries ?? []).Select(e => (e.JournalEntryId, Date: GrantReportBuilder.ParseDate(e.Date)))
+            .Where(x => x.Date.HasValue)
+            .GroupBy(x => x.JournalEntryId)
+            .ToDictionary(g => g.Key, g => g.First().Date!.Value);
+        var copy = GrantCloner.Clone(grant);
+        copy.ManualUses = copy.ManualUses.Where(u => u.Date is not { } d || d <= referenceDate).ToList();
+        copy.Payments = copy.Payments.Where(p =>
+        {
+            var date = p.IsLinked && dates.TryGetValue(p.JournalEntryId!.Value, out var entryDate) ? entryDate : p.Date;
+            return date is not { } d || d <= referenceDate;
+        }).ToList();
+        return copy;
+    }
+
     private static string? MissingNote(IReadOnlyList<Grant> grants, GrantFikenData data, string? loadError)
     {
-        if (data.Entries is not null)
+        if (data.Entries is not null || grants.Count == 0)
         {
             return null;
         }
 
-        const string Skipped = "Kontrollene «Brukt mer enn innvilget» (for koblede prosjekter), «Innvilget, men ikke mottatt» (for koblede utbetalinger), "
+        const string Skipped = "Kontrollene «Brukt mer enn innvilget» (for koblede prosjekter eller kontoer), «Innvilget, men ikke mottatt» (for koblede utbetalinger), "
             + "«Kostnader utenfor bruksperioden» og «Utbetaling finnes ikke i Fiken» er ikke kjørt. Frister og andelsfordeling er kontrollert.";
         var reason = string.IsNullOrWhiteSpace(loadError)
             ? "Mangler Fiken-data: ingen Fiken-foretak er valgt."
             : $"Mangler Fiken-data: {loadError.Trim()}";
-        return grants.Count == 0 ? reason : $"{reason} {Skipped}";
+        return $"{reason} {Skipped}";
     }
 
     private static void AddNotReceived(List<GrantCheckFinding> findings, Grant grant, GrantReport report, DateOnly referenceDate)
@@ -146,7 +176,7 @@ public static class GrantCheckRules
 
     private static void AddCostsOutsidePeriod(List<GrantCheckFinding> findings, Grant grant, GrantFikenData data, DateOnly referenceDate)
     {
-        if (grant.Kind != GrantKind.Project || !grant.IsActive || (grant.UseFrom is null && grant.UseTo is null) || (grant.ProjectIds?.Count ?? 0) == 0)
+        if (grant.Kind != GrantKind.Project || !grant.IsActive || grant.Status is GrantStatus.Closed or GrantStatus.Reported || (grant.UseFrom is null && grant.UseTo is null) || (grant.ProjectIds?.Count ?? 0) == 0)
         {
             return;
         }
@@ -154,6 +184,7 @@ public static class GrantCheckRules
         var projects = grant.ProjectIds!.ToHashSet();
         decimal sum = 0;
         var vouchers = new HashSet<long>();
+        var shares = new HashSet<decimal>();
         foreach (var entry in GrantReportBuilder.Distinct(data.Entries))
         {
             if (GrantReportBuilder.ParseDate(entry.Date) is not { } date || date > referenceDate)
@@ -174,7 +205,13 @@ public static class GrantCheckRules
                     && BudgetReportBuilder.PrimaryProjectId(line) is { } projectId
                     && projects.Contains(projectId))
                 {
-                    sum += -amount;
+                    var share = grant.ShareOf(projectId) ?? 100m;
+                    sum += -amount * share / 100m;
+                    if (share < 100m)
+                    {
+                        shares.Add(share);
+                    }
+
                     vouchers.Add(entry.JournalEntryId);
                 }
             }
@@ -192,7 +229,13 @@ public static class GrantCheckRules
             grant.DisplayName,
             GrantCheckKind.CostsOutsidePeriod,
             "Kostnader utenfor bruksperioden",
-            $"{Money(sum)} fordelt på {vouchers.Count} bilag på koblede prosjekter utenfor bruksperioden {period}.",
+            $"{Money(sum)} fordelt på {vouchers.Count} bilag på koblede prosjekter utenfor bruksperioden {period}."
+            + shares.Count switch
+            {
+                0 => "",
+                1 => $" Tilskuddets andel ({shares.First().ToString("0.##", Nb)} %) er regnet med.",
+                _ => " Tilskuddets andeler per prosjekt (under 100 %) er regnet med."
+            },
             sum,
             QualityStatus.CheckManually));
     }

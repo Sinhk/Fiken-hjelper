@@ -3,13 +3,15 @@ using System.Globalization;
 namespace FikenHjelper.Core.Grants;
 
 /// <summary>Et aktivt tilskudd som et Fiken-prosjekt er koblet til. <paramref name="SharePercent"/> er andelen av prosjektets kostnader.</summary>
-public sealed record GrantProjectLink(Guid GrantId, string Name, decimal SharePercent)
+public sealed record GrantProjectLink(Guid GrantId, string Name, decimal SharePercent, GrantStatus Status = GrantStatus.Granted)
 {
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
 
     public string Href => $"tilskudd/{GrantId}";
 
-    public string Tooltip => $"Tilskudd: {Name} ({SharePercent.ToString("0.##", Nb)} %)";
+    public string Tooltip =>
+        $"Tilskudd: {Name} ({SharePercent.ToString("0.##", Nb)} %)"
+        + (Status is GrantStatus.Planned or GrantStatus.Submitted ? $" – {Grant.StatusText(Status)}" : "");
 }
 
 /// <summary>Oppslag fra Fiken-prosjekt til tilskuddene det er finansiert av, brukt til merking på budsjettsiden. Bare lesing.</summary>
@@ -24,7 +26,7 @@ public static class GrantProjectLinks
         ArgumentNullException.ThrowIfNull(grants);
         return grants
             .Where(g => g.IsActive && g.Kind == GrantKind.Project)
-            .SelectMany(g => (g.ProjectIds ?? []).Distinct().Select(id => (Id: id, Link: new GrantProjectLink(g.Id, g.DisplayName, g.ShareOf(id) ?? 100m))))
+            .SelectMany(g => (g.ProjectIds ?? []).Distinct().Select(id => (Id: id, Link: new GrantProjectLink(g.Id, g.DisplayName, g.ShareOf(id) ?? 100m, g.Status))))
             .GroupBy(x => x.Id)
             .ToDictionary(
                 g => g.Key,

@@ -146,6 +146,13 @@ public static class GrantOverviewLogic
     public static decimal? RemainingOrNull(GrantReport report) =>
         ReceivedOrNull(report) is { } received && report.Granted is { } granted ? granted - received : null;
 
+    /// <summary>Ubrukt (mottatt − brukt), eller null når mottatt eller brukt ikke er kjent.</summary>
+    public static decimal? UnusedOrNull(GrantReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        return ReceivedOrNull(report) is { } received && report.Used is { } used ? received - used : null;
+    }
+
     /// <summary>
     /// Summer for de synlige radene. Hver kolonne teller bare rader som har verdi, og forteller hvor mange det var,
     /// så en delsum kan merkes.
