@@ -1,0 +1,97 @@
+@* Tekstfelt for beløp og andre desimaltall. Godtar både «.» og «,» som desimaltegn (se DecimalInput) og viser
+   en norsk melding i stedet for å ignorere ugyldig tekst. Erstatter <input type="number">, som avviser eller
+   stille fjerner «feil» skilletegn avhengig av nettleserens språk. *@
+<input @key="resetKey"
+       id="@Id"
+       type="text"
+       inputmode="decimal"
+       autocomplete="off"
+       value="@(Value is { } v ? DecimalInput.Format(v) : string.Empty)"
+       placeholder="@Placeholder"
+       aria-invalid="@(error is not null ? "true" : null)"
+       aria-describedby="@(error is not null ? ErrorId : null)"
+       @onchange="HandleChanged" />
+@if (error is not null)
+{
+    <div id="@ErrorId" class="validation-message" role="alert">@error</div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Id { get; set; } = string.Empty;
+
+    /// <summary>Gjeldende verdi, eller null når feltet er tomt.</summary>
+    [Parameter] public decimal? Value { get; set; }
+
+    [Parameter] public EventCallback<decimal?> ValueChanged { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; }
+
+    /// <summary>Laveste tillatte verdi. Null betyr ingen nedre grense.</summary>
+    [Parameter] public decimal? Min { get; set; }
+
+    [Parameter] public string MinMessage { get; set; } = "Tallet kan ikke være negativt.";
+
+    /// <summary>Om feltet kan tømmes. Ellers gir tom tekst en feilmelding, og verdien beholdes.</summary>
+    [Parameter] public bool AllowEmpty { get; set; } = true;
+
+    private string? error;
+    private int resetKey;
+    private decimal? lastValue;
+
+    private string ErrorId => $"{Id}-error";
+
+    protected override void OnParametersSet()
+    {
+        // Endres verdien utenfra (f.eks. «Bruk oppdaget» eller bytte av arrangement), er en gammel melding utdatert.
+        if (lastValue != Value)
+        {
+            error = null;
+            lastValue = Value;
+        }
+    }
+
+    private async Task HandleChanged(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString();
+
+        if (DecimalInput.IsEmpty(text))
+        {
+            if (!AllowEmpty)
+            {
+                error = "Fyll inn et tall, f.eks. 350,50.";
+                return;
+            }
+
+            error = null;
+            if (Value is not null)
+            {
+                await ValueChanged.InvokeAsync(null);
+            }
+
+            return;
+        }
+
+        if (!DecimalInput.TryParse(text, out var parsed))
+        {
+            error = DecimalInput.InvalidMessage;
+            return;
+        }
+
+        if (Min is { } min && parsed < min)
+        {
+            error = MinMessage;
+            return;
+        }
+
+        error = null;
+
+        // Skriver brukeren «350.5», skal feltet vise «350,5». Verdien er den samme, så uten ny tegning ville
+        // nettleseren beholdt teksten som ble skrevet.
+        if (!string.Equals(text, DecimalInput.Format(parsed), StringComparison.Ordinal))
+        {
+            resetKey++;
+        }
+
+        await ValueChanged.InvokeAsync(parsed);
+    }
+}

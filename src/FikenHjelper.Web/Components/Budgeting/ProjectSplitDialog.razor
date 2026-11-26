@@ -39,10 +39,10 @@
                                 @if (rows.Count > 1)
                                 {
                                     <td>
-                                        <MudNumericField T="decimal?" @bind-Value="r.Share" Min="0" Max="100" HideSpinButtons
-                                                         Culture="Nb" Format="0.##" Margin="Margin.Dense" Class="fh-num-input"
-                                                         Immediate OnKeyDown="HandleKeyDown"
-                                                         aria-label="@($"Andel for {r.Line.Name}")" />
+                                        <DecimalField @bind-Value="r.Share" Min="0" Max="100" RangeMessage="Andelen må være mellom 0 og 100 %."
+                                                      Margin="Margin.Dense" Class="fh-num-input"
+                                                      Immediate OnKeyDown="HandleKeyDown"
+                                                      aria-label="@($"Andel for {r.Line.Name}")" />
                                     </td>
                                     <td class="fh-num-col tabular-nums">
                                         @(Amount is { } a && r.Share is { } s ? (a * s / 100m).ToString("N0", Nb) : "")
