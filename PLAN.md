@@ -189,7 +189,7 @@ FikenHjelper.slnx
    - Kreditsaldoer (overbetaling, kreditnota som ikke er motregnet) vises med egen status og trekkes fra summen. Poster der beløpet ikke kan regnes ut sikkert (fremmed valuta, fakturasalg uten treff), merkes «Sjekk» og holdes utenfor summen.
    - Tabulatorseparert tekst bruker tall uten tusenskille (`1234,50`), så regneark leser dem som tall. Markdown bruker `1 234,50`.
    - *Begrensning:* listen viser åpne poster og utestående beløp slik de er i Fiken i dag. En post som ble betalt etter valgt dato, kommer ikke med, og delbetalinger etter valgt dato er trukket fra beløpet. Dette må stå tydelig på siden.
-2. **Tilskuddsgrunnlag** *(størrelse S–M per ordning)*
+2. **Tilskuddsgrunnlag** *(størrelse S–M per ordning)* → *planlagt som Fase 7 nedenfor*
    - Aktuelt: fylkeskommunalt tilskudd og kommunale tilskudd eller stiftelser. Frifond og momskompensasjon er ikke aktuelle nå.
    - Bygger på Fase 3s summer per konto og prosjekt og xlsx-eksporten derfra.
 3. **Utlegg og reiseregninger fra frivillige** *(størrelse M–L, mest i Fase 4)*
@@ -216,3 +216,78 @@ FikenHjelper.slnx
   - Første tester: fordelingsdialogen (desimaltall med punktum og komma, Enter, ugyldig verdi), budsjettoppsett med lagring og angre, og fakturautkast (0 kr-utelatelse, duplikater, demo-sperre).
   - Kjøres i CI hvis Playwright-nettlesere kan installeres der uten for mye tid. Ellers som eget, manuelt testsett.
 - Erstatter ikke manuell verifisering mot testforetaket i Fiken på Windows-maskinen. Den falske klienten kjenner ikke Fikens egne valideringer og feilsvar.
+
+---
+
+## Fase 7 – Søknader og tilskudd *(Plan godkjent 26.11.2026, ikke startet)*
+**Mål:** Holde styr på hva kretsen har søkt om, hva som er innvilget, hva som faktisk er utbetalt, og hva pengene er brukt på. Bruken hentes fra Fiken ved at hvert tilskudd kobles til ett eller flere Fiken-prosjekter, på samme måte som budsjettpostene i Fase 3.
+
+**Avgrensning:**
+- Bare lesing fra Fiken (`journalEntries`, `projects`, `accounts`). Ingenting skrives til Fiken.
+- Søknadsdokumenter lagres ikke i appen. Det holder med en lenke (f.eks. til Google Drive eller søknadsportalen).
+- Ingen persondata: tilskuddsgiver er en organisasjon, og kontaktpersoner tas ikke med.
+
+### Datamodell (`FikenHjelper.Core/Grants/`, lagres i `grants.json` i datamappen)
+- **`Grant`** (én søknad / ett tilskudd):
+  - `Id` (Guid), `Name` (f.eks. «Lederkurs 2027»), `Grantor` (tilskuddsgiver, f.eks. «Møre og Romsdal fylkeskommune»), `Scheme` (ordning, valgfri).
+  - `Status`: *Planlagt → Sendt → Innvilget / Delvis innvilget / Avslått / Trukket → Rapportert / Avsluttet*.
+  - Datoer: `ApplicationDeadline`, `AppliedDate`, `DecisionDate`, `ReportDeadline`, og bruksperiode `UseFrom`–`UseTo`.
+  - Beløp: `AppliedAmount`, `GrantedAmount`.
+  - `Kind`: *Prosjekttilskudd* (koblet til Fiken-prosjekter) eller *Driftstilskudd* (uten prosjekt, se under).
+  - `ProjectIds` (Fiken-prosjekter pengene skal brukes på) og `ProjectShares`: hvor mange prosent av prosjektets kostnader som regnes mot dette tilskuddet. Et prosjekt kan være finansiert av flere tilskudd.
+    - Er prosjektet bare koblet til ett tilskudd, er standarden 100 %.
+    - Summen for et prosjekt over alle tilskudd kan være under 100 % (resten er kretsens egen andel), men ikke over. Over 100 % eller manglende andel når prosjektet har flere tilskudd, gir en kontrollmelding, som «ugyldig fordeling» i Fase 3.
+  - `AccountRanges` (bare driftstilskudd, valgfritt): kontoer eller kontointervall (f.eks. 6800–6899) der kostnader uten prosjekt regnes som bruk av tilskuddet.
+  - `ManualUses` (bare driftstilskudd): manuelle bruk-linjer (dato, beløp, beskrivelse) når bruken ikke kan leses fra Fiken.
+  - `Payments`: mottatte utbetalinger. Hver er enten en kobling til en Fiken-postering (`JournalEntryId`) eller en manuell linje (dato, beløp, notat) for utbetalinger før prosjekter ble brukt i Fiken.
+  - `Link`, `Notes`.
+- `JsonGrantStore` følger mønsteret til `JsonBudgetStore`: atomisk skriving, normalisering ved lesing, og eldre filer leses uendret.
+
+### Beregning (`GrantReportBuilder`, ren logikk med tester)
+- **Innvilget:** `GrantedAmount`.
+- **Mottatt:** summen av `Payments`. For koblede posteringer brukes beløpet fra Fiken, så tallet alltid stemmer med regnskapet.
+- **Brukt (brutto):** kostnader (kostnadskonti 4000–7999 og 8100–8799, med fortegn slik at kreditnota og ompostering reduserer bruken) på de koblede prosjektene i bruksperioden, ganget med tilskuddets andel av hvert prosjekt. Andre inntekter trekkes ikke fra (valgt 26.11.2026; netto kan legges til som eget tall senere). Bruker Fase 3s `TryGetResultAmount` og `PrimaryProjectId`, så fortegnsregelen finnes ett sted. Avrunding til øre skjer én gang per konto (summen per konto avrundes, ikke hvert bilag).
+- **Driftstilskudd:** brukt = kostnader i bruksperioden på kontoene i `AccountRanges` (bare posteringer uten prosjekt, så ingenting telles dobbelt med prosjekttilskudd) pluss `ManualUses`. Uten noen av delene vises «brukt» som ikke registrert, ikke som 0.
+- **Hva det er brukt på:** kostnadene gruppert per konto (kontonavn fra kontoplanen), med liste over enkeltbilag under hver konto.
+- **Andre inntekter på prosjektet** (f.eks. deltakeravgift) vises for seg, fordi tilskuddsgivere ofte vil ha hele prosjektregnskapet.
+- **Gjenstår å motta** = innvilget − mottatt. **Ubrukt** = mottatt − brukt (kan bli tilbakebetalingskrav).
+- Bruksperioden kan gå over flere år. Posteringer hentes per år via `BudgetReportService.GetJournalEntriesAsync` (som allerede mellomlagrer), og bare årene perioden dekker hentes.
+
+### Forslag til utbetalinger fra Fiken
+- Det er usikkert om tilskudd er ført konsekvent på én konto i Fiken. Appen bygger derfor ikke på en fast tilskuddskonto.
+- «Finn utbetaling i Fiken» viser inntektsposteringer fra vedtaksdato (eller søknadsdato) og utover:
+  - på de koblede prosjektene, og
+  - posteringer uten prosjekt på kontoer i 34xx (offentlige tilskudd) og 39xx (andre inntekter), siden driftstilskudd og tilskudd ført uten prosjekt ofte havner der.
+- Rangering: samme beløp som innvilget eller resten av det først, deretter tilskuddsgiverens navn i posteringsteksten (likhetsmatching med `ProjectNameMatcher`), deretter dato. Brukeren huker av, og først da kobles posteringen til tilskuddet.
+- En postering kan bare være koblet til ett tilskudd.
+
+### Brukergrensesnitt (MudBlazor, ny menylenke «Tilskudd»)
+- **`/tilskudd` – oversikt:** tabell med navn, tilskuddsgiver, status, søkt, innvilget, mottatt, brukt og gjenstår, med summer nederst. Filter på år og status. Frister som nærmer seg (søknad og rapportering innen 30 dager) og passerte frister merkes tydelig.
+- **`/tilskudd/{id}` – ett tilskudd:**
+  - Skjema for feltene over, med norsk validering (innvilget kan ikke være satt når status er *Avslått* osv.).
+  - Prosjektvalg med søk og forslag etter navn, gjenbruk av `ProjectNameMatcher` og velgeren fra «Rediger budsjett».
+  - Utbetalinger: koblede Fiken-posteringer og manuelle linjer, og knappen «Finn utbetaling i Fiken».
+  - Bruk per konto med utvidbare rader ned til enkeltbilag.
+  - «Kopier som tabell» (HTML og tekst, samme løsning som kvalitetssjekken) for å lime inn i rapporten til tilskuddsgiveren.
+- **Eksport:** `/tilskudd/eksport?id=…` gir .xlsx (ClosedXML) med fanene *Sammendrag*, *Bruk per konto* og *Bilag*. Oversikten kan også eksporteres med alle tilskudd for et år.
+
+### Kobling til resten av appen (senere steg)
+- Budsjettsiden (`/budsjett`): merke prosjekter som er finansiert av et tilskudd, med lenke til tilskuddet.
+- Kvalitetssjekken: «Rapporteringsfrist nærmer seg/er passert», «Brukt mer enn innvilget», «Innvilget, men ikke mottatt etter 60 dager», «Kostnader på prosjektet utenfor bruksperioden».
+- MCP: lesverktøyet `get_grant_status`, så AI-en kan skrive utkast til rapport til tilskuddsgiver eller oppsummering til styremøtet.
+
+### Rekkefølge (én PR per steg)
+1. **Core:** modell, `JsonGrantStore`, `GrantReportBuilder` og forslag til utbetalinger. xUnit-tester med syntetiske data (oppdiktede tilskuddsgivere og beløp).
+2. **Web:** `/tilskudd` og `/tilskudd/{id}` med prosjektkobling, utbetalinger og bruk per konto.
+3. **Rapport:** kopier som tabell og xlsx-eksport.
+4. **Integrasjon:** frister og kontroller i kvalitetssjekken, merking på budsjettsiden og MCP-verktøyet.
+
+Hjelp til å rydde: steg 1 får også en enkel lesekontroll som viser hvilke kontoer posteringer som er koblet til tilskudd, faktisk ligger på. Da ser kassereren om føringen er konsekvent, og kan senere velge en fast tilskuddskonto i innstillingene.
+
+Verifisering mot ekte Fiken-data (bare GET) skjer på Windows-maskinen etter steg 2: velg et kjent tilskudd og sjekk at «brukt» og «mottatt» stemmer med prosjektrapporten i Fiken.
+
+### Avklart 26.11.2026
+1. **Tilskuddskonto:** usikkert om tilskudd er ført konsekvent på én konto. Appen bruker derfor ikke en fast konto, men søker bredt og rangerer forslagene (se over).
+2. **Flere tilskudd på samme prosjekt:** ja. Andel i prosent per prosjekt og tilskudd, sum maks 100 %.
+3. **Hva teller som «brukt»:** brutto kostnader til å begynne med.
+4. **Tilskudd uten prosjekt:** finnes. Egen type *Driftstilskudd* med kontoer og/eller manuelle bruk-linjer.
