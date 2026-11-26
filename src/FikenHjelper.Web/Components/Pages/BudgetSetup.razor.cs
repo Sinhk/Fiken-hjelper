@@ -299,10 +299,61 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private void RemoveLine(BudgetLine line)
     {
-        if (current?.Lines.Remove(line) == true)
+        if (current is null)
         {
-            MarkDirty();
+            return;
         }
+
+        var index = current.Lines.IndexOf(line);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var year = current.Year;
+        current.Lines.RemoveAt(index);
+        MarkDirty();
+
+        var label = string.IsNullOrWhiteSpace(line.Name) ? "uten navn" : $"«{line.Name}»";
+        AddUndoSnackbar($"Slettet posten {label}.", () =>
+        {
+            // Etter lagring er budsjettet lastet på nytt, så finn året på nytt i stedet for å bruke det gamle objektet.
+            var target = data.FindYear(year);
+            if (target is null)
+            {
+                return false;
+            }
+
+            target.Lines.Insert(Math.Min(index, target.Lines.Count), line);
+            return true;
+        });
+    }
+
+    /// <summary>
+    /// Viser en melding med «Angre». Brukes for slettinger som ellers ikke kan hentes tilbake før man har lagret.
+    /// <paramref name="undo"/> returnerer false når det ikke lenger er mulig å angre.
+    /// </summary>
+    private void AddUndoSnackbar(string message, Func<bool> undo)
+    {
+        Snackbar.Add(message, Severity.Info, config =>
+        {
+            config.Action = "Angre";
+            config.ActionVariant = Variant.Filled;
+            config.VisibleStateDuration = 8000;
+            config.OnClick = _ =>
+            {
+                if (undo())
+                {
+                    MarkDirty();
+                }
+                else
+                {
+                    Snackbar.Add("Kunne ikke angre. Posten finnes ikke lenger i budsjettet.", Severity.Warning);
+                }
+
+                return InvokeAsync(StateHasChanged);
+            };
+        });
     }
 
     private void Move(BudgetLine line, int delta)
@@ -429,9 +480,28 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private void RemoveProject(BudgetLine line, long id)
     {
-        line.ProjectIds.Remove(id);
+        var index = line.ProjectIds.IndexOf(id);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var share = line.ShareOf(id);
+        line.ProjectIds.RemoveAt(index);
         line.SetShare(id, null);
         MarkDirty();
+
+        AddUndoSnackbar($"Fjernet koblingen til «{ProjectName(id)}» fra «{line.Name}».", () =>
+        {
+            if (current is null || !current.Lines.Contains(line) || line.ProjectIds.Contains(id))
+            {
+                return false;
+            }
+
+            line.ProjectIds.Insert(Math.Min(index, line.ProjectIds.Count), id);
+            line.SetShare(id, share);
+            return true;
+        });
     }
 
     /// <summary>Andelen som tekst når prosjektet er fordelt på flere poster, ellers null.</summary>

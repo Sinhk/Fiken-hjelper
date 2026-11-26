@@ -799,11 +799,24 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         return RebuildAndPersistAsync();
     }
 
-    private async Task HandleRememberGroupMappingAsync((string RecipientName, long ContactId) args)
+    private async Task HandleRememberGroupMappingAsync((string DraftKey, string RecipientName, long ContactId) args)
     {
-        await ConfigStore.SaveGroupMappingAsync(args.RecipientName, args.ContactId);
-        mappings = await ConfigStore.LoadMappingsAsync();
-        SetBanner($"Lagret kobling for «{args.RecipientName}» til fremtidige arrangementer.", isError: false);
+        try
+        {
+            await ConfigStore.SaveGroupMappingAsync(args.RecipientName, args.ContactId);
+            mappings = await ConfigStore.LoadMappingsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to save group mapping for {Group}", args.RecipientName);
+            SetCustomerMessage(
+                args.DraftKey,
+                $"Kunne ikke lagre koblingen for «{args.RecipientName}» lokalt. Sjekk at datamappen har skrivetilgang og prøv igjen.",
+                isError: true);
+            return;
+        }
+
+        SetCustomerMessage(args.DraftKey, $"Lagret kobling for «{args.RecipientName}» til fremtidige arrangementer.", isError: false);
         RebuildPlan();
     }
 

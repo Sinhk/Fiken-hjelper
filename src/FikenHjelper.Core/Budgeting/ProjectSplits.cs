@@ -67,6 +67,29 @@ public static class ProjectSplits
         return Math.Abs(TotalShare(projectId, lines) - 100m) <= Tolerance ? null : ProjectSplitProblem.WrongTotal;
     }
 
+    /// <summary>
+    /// Norsk feilmelding for andelene som er skrevet inn i fordelingsdialogen, eller null når de går opp.
+    /// Med én post eller færre er det ingen andeler å sjekke.
+    /// </summary>
+    public static string? DescribeShareProblem(IReadOnlyList<decimal?> shares)
+    {
+        ArgumentNullException.ThrowIfNull(shares);
+        if (shares.Count <= 1)
+        {
+            return null;
+        }
+
+        if (shares.Any(s => s is not > 0))
+        {
+            return "Fyll inn en andel større enn 0 for alle postene.";
+        }
+
+        var total = shares.Sum(s => s!.Value);
+        return Math.Abs(total - 100m) <= Tolerance
+            ? null
+            : $"Andelene summerer til {total.ToString("0.##", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"))} %. De må bli 100 %.";
+    }
+
     public static decimal TotalShare(long projectId, IEnumerable<BudgetLine> lines) =>
         lines.Sum(l => l.ShareOf(projectId) ?? 0m);
 

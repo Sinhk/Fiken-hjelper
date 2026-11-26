@@ -178,7 +178,7 @@
                         <button type="button"
                                 class="btn btn-outline-secondary btn-sm"
                                 disabled="@IsSubmitting"
-                                @onclick="() => OnRememberGroupMapping.InvokeAsync((draft.RecipientKey, draft.SelectedContactId.Value))">
+                                @onclick="() => OnRememberGroupMapping.InvokeAsync((draft.DraftKey, draft.RecipientKey, draft.SelectedContactId.Value))">
                             Husk kobling for gruppe
                         </button>
                     }
@@ -394,7 +394,7 @@
     [Parameter] public CustomerCreationMessage? CustomerMessage { get; set; }
 
     [Parameter] public EventCallback<(string DraftKey, long? ContactId)> OnManualCustomerSelected { get; set; }
-    [Parameter] public EventCallback<(string RecipientName, long ContactId)> OnRememberGroupMapping { get; set; }
+    [Parameter] public EventCallback<(string DraftKey, string RecipientName, long ContactId)> OnRememberGroupMapping { get; set; }
     [Parameter] public EventCallback<(string DraftKey, string Name, string? Email)> OnCreateFikenCustomer { get; set; }
     [Parameter] public EventCallback OnCreateDraftsRequested { get; set; }
 
