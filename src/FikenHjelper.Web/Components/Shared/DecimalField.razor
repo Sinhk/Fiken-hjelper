@@ -1,0 +1,118 @@
+@* MudBlazor-felt for beløp og andre desimaltall. Godtar både «.» og «,» som desimaltegn (se DecimalInput).
+   Ugyldig tekst gir en norsk feilmelding mens teksten blir stående og modellens verdi beholdes uendret.
+   Erstatter MudNumericField, som tolker etter kultur og dermed avviser eller misforstår det ene skilletegnet.
+   Øvrige attributter (f.eks. aria-label) går videre til MudTextField. *@
+<MudTextField T="string"
+              Value="text"
+              ValueChanged="HandleTextChanged"
+              OnBlur="HandleBlur"
+              InputMode="DecimalKeyboard"
+              Margin="Margin"
+              Class="@Class"
+              Immediate="Immediate"
+              Clearable="Clearable"
+              Placeholder="@Placeholder"
+              OnKeyDown="OnKeyDown"
+              Error="@(error is not null)"
+              ErrorText="@error"
+              @attributes="Attributes" />
+
+@code {
+    /// <summary>Gjeldende verdi, eller null når feltet er tomt.</summary>
+    [Parameter] public decimal? Value { get; set; }
+
+    [Parameter] public EventCallback<decimal?> ValueChanged { get; set; }
+
+    /// <summary>Om feltet kan tømmes (verdi null). Ellers tolkes tomt felt som 0.</summary>
+    [Parameter] public bool AllowEmpty { get; set; } = true;
+
+    [Parameter] public decimal? Min { get; set; }
+
+    [Parameter] public decimal? Max { get; set; }
+
+    /// <summary>Melding når verdien er utenfor <see cref="Min"/>–<see cref="Max"/>.</summary>
+    [Parameter] public string RangeMessage { get; set; } = "Tallet er utenfor tillatt område.";
+
+    /// <summary>Tusenskille (hardt mellomrom) i visningen av store tall.</summary>
+    [Parameter] public bool Grouped { get; set; }
+
+    [Parameter] public Margin Margin { get; set; } = Margin.None;
+
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>Oppdaterer verdien for hvert tastetrykk i stedet for når feltet forlates.</summary>
+    [Parameter] public bool Immediate { get; set; }
+
+    [Parameter] public bool Clearable { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; }
+
+    [Parameter] public EventCallback<KeyboardEventArgs> OnKeyDown { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? Attributes { get; set; }
+
+    // «decimal» er et C#-nøkkelord, så enum-verdien kan ikke skrives rett inn i markeringen.
+    private const InputMode DecimalKeyboard = InputMode.@decimal;
+
+    private string text = string.Empty;
+    private string? error;
+
+    protected override void OnParametersSet()
+    {
+        // Teksten følger verdien, men bare når den ikke allerede betyr det samme. Ellers ville «33,» blitt til «33»
+        // mens brukeren skriver, og en ugyldig tekst ville forsvunnet.
+        if (error is null && !TextMatchesValue())
+        {
+            text = FormatValue();
+        }
+    }
+
+    private bool TextMatchesValue()
+    {
+        if (DecimalInput.IsEmpty(text))
+        {
+            return AllowEmpty ? Value is null : Value is null or 0m;
+        }
+
+        return DecimalInput.TryParse(text, out var parsed) && Value == parsed;
+    }
+
+    private string FormatValue()
+        => Value is { } v ? DecimalInput.Format(v, grouped: Grouped) : string.Empty;
+
+    private async Task HandleTextChanged(string? newText)
+    {
+        text = newText ?? string.Empty;
+
+        if (DecimalInput.IsEmpty(text))
+        {
+            error = null;
+            await ValueChanged.InvokeAsync(AllowEmpty ? null : 0m);
+            return;
+        }
+
+        if (!DecimalInput.TryParse(text, out var parsed))
+        {
+            error = DecimalInput.InvalidMessage;
+            return;
+        }
+
+        if ((Min is { } min && parsed < min) || (Max is { } max && parsed > max))
+        {
+            error = RangeMessage;
+            return;
+        }
+
+        error = null;
+        await ValueChanged.InvokeAsync(parsed);
+    }
+
+    private void HandleBlur()
+    {
+        // Pen visning når feltet forlates, f.eks. «12345.5» → «12 345,5». Ugyldig tekst blir stående så den kan rettes.
+        if (error is null)
+        {
+            text = FormatValue();
+        }
+    }
+}

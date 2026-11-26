@@ -95,13 +95,13 @@
                         </td>
                         <td class="fh-num-col">
                             <label for="@inputId" class="visually-hidden">Pris i kroner for @currentLabel</label>
-                            <input id="@inputId"
-                                   type="number"
-                                   step="0.01"
-                                   min="0"
-                                   value="@(priceMissing ? string.Empty : currentPrice.ToString(CultureInfo.InvariantCulture))"
-                                   placeholder="@(priceMissing ? "Sett pris" : null)"
-                                   @onchange="(e) => HandlePriceChanged(category.Key, e)" />
+                            <DecimalTextInput Id="@inputId"
+                                              Value="@(priceMissing ? null : currentPrice)"
+                                              ValueChanged="v => HandlePriceChanged(category.Key, v)"
+                                              Placeholder="@(priceMissing ? "Sett pris" : null)"
+                                              Min="0"
+                                              MinMessage="Prisen kan ikke være negativ."
+                                              AllowEmpty="false" />
                         </td>
                     </tr>
                 }
@@ -126,16 +126,8 @@ else
     [Parameter] public EventCallback<(string CategoryKey, string? Label)> OnCategoryLabelChanged { get; set; }
     [Parameter] public EventCallback<(string CategoryKey, bool Included)> OnCategoryIncludeChanged { get; set; }
 
-    private Task HandlePriceChanged(string categoryKey, ChangeEventArgs e)
-    {
-        var raw = (e.Value?.ToString() ?? string.Empty).Replace(',', '.');
-        if (decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) && parsed >= 0)
-        {
-            return OnCategoryPriceChanged.InvokeAsync((categoryKey, parsed));
-        }
-
-        return Task.CompletedTask;
-    }
+    private Task HandlePriceChanged(string categoryKey, decimal? price)
+        => price is { } value ? OnCategoryPriceChanged.InvokeAsync((categoryKey, value)) : Task.CompletedTask;
 
     private Task UseSuggestedPriceAsync(string categoryKey, decimal suggestedPriceNok)
         => OnCategoryPriceChanged.InvokeAsync((categoryKey, suggestedPriceNok));

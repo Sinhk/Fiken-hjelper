@@ -162,13 +162,12 @@
                         </td>
                         <td class="fh-num-col">
                             <label for="@priceInputId" class="visually-hidden">Overstyrt pris for @participant.FullName</label>
-                            <input id="@priceInputId"
-                                   type="number"
-                                   step="0.01"
-                                   min="0"
-                                   value="@(hasCustomPrice ? ov!.CustomPriceNok!.Value.ToString(CultureInfo.InvariantCulture) : string.Empty)"
-                                   placeholder="@effectivePrice.ToString("0.##", CultureInfo.InvariantCulture)"
-                                   @onchange="(e) => HandleCustomPriceChanged(participant.ParticipantKey, e)" />
+                            <DecimalTextInput Id="@priceInputId"
+                                              Value="@(hasCustomPrice ? ov!.CustomPriceNok!.Value : null)"
+                                              ValueChanged="v => OnCustomPriceChanged.InvokeAsync((participant.ParticipantKey, v))"
+                                              Placeholder="@DecimalInput.Format(effectivePrice)"
+                                              Min="0"
+                                              MinMessage="Prisen kan ikke være negativ." />
                         </td>
                     </tr>
                 }
@@ -281,22 +280,6 @@
     {
         var selected = e.Value?.ToString()?.Trim();
         return OnGroupChanged.InvokeAsync((key, string.IsNullOrWhiteSpace(selected) ? null : selected));
-    }
-
-    private Task HandleCustomPriceChanged(string key, ChangeEventArgs e)
-    {
-        var raw = (e.Value?.ToString() ?? string.Empty).Trim().Replace(',', '.');
-        if (string.IsNullOrEmpty(raw))
-        {
-            return OnCustomPriceChanged.InvokeAsync((key, null));
-        }
-
-        if (decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) && parsed >= 0)
-        {
-            return OnCustomPriceChanged.InvokeAsync((key, parsed));
-        }
-
-        return Task.CompletedTask;
     }
 
     private string BuildSafeExtraFieldSummary()

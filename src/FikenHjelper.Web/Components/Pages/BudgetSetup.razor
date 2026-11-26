@@ -97,14 +97,13 @@
                                               Variant="Variant.Text" Margin="Margin.Dense" aria-label="Navn på budsjettpost" />
                             </td>
                             <td>
-                                <MudNumericField T="decimal" Value="line.Amount" ValueChanged="v => { line.Amount = v; MarkDirty(); }"
-                                                 Culture="Nb" Format="#,##0.##" HideSpinButtons Margin="Margin.Dense"
-                                                 Class="fh-num-input" aria-label="@($"Budsjett for {line.Name}")" />
+                                <DecimalField Value="line.Amount" ValueChanged="v => { line.Amount = v ?? 0m; MarkDirty(); }" AllowEmpty="false" Grouped
+                                              Margin="Margin.Dense" Class="fh-num-input" aria-label="@($"Budsjett for {line.Name}")" />
                             </td>
                             <td>
-                                <MudNumericField T="decimal?" Value="line.ManualActual" ValueChanged="v => { line.ManualActual = v; MarkDirty(); }"
-                                                 Culture="Nb" Format="#,##0.##" HideSpinButtons Clearable Margin="Margin.Dense"
-                                                 Placeholder="Fra Fiken" Class="fh-num-input" aria-label="@($"Manuelt regnskap for {line.Name}")" />
+                                <DecimalField Value="line.ManualActual" ValueChanged="v => { line.ManualActual = v; MarkDirty(); }" Grouped Clearable
+                                              Margin="Margin.Dense" Placeholder="Fra Fiken" Class="fh-num-input"
+                                              aria-label="@($"Manuelt regnskap for {line.Name}")" />
                             </td>
                             <td>
                                 <div class="d-flex flex-wrap align-center gap-1">
