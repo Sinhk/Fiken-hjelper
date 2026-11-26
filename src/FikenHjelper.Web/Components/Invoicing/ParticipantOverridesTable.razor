@@ -183,6 +183,16 @@
                         </td>
                     </tr>
                 }
+                @if (FilteredParticipants.Count == 0)
+                {
+                    <tr>
+                        <td colspan="8" class="fh-hint">
+                            @(EventData.Participants.Count == 0
+                                ? "Arrangementet har ingen deltakere."
+                                : "Ingen treff. Prøv et annet søk eller fjern filteret.")
+                        </td>
+                    </tr>
+                }
             </tbody>
         </table>
     </div>

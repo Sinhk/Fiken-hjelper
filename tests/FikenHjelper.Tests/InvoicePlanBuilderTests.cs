@@ -298,6 +298,26 @@ public sealed class InvoicePlanBuilderTests
         Assert.Equal(2, zeroPricePlan.ExcludedParticipantCount);
         var fraenaDraft = Assert.Single(zeroPricePlan.Drafts, d => d.RecipientName == "Fræna speidergruppe");
         Assert.Equal(0, fraenaDraft.TotalOre);
+
+        // A 0 kr draft is shown, but never created in Fiken, even when it has a customer.
+        Assert.True(fraenaDraft.IsZeroAmount);
+        Assert.False(fraenaDraft.IsReadyToCreate);
+        Assert.Equal(1, zeroPricePlan.ZeroAmountDraftCount);
+        Assert.Contains(zeroPricePlan.GlobalWarnings, w => w.Contains("0 kr og opprettes ikke"));
+        Assert.DoesNotContain(zeroPricePlan.ReadyDrafts, d => d.DraftKey == fraenaDraft.DraftKey);
+
+        var withCustomer = InvoicePlanBuilder.Build(
+            demo,
+            zeroPriceOptions with
+            {
+                ManualRecipientContactIds = new Dictionary<string, long> { [fraenaDraft.DraftKey] = 1003 }
+            },
+            Customers,
+            new Dictionary<string, long>());
+        var fraenaWithCustomer = Assert.Single(withCustomer.Drafts, d => d.DraftKey == fraenaDraft.DraftKey);
+        Assert.Equal(1003, fraenaWithCustomer.SelectedContactId);
+        Assert.False(fraenaWithCustomer.IsReadyToCreate);
+        Assert.DoesNotContain(withCustomer.ReadyDrafts, d => d.DraftKey == fraenaDraft.DraftKey);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
 using FikenHjelper.Core.Invoicing;
 using FikenHjelper.Core.MinSpeiding;
+using FikenHjelper.Web.Components.Invoicing;
 using Microsoft.AspNetCore.Components;
 
 namespace FikenHjelper.Web.Components.Pages;
@@ -56,6 +57,11 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
     private InvoicePlanResult? invoicePlan;
     private List<DraftCreationItemResult> creationResults = [];
     private DateTimeOffset? lastDraftSavedAtLocal;
+    private bool draftSaveFailed;
+    private bool confirmingReset;
+    private string? creationMessage;
+    private bool creationMessageIsError;
+    private CustomerCreationMessage? customerMessage;
     private bool projectEditedBeforeLoad;
 
     private CancellationTokenSource? fikenCts;
@@ -186,6 +192,11 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 Logger.LogWarning(ex, "Failed to switch Fiken company");
                 SetBanner(ex.UserMessage, isError: true);
             }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Unexpected error switching Fiken company");
+                SetBanner("Kunne ikke hente data for valgt foretak fra Fiken. Prøv «Last inn på nytt».", isError: true);
+            }
             finally
             {
                 isLoadingFiken = false;
@@ -216,11 +227,13 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                     existing.FikenCompanySlug = NullIfEmpty(selectedCompanySlug);
                     await ConfigStore.SaveEventDraftStateAsync(existing);
                     lastDraftSavedAtLocal = DateTimeOffset.Now;
+                    draftSaveFailed = false;
                 }
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Failed to update saved Fiken project for {ProjectId}", minSpeidingProjectId);
+                draftSaveFailed = true;
             }
         }
     }
@@ -405,7 +418,10 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         participantOverrides.Clear();
         manualRecipientContactIds.Clear();
         creationResults.Clear();
+        creationMessage = null;
+        customerMessage = null;
         lastDraftSavedAtLocal = null;
+        draftSaveFailed = false;
 
         // Categories without a detected price stay unset, so they are shown and warned about as
         // missing a price instead of being treated as free.
@@ -517,14 +533,29 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         return restored;
     }
 
+    private void RequestResetSavedEventChoices() => confirmingReset = true;
+
+    private void CancelResetSavedEventChoices() => confirmingReset = false;
+
     private async Task ResetSavedEventChoicesAsync()
     {
+        confirmingReset = false;
         if (eventData is null)
         {
             return;
         }
 
-        await ConfigStore.DeleteEventDraftStateAsync(eventData.ProjectId);
+        try
+        {
+            await ConfigStore.DeleteEventDraftStateAsync(eventData.ProjectId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to delete saved draft state for project {ProjectId}", eventData.ProjectId);
+            SetBanner("Kunne ikke slette lagrede valg lokalt. Prøv igjen.", isError: true);
+            return;
+        }
+
         ResetPerEventDefaults(eventData.EventTitle);
 
         await ApplyLoadedEventAsync(eventData, loadSavedDraft: false);
@@ -817,22 +848,35 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
             await ConfigStore.SaveEventDraftStateAsync(draftState);
             lastDraftSavedAtLocal = DateTimeOffset.Now;
+            draftSaveFailed = false;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Failed to save local draft state for project {ProjectId}", eventData.ProjectId);
+            draftSaveFailed = true;
         }
     }
 
+    private string? CreationBlockedReason => DraftCreationGuard.GetBlockedReason(
+        fikenTokenConfigured,
+        selectedCompanySlug,
+        eventData?.IsDemoData ?? false);
+
     private async Task HandleCreateFikenCustomerAsync((string DraftKey, string Name, string? Email) args)
     {
-        if (!fikenTokenConfigured || string.IsNullOrWhiteSpace(selectedCompanySlug))
+        if (CreationBlockedReason is { } blockedReason)
         {
-            SetBanner("Velg Fiken-foretak og legg inn API-nøkkel før du oppretter kunder i Fiken.", isError: true);
+            SetCustomerMessage(args.DraftKey, blockedReason, isError: true);
+            return;
+        }
+
+        if (isSubmittingDrafts)
+        {
             return;
         }
 
         isSubmittingDrafts = true;
+        customerMessage = null;
         var token = ResetSubmitToken();
         var companySlug = selectedCompanySlug;
 
@@ -849,16 +893,27 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 manualRecipientContactIds[args.DraftKey] = created.Id.Value;
             }
 
-            SetBanner($"Opprettet kunden «{args.Name}» i Fiken.", isError: false);
+            SetCustomerMessage(args.DraftKey, $"Opprettet kunden «{args.Name}» i Fiken og koblet den til utkastet.", isError: false);
             await RebuildAndPersistAsync();
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+            SetBanner(
+                $"Opprettelsen av kunden «{args.Name}» ble avbrutt fordi foretaket ble byttet. Sjekk i Fiken om kunden likevel ble opprettet.",
+                isError: true);
         }
         catch (FikenApiException ex)
         {
             Logger.LogWarning(ex, "Failed to create Fiken customer {Name}", args.Name);
-            SetBanner(ex.UserMessage, isError: true);
+            SetCustomerMessage(args.DraftKey, ex.UserMessage, isError: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Unexpected error creating Fiken customer {Name}", args.Name);
+            SetCustomerMessage(
+                args.DraftKey,
+                $"Kunne ikke opprette kunden «{args.Name}» i Fiken på grunn av en uventet feil. Sjekk i Fiken om kunden likevel ble opprettet før du prøver igjen.",
+                isError: true);
         }
         finally
         {
@@ -868,26 +923,29 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private async Task CreateFikenDraftsAsync()
     {
-        if (invoicePlan is null)
+        if (invoicePlan is null || isSubmittingDrafts)
         {
             return;
         }
 
-        if (!fikenTokenConfigured || string.IsNullOrWhiteSpace(selectedCompanySlug))
+        // Checked here as well as in the UI: demo customers have made-up IDs, and nothing may be
+        // sent to Fiken without a connected company.
+        if (CreationBlockedReason is { } blockedReason)
         {
-            SetBanner("Fiken API-nøkkel og foretak må være satt før utkast kan opprettes.", isError: true);
+            SetCreationMessage(blockedReason, isError: true);
             return;
         }
 
-        var readyDrafts = invoicePlan.Drafts.Where(d => d.IsReadyToCreate).ToList();
+        var readyDrafts = invoicePlan.ReadyDrafts;
         if (readyDrafts.Count == 0)
         {
-            SetBanner("Ingen fakturautkast er klare for opprettelse.", isError: true);
+            SetCreationMessage("Ingen fakturautkast er klare for opprettelse.", isError: true);
             return;
         }
 
         isSubmittingDrafts = true;
         creationResults = [];
+        creationMessage = null;
         bannerMessage = null;
         var token = ResetSubmitToken();
         var options = BuildPlanOptions();
@@ -922,25 +980,82 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
                 }
             }
 
-            existingDrafts = (await FikenClient.GetInvoiceDraftsAsync(companySlug, token)).ToList();
-
             var okCount = creationResults.Count(r => r.Success);
             var errCount = creationResults.Count - okCount;
-            SetBanner(
+            SetCreationMessage(
                 errCount == 0
                     ? $"Opprettet {okCount} fakturautkast i Fiken. Du kan nå se over og sende dem fra Fiken."
                     : $"Opprettet {okCount} fakturautkast, men {errCount} feilet. Se detaljer nedenfor.",
                 isError: errCount > 0);
 
-            RebuildPlan();
+            await RefreshExistingDraftsAfterRunAsync(companySlug, token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+            // Only the company switch cancels a run; the new company's data is loaded by that handler.
+            var okCount = creationResults.Count(r => r.Success);
+            SetCreationMessage(
+                $"Opprettelsen ble avbrutt fordi foretaket ble byttet. {okCount} av {readyDrafts.Count} fakturautkast ble opprettet i det forrige foretaket før avbruddet (se listen under). Sjekk utkastene i det forrige foretaket i Fiken før du prøver igjen.",
+                isError: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Unexpected error while creating invoice drafts");
+            var okCount = creationResults.Count(r => r.Success);
+            var failedDraft = readyDrafts.Count > creationResults.Count ? readyDrafts[creationResults.Count] : null;
+            if (failedDraft is not null)
+            {
+                creationResults.Add(new DraftCreationItemResult(
+                    failedDraft.DraftKey,
+                    failedDraft.RecipientName,
+                    Success: false,
+                    CreatedDraftId: null,
+                    ErrorMessage: "Uventet feil. Sjekk i Fiken om utkastet likevel ble opprettet."));
+            }
+
+            SetCreationMessage(
+                $"Opprettelsen stoppet på grunn av en uventet feil. {okCount} av {readyDrafts.Count} fakturautkast ble opprettet før feilen (se listen under). Sjekk utkastene i Fiken før du prøver igjen, så du ikke får duplikater.",
+                isError: true);
+
+            await RefreshExistingDraftsAfterRunAsync(companySlug, token);
         }
         finally
         {
             isSubmittingDrafts = false;
         }
+    }
+
+    /// <summary>
+    /// Reloads existing drafts so duplicates are flagged. A failure here must not hide the result of the run.
+    /// </summary>
+    private async Task RefreshExistingDraftsAfterRunAsync(string companySlug, CancellationToken token)
+    {
+        try
+        {
+            existingDrafts = (await FikenClient.GetInvoiceDraftsAsync(companySlug, token)).ToList();
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to reload invoice drafts after creation run");
+            SetCreationMessage(
+                $"{creationMessage} Kunne ikke hente oppdatert liste over utkast fra Fiken etterpå. Last inn Fiken-data på nytt før du oppretter flere utkast, så du ikke får duplikater.".Trim(),
+                isError: true);
+        }
+
+        RebuildPlan();
+    }
+
+    private void SetCustomerMessage(string draftKey, string message, bool isError)
+        => customerMessage = new CustomerCreationMessage(draftKey, message, isError);
+
+    private void SetCreationMessage(string message, bool isError)
+    {
+        creationMessage = message;
+        creationMessageIsError = isError;
     }
 
     private InvoiceDraftPlanOptions BuildPlanOptions() => new(

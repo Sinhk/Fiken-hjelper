@@ -210,6 +210,12 @@ public static partial class InvoicePlanBuilder
             globalWarnings.Add($"{unknownPriceCount} deltaker(e) mangler pris. Sett pris for kategorien før utkast opprettes.");
         }
 
+        var zeroAmountCount = drafts.Count(d => d.IsZeroAmount && !d.HasMissingPrice);
+        if (zeroAmountCount > 0)
+        {
+            globalWarnings.Add($"{zeroAmountCount} fakturautkast har totalsum 0 kr og opprettes ikke i Fiken.");
+        }
+
         return new InvoicePlanResult(
             Drafts: drafts,
             IncludedParticipantCount: billableParticipants.Count,

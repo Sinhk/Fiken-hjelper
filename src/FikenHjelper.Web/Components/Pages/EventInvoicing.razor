@@ -86,19 +86,57 @@
                     <span class="fh-badge @(eventData.IsDemoData ? "fh-badge-warn" : "fh-badge-ok")">
                         @(eventData.IsDemoData ? "Demodata" : "Hentet fra Min speiding")
                     </span>
-                    @if (lastDraftSavedAtLocal.HasValue)
+                    @if (draftSaveFailed)
+                    {
+                        <span class="fh-badge fh-badge-danger" role="alert">
+                            Kunne ikke lagre valgene lokalt
+                        </span>
+                    }
+                    else if (lastDraftSavedAtLocal.HasValue)
                     {
                         <span class="fh-badge fh-badge-neutral">
                             Lagret lokalt @lastDraftSavedAtLocal.Value.ToString("HH:mm")
                         </span>
                     }
-                    <button type="button"
-                            class="btn btn-outline-secondary btn-sm"
-                            @onclick="ResetSavedEventChoicesAsync">
-                        Nullstill lagrede valg
-                    </button>
+                    @if (!confirmingReset)
+                    {
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm"
+                                @onclick="RequestResetSavedEventChoices">
+                            Nullstill lagrede valg
+                        </button>
+                    }
                 </div>
             </div>
+
+            @if (draftSaveFailed)
+            {
+                <div class="fh-alert fh-alert-warn mb-3" role="alert">
+                    Valgene for dette arrangementet ble ikke lagret lokalt. Endringene gjelder nå, men kan bli borte hvis du laster siden på nytt.
+                </div>
+            }
+
+            @if (confirmingReset)
+            {
+                <div class="fh-alert fh-alert-warn mb-3" role="alert">
+                    <p class="mb-2">
+                        Vil du nullstille lagrede valg for dette arrangementet? Priser, navn på kategorier, valg per deltaker,
+                        kundekoblinger og fakturafelt går tilbake til standard. Dette kan ikke angres.
+                    </p>
+                    <div class="fh-actions">
+                        <button type="button"
+                                class="btn btn-danger btn-sm"
+                                @onclick="ResetSavedEventChoicesAsync">
+                            Ja, nullstill
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm"
+                                @onclick="CancelResetSavedEventChoices">
+                            Avbryt
+                        </button>
+                    </div>
+                </div>
+            }
 
             <div class="fh-stack">
                 <FeePricingTable Categories="eventData.FeeCategories"
@@ -136,6 +174,10 @@
                                     FikenCustomers="customers"
                                     IsSubmitting="isSubmittingDrafts"
                                     CreationResults="creationResults"
+                                    CreationBlockedReason="@CreationBlockedReason"
+                                    CreationMessage="@creationMessage"
+                                    CreationMessageIsError="creationMessageIsError"
+                                    CustomerMessage="customerMessage"
                                     OnManualCustomerSelected="HandleManualCustomerSelected"
                                     OnRememberGroupMapping="HandleRememberGroupMappingAsync"
                                     OnCreateFikenCustomer="HandleCreateFikenCustomerAsync"

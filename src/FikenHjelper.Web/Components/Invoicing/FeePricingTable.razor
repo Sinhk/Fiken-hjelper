@@ -109,6 +109,12 @@
         </table>
     </div>
 }
+else
+{
+    <p class="fh-hint mb-0" role="status">
+        Fant ingen priskategorier (deltakeravgifter) i arrangementet. Sjekk at deltakerne har en deltakeravgift i Min speiding, eller sett egen pris per deltaker i tabellen under.
+    </p>
+}
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<FeeCategorySummary> Categories { get; set; } = [];
