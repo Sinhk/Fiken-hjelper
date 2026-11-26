@@ -203,3 +203,16 @@ FikenHjelper.slnx
 - Hvordan føres Zettle-salg i Fiken i dag? Er det ett samlebilag per utbetaling?
 - Hvilke kommuner og stiftelser søker kretsen hos, når er fristene, og hvilke tall krever hver søknad eller rapport?
 - Hvordan kommer utlegg fra frivillige inn i dag (e-post til Fiken-innboksen, skjema eller papir)?
+
+---
+
+## Testinfrastruktur – ende-til-ende-tester med falsk Fiken *(Planlagt)*
+**Mål:** Teste hele flyter i nettleseren (budsjett, prosjektfordeling, fakturautkast) uten innlogging i Fiken og uten testforetak, slik at de kan kjøres på alle maskiner og i CI.
+
+- Erfaring fra QA-runden (PR #23): en enkel falsk `IFikenClient` som registreres etter `AddFikenApiClient()` (siste registrering vinner), pluss `Fiken:CompanySlug`/`Fiken:ApiToken` og en egen `FikenHjelper:DataDirectory`, var nok til å teste fordelingsdialogen manuelt. Startkoden i appen trengte ingen endring.
+- Plan:
+  - `FakeFikenClient` i testprosjektet: syntetiske prosjekter, posteringer, kunder og kontoer (oppdiktede navn, `@example.no`, medlemsnumre som 900001). Skrivekall (`CreateInvoiceDraftAsync`, `CreateCustomerAsync`) registreres i minnet i stedet for å sendes, så testene kan sjekke nøyaktig hva som ville blitt laget i Fiken.
+  - Appen startes i prosessen (`WebApplicationFactory` med Kestrel) med den falske klienten og en midlertidig datamappe. Sidene styres med Playwright for .NET.
+  - Første tester: fordelingsdialogen (desimaltall med punktum og komma, Enter, ugyldig verdi), budsjettoppsett med lagring og angre, og fakturautkast (0 kr-utelatelse, duplikater, demo-sperre).
+  - Kjøres i CI hvis Playwright-nettlesere kan installeres der uten for mye tid. Ellers som eget, manuelt testsett.
+- Erstatter ikke manuell verifisering mot testforetaket i Fiken på Windows-maskinen. Den falske klienten kjenner ikke Fikens egne valideringer og feilsvar.
