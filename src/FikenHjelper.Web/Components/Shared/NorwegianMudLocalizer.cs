@@ -1,3 +1,4 @@
+using FikenHjelper.Core.Text;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
 
@@ -117,6 +118,6 @@ public sealed class NorwegianMudLocalizer : MudLocalizer
 
     private static LocalizedString Lookup(string key, params object[] arguments) =>
         Texts.TryGetValue(key, out var text)
-            ? new LocalizedString(key, string.Format(text, arguments))
+            ? new LocalizedString(key, SafeFormat.Format(text, arguments))
             : new LocalizedString(key, key, resourceNotFound: true);
 }

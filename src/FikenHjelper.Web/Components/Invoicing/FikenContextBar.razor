@@ -213,6 +213,18 @@
 
     private string? dueDaysError;
     private int dueDaysResetKey;
+    private int? lastDaysUntilDueDate;
+
+    protected override void OnParametersSet()
+    {
+        // Feilmeldingen nevner verdien som beholdes. Endres verdien utenfra (f.eks. ved bytte av arrangement),
+        // er meldingen utdatert.
+        if (lastDaysUntilDueDate != DaysUntilDueDate)
+        {
+            dueDaysError = null;
+            lastDaysUntilDueDate = DaysUntilDueDate;
+        }
+    }
 
     private Task HandleDueDaysChanged(ChangeEventArgs e)
     {

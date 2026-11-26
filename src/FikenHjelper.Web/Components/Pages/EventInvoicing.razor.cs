@@ -375,17 +375,9 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private async Task LoadDemoEventAsync()
     {
+        // Demokundene ligger ikke i «customers»: den listen er alltid bare kundene fra Fiken, så oppdiktede
+        // ID-er aldri kan følge med inn i en ekte kjøring (se PlanCustomers).
         var demo = DemoEventFactory.CreateDemoEvent();
-        if (customers.Count == 0)
-        {
-            customers =
-            [
-                new FikenContact(1001, "Molde speidergruppe", "kasserer@molde.example.no", null, 1, null, true, false, false, 14, null),
-                new FikenContact(1002, "1. Kristiansund speidergruppe", "kasserer@1ksund.example.no", null, 2, null, true, false, false, 14, null),
-                new FikenContact(1003, "Aukra", "aukra@example.no", null, 3, null, true, false, false, 14, null)
-            ];
-        }
-
         var restored = await ApplyLoadedEventAsync(demo, loadSavedDraft: true);
         SetBanner(
             restored
@@ -801,6 +793,13 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
 
     private async Task HandleRememberGroupMappingAsync((string DraftKey, string RecipientName, long ContactId) args)
     {
+        // Demodata har oppdiktede kunde-ID-er som ikke skal havne i den lagrede koblingsfilen.
+        if (eventData?.IsDemoData ?? false)
+        {
+            SetCustomerMessage(args.DraftKey, "Koblinger lagres ikke for demodata.", isError: true);
+            return;
+        }
+
         try
         {
             await ConfigStore.SaveGroupMappingAsync(args.RecipientName, args.ContactId);
@@ -869,6 +868,10 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
             draftSaveFailed = true;
         }
     }
+
+    /// <summary>Kundene planen og kundevalget bruker: demokunder bare mens demodata er lastet.</summary>
+    private IReadOnlyList<FikenContact> PlanCustomers =>
+        DemoEventFactory.CustomersForPlan(customers, eventData?.IsDemoData ?? false);
 
     private string? CreationBlockedReason => DraftCreationGuard.GetBlockedReason(
         fikenTokenConfigured,
@@ -1100,7 +1103,7 @@ public sealed partial class EventInvoicing : ComponentBase, IAsyncDisposable
         invoicePlan = InvoicePlanBuilder.Build(
             eventData,
             BuildPlanOptions(),
-            customers,
+            PlanCustomers,
             mappings.GroupNameToContactId,
             existingDrafts);
     }

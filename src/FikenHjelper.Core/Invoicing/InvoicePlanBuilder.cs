@@ -200,7 +200,7 @@ public static partial class InvoicePlanBuilder
 
         if (duplicateCount > 0)
         {
-            globalWarnings.Add($"{duplicateCount} mottaker(e) har allerede et fakturautkast i Fiken for dette arrangementet.");
+            globalWarnings.Add($"{duplicateCount} mottaker(e) har allerede et fakturautkast i Fiken for dette arrangementet. Disse opprettes ikke på nytt.");
         }
 
         var unknownPriceCount = billableParticipants.Count(p =>
@@ -214,6 +214,12 @@ public static partial class InvoicePlanBuilder
         if (zeroAmountCount > 0)
         {
             globalWarnings.Add($"{zeroAmountCount} fakturautkast har totalsum 0 kr og opprettes ikke i Fiken.");
+        }
+
+        var negativeAmountCount = drafts.Count(d => d.IsNegativeAmount && !d.HasMissingPrice);
+        if (negativeAmountCount > 0)
+        {
+            globalWarnings.Add($"{negativeAmountCount} fakturautkast har negativ totalsum og opprettes ikke i Fiken. Sjekk prisene.");
         }
 
         return new InvoicePlanResult(
@@ -574,7 +580,7 @@ public static partial class InvoicePlanBuilder
 
         if (duplicateExists)
         {
-            warnings.Add("Denne kunden har allerede et fakturautkast i Fiken for dette arrangementet.");
+            warnings.Add("Denne kunden har allerede et fakturautkast i Fiken for dette arrangementet, så det opprettes ikke et nytt. Slett utkastet i Fiken og last inn Fiken-data på nytt hvis du vil opprette det på nytt.");
         }
 
         if (recipientName.Equals("Uten gruppe", StringComparison.OrdinalIgnoreCase))
