@@ -19,7 +19,7 @@
                     <div class="fh-alert fh-alert-danger" role="alert">
                         <strong>Noe gikk galt i visningen.</strong>
                         <p>Prøv å laste delen på nytt, eller gå til Innstillinger for å kontrollere tilkoblingen.</p>
-                        <button type="button" class="btn btn-outline-dark btn-sm" @onclick="RecoverError">Prøv igjen</button>
+                        <button type="button" class="btn btn-primary btn-sm" @onclick="RecoverError">Prøv igjen</button>
                     </div>
                 </ErrorContent>
             </ErrorBoundary>
@@ -30,7 +30,7 @@
 <div id="blazor-error-ui" data-nosnippet>
     Det oppstod en uventet feil.
     <a href="." class="reload">Last inn siden på nytt</a>
-    <span class="dismiss" role="button" aria-label="Lukk">🗙</span>
+    <button type="button" class="dismiss" aria-label="Lukk">🗙</button>
 </div>
 
 @code {

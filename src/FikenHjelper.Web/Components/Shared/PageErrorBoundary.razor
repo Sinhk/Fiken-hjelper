@@ -1,0 +1,29 @@
+@* Fanger uventede feil i en interaktiv side, så resten av appen (meny og andre sider) fortsatt virker.
+   Layouten (MainLayout) er statisk og kan ikke fange feil som oppstår i interaktive sider, så hver side
+   pakker innholdet i denne. Bruker bare vanlig HTML, slik at den virker selv om feilen kom fra MudBlazor. *@
+<ErrorBoundary @ref="boundary">
+    <ChildContent>
+        @ChildContent
+    </ChildContent>
+    <ErrorContent>
+        <div class="fh-alert fh-alert-danger" role="alert">
+            <strong>Noe gikk galt på denne siden.</strong>
+            <p class="mb-2">
+                Endringer du ikke hadde lagret, kan være borte. Prøv igjen, eller last inn siden på nytt.
+                Hvis feilen gjentar seg, sjekk tilkoblingen til Fiken under <a href="innstillinger">Innstillinger</a>.
+            </p>
+            <div class="fh-actions">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="Recover">Prøv igjen</button>
+                <a class="btn btn-outline-secondary btn-sm" href="." data-enhance-nav="false">Last inn siden på nytt</a>
+            </div>
+        </div>
+    </ErrorContent>
+</ErrorBoundary>
+
+@code {
+    private ErrorBoundary? boundary;
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private void Recover() => boundary?.Recover();
+}

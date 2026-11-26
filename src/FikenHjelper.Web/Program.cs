@@ -5,9 +5,17 @@ using FikenHjelper.Core.MinSpeiding;
 using FikenHjelper.Core.QualityCheck;
 using FikenHjelper.Web.Auth;
 using FikenHjelper.Web.Components;
+using FikenHjelper.Web.Components.Shared;
 using Microsoft.AspNetCore.DataProtection;
+using MudBlazor;
 using MudBlazor.Services;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using System.Globalization;
+
+// Appen er norsk: tall, datoer og sortering formateres alltid som nb-NO, uavhengig av nettleserens språk.
+var norwegian = CultureInfo.GetCultureInfo("nb-NO");
+CultureInfo.DefaultThreadCurrentCulture = norwegian;
+CultureInfo.DefaultThreadCurrentUICulture = norwegian;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
@@ -15,6 +23,7 @@ builder.AddServiceDefaults();
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddMudServices();
+builder.Services.AddTransient<MudLocalizer, NorwegianMudLocalizer>();
 
 var dataDirOverride = builder.Configuration["FikenHjelper:DataDirectory"];
 if (!string.IsNullOrWhiteSpace(dataDirOverride))
@@ -74,6 +83,15 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
 }
+
+app.UseRequestLocalization(options =>
+{
+    options.SetDefaultCulture("nb-NO")
+        .AddSupportedCultures("nb-NO")
+        .AddSupportedUICultures("nb-NO");
+    // Bare nb-NO: ikke la Accept-Language eller cookie bytte språk.
+    options.RequestCultureProviders.Clear();
+});
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();

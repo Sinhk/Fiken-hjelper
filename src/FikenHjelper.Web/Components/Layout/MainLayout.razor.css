@@ -80,6 +80,11 @@ main {
 }
 
 #blazor-error-ui .dismiss {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    padding: 0.25rem;
     cursor: pointer;
     position: absolute;
     inset-inline-end: 0.9rem;

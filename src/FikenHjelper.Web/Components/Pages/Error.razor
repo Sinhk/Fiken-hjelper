@@ -4,8 +4,10 @@
 <PageTitle>Feil – Fiken-hjelper</PageTitle>
 
 <div class="fh-card">
-    <h1 class="text-danger">Det oppstod en feil</h1>
-    <p>Beklager, forespørselen kunne ikke fullføres.</p>
+    <h1>Det oppstod en feil</h1>
+    <div class="fh-alert fh-alert-danger mb-3" role="alert">
+        Beklager, forespørselen kunne ikke fullføres. Prøv igjen om litt. Ingenting er sendt eller bokført i Fiken.
+    </div>
 
     @if (ShowRequestId)
     {
@@ -14,7 +16,7 @@
         </p>
     }
 
-    <a href="" class="btn btn-primary">Tilbake til oversikten</a>
+    <a href="/" class="btn btn-primary">Tilbake til oversikten</a>
 </div>
 
 @code {
