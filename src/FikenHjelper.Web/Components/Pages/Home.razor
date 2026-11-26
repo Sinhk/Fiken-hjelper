@@ -31,41 +31,66 @@
         </div>
 
         <div class="fh-actions mt-3">
-            <a href="arrangement-fakturering" class="btn btn-primary">Åpne arrangementsfakturering</a>
             <a href="innstillinger" class="btn btn-outline-secondary">Innstillinger og tilkobling</a>
         </div>
     </section>
 
-    <section class="fh-card">
+    <section class="fh-card" aria-labelledby="tools-heading">
         <div class="fh-card-header">
-            <h2>Planlagte verktøy</h2>
+            <h2 id="tools-heading">Verktøy</h2>
         </div>
-        <div class="fh-grid-2">
-            <div>
-                <h3>1. Arrangementsfakturering (klar)</h3>
+        <div class="fh-tool-grid">
+            <article class="fh-tool-card">
+                <div class="fh-tool-head">
+                    <h3>Arrangementsfakturering</h3>
+                    <span class="fh-badge fh-badge-ok">Klar</span>
+                </div>
                 <p>
                     Henter påmeldte fra <code>min.speiding.no</code> via prosjekt-ID og API-nøkkel, grupperer per speidergruppe
                     (eller per deltaker), beregner priser per kategori med overstyring, og oppretter fakturautkast i Fiken.
                 </p>
-            </div>
-            <div>
-                <h3>2. CSV/XLSX-import (neste)</h3>
-                <p>
-                    Fleksibel filimport med kolonnemapping og lagrede profiler for arrangementer og skjemaer uten API-kobling.
-                </p>
-            </div>
-            <div>
-                <h3>3. Budsjett og regnskap (<a href="budsjett">klar</a>)</h3>
+                <a href="arrangement-fakturering" class="btn btn-primary btn-sm">Åpne arrangementsfakturering</a>
+            </article>
+            <article class="fh-tool-card">
+                <div class="fh-tool-head">
+                    <h3>Budsjett og regnskap</h3>
+                    <span class="fh-badge fh-badge-ok">Klar</span>
+                </div>
                 <p>
                     Kobler intensjonsbudsjettposter mot ett eller flere Fiken-prosjekter, sjekker ufordelte bilag og eksporterer til Excel.
                 </p>
-            </div>
-            <div>
-                <h3>4. MCP-server for AI-chat (planlagt)</h3>
+                <a href="budsjett" class="btn btn-primary btn-sm">Åpne budsjett og regnskap</a>
+            </article>
+            <article class="fh-tool-card">
+                <div class="fh-tool-head">
+                    <h3>Kvalitetssjekk</h3>
+                    <span class="fh-badge fh-badge-ok">Klar</span>
+                </div>
+                <p>
+                    Oversikt over ubetalte kundefakturaer, åpne salg og ubetalte kjøp, til styremøte og årsoppgjør.
+                    Tabellen kan kopieres rett inn i Word eller Google Docs.
+                </p>
+                <a href="kvalitetssjekk" class="btn btn-primary btn-sm">Åpne kvalitetssjekk</a>
+            </article>
+            <article class="fh-tool-card">
+                <div class="fh-tool-head">
+                    <h3>MCP-server for AI-chat</h3>
+                    <span class="fh-badge fh-badge-ok">Klar</span>
+                </div>
                 <p>
                     AI-assistent som leser innboks/EHF-bilag i Fiken, foreslår kostnadskonto og prosjektfordeling og oppretter kjøpsutkast.
+                    Kjører utenfor nettappen. Oppsettet står i README.
                 </p>
-            </div>
+            </article>
+            <article class="fh-tool-card">
+                <div class="fh-tool-head">
+                    <h3>CSV/XLSX-import</h3>
+                    <span class="fh-badge fh-badge-neutral">Planlagt</span>
+                </div>
+                <p>
+                    Fleksibel filimport med kolonnemapping og lagrede profiler for arrangementer og skjemaer uten API-kobling.
+                </p>
+            </article>
         </div>
     </section>
 </div>

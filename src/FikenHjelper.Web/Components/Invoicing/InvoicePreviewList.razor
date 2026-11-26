@@ -60,7 +60,7 @@
                             <th>Deltaker</th>
                             <th>Speidergruppe</th>
                             <th>Kategori</th>
-                            <th class="fh-num-col">Beløp (NOK)</th>
+                            <th class="fh-num-col">Beløp (kr)</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -262,7 +262,7 @@
                     <input type="checkbox" @bind="confirmCreation" />
                     <span>
                         Jeg bekrefter at <strong>@ReadyDraftCount</strong> fakturautkast (sum @ReadyTotalNok.ToString("N2", NorwegianCulture) kr)
-                        skal opprettes som <strong>utkast</strong> i Fiken (MVA = Utenfor / OUTSIDE).
+                        skal opprettes som <strong>utkast</strong> i Fiken (MVA: Utenfor – kretsen er ikke MVA-pliktig).
                     </span>
                 </label>
             </div>

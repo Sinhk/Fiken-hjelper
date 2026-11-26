@@ -45,6 +45,18 @@ h1:focus {
     border-color: var(--fh-primary-hover);
 }
 
+.btn-outline-secondary {
+    color: var(--fh-text);
+    border-color: #8a9991;
+}
+
+.btn-outline-secondary:hover,
+.btn-outline-secondary:focus-visible {
+    color: var(--fh-text);
+    background-color: #edf3ef;
+    border-color: #6f7f77;
+}
+
 .fh-stack {
     display: flex;
     flex-direction: column;
@@ -75,6 +87,59 @@ h1:focus {
     font-weight: 650;
 }
 
+/* Sidetittel (h1) har samme størrelse i alle sidene, også de som bruker MudBlazor (Typo.h5). */
+.fh-card h1,
+.fh-card-header h1 {
+    margin: 0 0 0.75rem;
+    font-size: 1.5rem;
+    font-weight: 650;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+.fh-card-header h1 {
+    margin: 0;
+}
+
+.fh-card h2 {
+    font-size: 1.15rem;
+    font-weight: 650;
+}
+
+.fh-card h3 {
+    font-size: 1.05rem;
+    font-weight: 650;
+}
+
+/* MudBlazor-kort og -knapper skal se ut som resten av appen */
+.mud-paper-outlined {
+    border-color: var(--fh-border);
+    border-radius: 0.625rem;
+}
+
+/* Skjult tekst (.visually-hidden, position: absolute) i en tabell som scroller sideveis, skal klippes
+   av tabellbeholderen i stedet for å gi sidescroll på hele siden. */
+.mud-table-container {
+    position: relative;
+}
+
+.mud-button-root {
+    min-block-size: 38px;
+}
+
+.mud-button-root.mud-button-filled {
+    box-shadow: none;
+}
+
+.mud-button-root.mud-button-outlined.mud-button-outlined-default {
+    color: var(--fh-text);
+    border-color: #8a9991;
+}
+
+.mud-button-root.mud-button-outlined.mud-button-outlined-default:hover {
+    background-color: #edf3ef;
+}
+
 .fh-grid-2 {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -85,6 +150,45 @@ h1:focus {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 1rem;
+}
+
+.fh-tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+    gap: 1rem;
+}
+
+.fh-tool-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    min-inline-size: 0;
+    padding: 1rem;
+    border: 1px solid var(--fh-border);
+    border-radius: 0.5rem;
+    background-color: #fcfdfc;
+}
+
+.fh-tool-card p {
+    margin: 0;
+    flex: 1 1 auto;
+    color: var(--fh-muted);
+    overflow-wrap: anywhere;
+}
+
+.fh-tool-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    inline-size: 100%;
+}
+
+.fh-tool-head h3 {
+    margin: 0;
+    font-size: 1.05rem;
 }
 
 .fh-kpi-grid {
@@ -111,6 +215,7 @@ h1:focus {
     display: block;
     font-size: 1.25rem;
     font-weight: 700;
+    overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
 }
 
@@ -244,7 +349,11 @@ h1:focus {
     font-size: 0.8rem;
     font-weight: 600;
     line-height: 1.3;
-    white-space: nowrap;
+    /* Lange tekster (f.eks. «Eksakt navnetreff → …») skal brytes i stedet for å gi sidescroll. */
+    white-space: normal;
+    max-inline-size: 100%;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
 }
 
 .fh-badge-ok {
@@ -412,7 +521,7 @@ h1:focus {
     --label-2: "Inkluder";
     --label-3: "Aktive deltakere";
     --label-4: "Oppdaget sats";
-    --label-5: "Pris (NOK)";
+    --label-5: "Pris (kr)";
 }
 
 .participants-table {
@@ -421,14 +530,14 @@ h1:focus {
     --label-4: "Speidergruppe";
     --label-5: "Kategori";
     --label-6: "Status";
-    --label-7: "Pris (NOK)";
+    --label-7: "Pris (kr)";
     --label-8: "Svar / detaljer";
 }
 
 .district-covered-table {
     --label-2: "Speidergruppe";
     --label-3: "Kategori";
-    --label-4: "Beløp (NOK)";
+    --label-4: "Beløp (kr)";
 }
 
 .mappings-table {
@@ -597,6 +706,52 @@ h1:focus {
 .budget-table td,
 .budget-table th {
     white-space: nowrap;
+}
+
+/* Første kolonne (postnavn) blir stående når tabellen scrolles sideveis */
+.budget-table tbody tr:not(:has(.budget-detail)) > td:first-child,
+.budget-table thead tr:first-child > th:first-child,
+.budget-table tfoot th:first-child {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    background-color: #fff;
+    box-shadow: 1px 0 0 var(--fh-border);
+}
+
+/* Postnavn kan brytes, så den fastholdte kolonnen ikke tar hele bredden på mobil */
+.budget-table tbody tr:not(:has(.budget-detail)) > td:first-child,
+.budget-table thead tr:first-child > th:first-child,
+.budget-table tfoot th:first-child {
+    white-space: normal;
+    min-inline-size: 9rem;
+    max-inline-size: 14rem;
+}
+
+.budget-table td:first-child .mud-button-root {
+    white-space: normal;
+    text-align: start;
+    block-size: auto;
+    min-block-size: 38px;
+}
+
+@media (max-width: 599px) {
+    .budget-table tbody tr:not(:has(.budget-detail)) > td:first-child,
+    .budget-table thead tr:first-child > th:first-child,
+    .budget-table tfoot th:first-child {
+        min-inline-size: 8rem;
+        max-inline-size: 10.5rem;
+    }
+}
+
+.budget-table tbody tr:hover > td:first-child {
+    background-color: #f7faf8;
+}
+
+.budget-table .budget-pct {
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: var(--fh-muted);
 }
 
 .budget-table .budget-detail {
