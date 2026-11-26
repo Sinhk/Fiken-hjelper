@@ -25,6 +25,28 @@ public sealed class ProjectSplitTests
         return line;
     }
 
+    [Theory]
+    [InlineData]
+    [InlineData(100)]
+    public void DescribeShareProblem_IsNull_ForZeroOrOneLine(params int[] shares) =>
+        Assert.Null(ProjectSplits.DescribeShareProblem([.. shares.Select(s => (decimal?)s)]));
+
+    [Fact]
+    public void DescribeShareProblem_IsNull_WhenSharesSumTo100() =>
+        Assert.Null(ProjectSplits.DescribeShareProblem([33.33m, 33.33m, 33.34m]));
+
+    [Fact]
+    public void DescribeShareProblem_ReportsTotal_WhenNot100() =>
+        Assert.Equal("Andelene summerer til 90 %. De må bli 100 %.", ProjectSplits.DescribeShareProblem([60m, 30m]));
+
+    [Fact]
+    public void DescribeShareProblem_ReportsMissingOrZeroShare()
+    {
+        const string expected = "Fyll inn en andel større enn 0 for alle postene.";
+        Assert.Equal(expected, ProjectSplits.DescribeShareProblem([100m, null]));
+        Assert.Equal(expected, ProjectSplits.DescribeShareProblem([100m, 0m]));
+    }
+
     [Fact]
     public void Build_SplitsProjectResultByShares_AndSumsExactly()
     {

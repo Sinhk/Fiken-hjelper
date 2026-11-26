@@ -29,6 +29,10 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
     private int selectedYear;
     private int newYear = DateTime.Today.Year + 1;
     private bool isDirty;
+
+    // Økes hver gang ulagrede endringer forkastes og budsjettet lastes på nytt fra filen. «Angre» som ble
+    // tilbudt før det, avvises, så en slettet post ikke settes inn igjen i et budsjett der den finnes fra før.
+    private int discardGeneration;
     private bool isSaving;
     private bool isConfirming;
     private bool storeUnavailable;
@@ -145,6 +149,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
     private async Task ReloadStoreAsync()
     {
         errorMessage = null;
+        discardGeneration++;
         if (!await LoadStoreAsync())
         {
             return;
@@ -246,6 +251,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
         if (isDirty)
         {
+            discardGeneration++;
             if (!await LoadStoreAsync())
             {
                 return;
@@ -299,10 +305,52 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private void RemoveLine(BudgetLine line)
     {
-        if (current?.Lines.Remove(line) == true)
+        if (current is null)
         {
-            MarkDirty();
+            return;
         }
+
+        var index = current.Lines.IndexOf(line);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var year = current.Year;
+        current.Lines.RemoveAt(index);
+        MarkDirty();
+
+        var label = string.IsNullOrWhiteSpace(line.Name) ? "uten navn" : $"«{line.Name}»";
+        var generation = discardGeneration;
+        AddUndoSnackbar($"Slettet posten {label}.", () =>
+            BudgetUndo.RestoreLine(data, year, index, line, discardedSince: generation != discardGeneration));
+    }
+
+    /// <summary>
+    /// Viser en melding med «Angre». Brukes for slettinger som ellers ikke kan hentes tilbake før man har lagret.
+    /// <paramref name="undo"/> returnerer null når angringen ble utført, ellers en feilmelding.
+    /// </summary>
+    private void AddUndoSnackbar(string message, Func<string?> undo)
+    {
+        Snackbar.Add(message, Severity.Info, config =>
+        {
+            config.Action = "Angre";
+            config.ActionVariant = Variant.Filled;
+            config.VisibleStateDuration = 8000;
+            config.OnClick = _ =>
+            {
+                if (undo() is { } error)
+                {
+                    Snackbar.Add(error, Severity.Warning);
+                }
+                else
+                {
+                    MarkDirty();
+                }
+
+                return InvokeAsync(StateHasChanged);
+            };
+        });
     }
 
     private void Move(BudgetLine line, int delta)
@@ -429,9 +477,34 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
 
     private void RemoveProject(BudgetLine line, long id)
     {
-        line.ProjectIds.Remove(id);
+        var index = line.ProjectIds.IndexOf(id);
+        if (index < 0)
+        {
+            return;
+        }
+
+        if (current is null)
+        {
+            return;
+        }
+
+        var year = current.Year;
+        var share = line.ShareOf(id);
+        var otherLines = current.Lines
+            .Where(l => !ReferenceEquals(l, line) && l.ProjectIds.Contains(id))
+            .Select(l => l.Name.Trim())
+            .ToList();
+        line.ProjectIds.RemoveAt(index);
         line.SetShare(id, null);
         MarkDirty();
+
+        var generation = discardGeneration;
+        var projectName = ProjectName(id);
+        AddUndoSnackbar($"Fjernet koblingen til «{projectName}» fra «{line.Name}».", () =>
+            BudgetUndo.RestoreProjectLink(
+                data, year, line, id, index, share, otherLines,
+                discardedSince: generation != discardGeneration,
+                projectName));
     }
 
     /// <summary>Andelen som tekst når prosjektet er fordelt på flere poster, ellers null.</summary>
@@ -692,6 +765,7 @@ public sealed partial class BudgetSetup : ComponentBase, IDisposable
             saved.Years.AddRange(chosen);
             await BudgetStore.SaveAsync(saved, disposeCts.Token);
             data = await BudgetStore.LoadAsync(disposeCts.Token);
+            discardGeneration++;
             isDirty = false;
             importPreview = null;
             SelectYearCore(chosen.Max(y => y.Year));

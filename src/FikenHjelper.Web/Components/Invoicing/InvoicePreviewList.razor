@@ -29,6 +29,20 @@
                 <span class="fh-kpi-value">@Plan.ZeroAmountDraftCount</span>
             </div>
         }
+        @if (Plan.NegativeAmountDraftCount > 0)
+        {
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">Ikke opprettet – negativ sum</span>
+                <span class="fh-kpi-value">@Plan.NegativeAmountDraftCount</span>
+            </div>
+        }
+        @if (Plan.DuplicateDraftCount > 0)
+        {
+            <div class="fh-kpi">
+                <span class="fh-kpi-label">Finnes allerede i Fiken</span>
+                <span class="fh-kpi-value">@Plan.DuplicateDraftCount</span>
+            </div>
+        }
     </div>
 
     @if (Plan.GlobalWarnings.Count > 0)
@@ -106,9 +120,10 @@
     @foreach (var draft in Plan.Drafts)
     {
         var isZeroAmountOnly = draft.IsZeroAmount && !draft.HasMissingPrice;
+        var isNegativeOnly = draft.IsNegativeAmount && !draft.HasMissingPrice;
         var cardStatus = draft.DuplicateDraftExists
             ? "duplicate"
-            : (!draft.SelectedContactId.HasValue || draft.HasMissingPrice || isZeroAmountOnly ? "unmatched" : "ok");
+            : (!draft.SelectedContactId.HasValue || draft.HasMissingPrice || isZeroAmountOnly || isNegativeOnly ? "unmatched" : "ok");
         var customerSelectId = $"cust-{draft.DraftKey}";
         var createOpen = openCreateDraftKeys.Contains(draft.DraftKey);
 
@@ -134,9 +149,13 @@
                         {
                             <span class="fh-badge fh-badge-warn">Ikke opprettet – 0 kr</span>
                         }
+                        @if (isNegativeOnly)
+                        {
+                            <span class="fh-badge fh-badge-danger">Negativ sum – opprettes ikke</span>
+                        }
                         @if (draft.DuplicateDraftExists)
                         {
-                            <span class="fh-badge fh-badge-danger">Finnes allerede i Fiken-utkast</span>
+                            <span class="fh-badge fh-badge-danger">Finnes allerede som utkast i Fiken – opprettes ikke</span>
                         }
                     </div>
                 </div>
@@ -163,7 +182,8 @@
                 </div>
 
                 <div class="fh-actions align-self-end">
-                    @if (!draft.SelectedContactId.HasValue && draft.SuggestedContactId.HasValue)
+                    @* Demodata har oppdiktede kunde-ID-er: de skal verken velges som forslag eller lagres som kobling. *@
+                    @if (!IsDemoData && !draft.SelectedContactId.HasValue && draft.SuggestedContactId.HasValue)
                     {
                         <button type="button"
                                 class="btn btn-outline-primary btn-sm"
@@ -173,12 +193,12 @@
                         </button>
                     }
 
-                    @if (draft.SelectedContactId.HasValue && IsGroupDraft(draft))
+                    @if (!IsDemoData && draft.SelectedContactId.HasValue && IsGroupDraft(draft))
                     {
                         <button type="button"
                                 class="btn btn-outline-secondary btn-sm"
                                 disabled="@IsSubmitting"
-                                @onclick="() => OnRememberGroupMapping.InvokeAsync((draft.RecipientKey, draft.SelectedContactId.Value))">
+                                @onclick="() => OnRememberGroupMapping.InvokeAsync((draft.DraftKey, draft.RecipientKey, draft.SelectedContactId.Value))">
                             Husk kobling for gruppe
                         </button>
                     }
@@ -305,6 +325,14 @@
                         {
                             <span class="fh-hint d-block">@Plan.ZeroAmountDraftCount utkast på 0 kr opprettes ikke.</span>
                         }
+                        @if (Plan.NegativeAmountDraftCount > 0)
+                        {
+                            <span class="fh-hint d-block">@Plan.NegativeAmountDraftCount utkast med negativ sum opprettes ikke.</span>
+                        }
+                        @if (Plan.DuplicateDraftCount > 0)
+                        {
+                            <span class="fh-hint d-block">@Plan.DuplicateDraftCount utkast finnes allerede i Fiken og opprettes ikke på nytt.</span>
+                        }
                     </span>
                 </label>
             </div>
@@ -381,6 +409,9 @@
     [Parameter, EditorRequired] public InvoicePlanResult Plan { get; set; } = default!;
     [Parameter, EditorRequired] public IReadOnlyList<FikenContact> FikenCustomers { get; set; } = [];
     [Parameter] public bool IsSubmitting { get; set; }
+
+    /// <summary>Demodata: kunde-ID-ene er oppdiktet, så forslag og «Husk kobling» skjules.</summary>
+    [Parameter] public bool IsDemoData { get; set; }
     [Parameter, EditorRequired] public IReadOnlyList<DraftCreationItemResult> CreationResults { get; set; } = [];
 
     /// <summary>Why drafts cannot be created right now (not connected, no company, demo data), or null.</summary>
@@ -394,7 +425,7 @@
     [Parameter] public CustomerCreationMessage? CustomerMessage { get; set; }
 
     [Parameter] public EventCallback<(string DraftKey, long? ContactId)> OnManualCustomerSelected { get; set; }
-    [Parameter] public EventCallback<(string RecipientName, long ContactId)> OnRememberGroupMapping { get; set; }
+    [Parameter] public EventCallback<(string DraftKey, string RecipientName, long ContactId)> OnRememberGroupMapping { get; set; }
     [Parameter] public EventCallback<(string DraftKey, string Name, string? Email)> OnCreateFikenCustomer { get; set; }
     [Parameter] public EventCallback OnCreateDraftsRequested { get; set; }
 
@@ -462,7 +493,7 @@
 
         if (ReadyDraftCount == 0)
         {
-            validationError = "Ingen utkast er klare for opprettelse. Koble minst én mottaker til en kunde i Fiken først.";
+            validationError = "Ingen utkast er klare for opprettelse. Koble minst én mottaker til en kunde i Fiken, og sjekk at utkastene ikke allerede finnes i Fiken.";
             return;
         }
 

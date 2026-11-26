@@ -41,6 +41,7 @@
                                     <td>
                                         <MudNumericField T="decimal?" @bind-Value="r.Share" Min="0" Max="100" HideSpinButtons
                                                          Culture="Nb" Format="0.##" Margin="Margin.Dense" Class="fh-num-input"
+                                                         Immediate OnKeyDown="HandleKeyDown"
                                                          aria-label="@($"Andel for {r.Line.Name}")" />
                                     </td>
                                     <td class="fh-num-col tabular-nums">
@@ -86,11 +87,9 @@
                 }
             </MudStack>
 
-            @if (rows.Count > 1 && !IsValid)
+            @if (ShareProblem is { } problem)
             {
-                <MudAlert Severity="Severity.Warning" Dense>
-                    @(rows.Any(r => r.Share is null) ? "Fyll inn andel for alle postene." : $"Andelene summerer til {Total.ToString("0.##", Nb)} %. De må bli 100 %.")
-                </MudAlert>
+                <MudAlert Severity="Severity.Warning" Dense>@problem</MudAlert>
             }
         </MudStack>
     </DialogContent>
@@ -132,9 +131,9 @@
 
     private decimal Total => rows.Sum(r => r.Share ?? 0m);
 
-    private bool IsValid =>
-        rows.Count <= 1
-        || (rows.All(r => r.Share is > 0) && Math.Abs(Total - 100m) <= ProjectSplits.Tolerance);
+    private string? ShareProblem => ProjectSplits.DescribeShareProblem(rows.Select(r => r.Share).ToList());
+
+    private bool IsValid => ShareProblem is null;
 
     private void AddLine(BudgetLine? line)
     {
@@ -160,4 +159,13 @@
     }
 
     private void Submit() => MudDialog.Close(DialogResult.Ok(rows));
+
+    /// <summary>Enter i et andelsfelt lagrer fordelingen når den går opp. Ellers vises meldingen under tabellen.</summary>
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or "NumpadEnter" && IsValid)
+        {
+            Submit();
+        }
+    }
 }

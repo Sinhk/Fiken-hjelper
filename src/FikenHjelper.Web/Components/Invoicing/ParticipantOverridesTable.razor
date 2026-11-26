@@ -36,7 +36,6 @@
                     <th>Kategori</th>
                     <th>Status</th>
                     <th class="fh-num-col">Pris (kr)</th>
-                    <th>Svar / detaljer</th>
                 </tr>
             </thead>
             <tbody>
@@ -171,22 +170,12 @@
                                    placeholder="@effectivePrice.ToString("0.##", CultureInfo.InvariantCulture)"
                                    @onchange="(e) => HandleCustomPriceChanged(participant.ParticipantKey, e)" />
                         </td>
-                        <td>
-                            @if (participant.Answers.Count == 0)
-                            {
-                                <span class="fh-hint">–</span>
-                            }
-                            else
-                            {
-                                @string.Join(" | ", participant.Answers.Select(kv => $"{kv.Key}: {kv.Value}"))
-                            }
-                        </td>
                     </tr>
                 }
                 @if (FilteredParticipants.Count == 0)
                 {
                     <tr>
-                        <td colspan="8" class="fh-hint">
+                        <td colspan="7" class="fh-hint">
                             @(EventData.Participants.Count == 0
                                 ? "Arrangementet har ingen deltakere."
                                 : "Ingen treff. Prøv et annet søk eller fjern filteret.")

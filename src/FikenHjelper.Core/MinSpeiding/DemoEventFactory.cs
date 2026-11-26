@@ -1,7 +1,26 @@
+using FikenHjelper.Core.Fiken;
+
 namespace FikenHjelper.Core.MinSpeiding;
 
 public static class DemoEventFactory
 {
+    /// <summary>
+    /// Oppdiktede Fiken-kunder for demodata. ID-ene finnes ikke i Fiken og skal aldri brukes i en ekte kjøring.
+    /// </summary>
+    public static IReadOnlyList<FikenContact> DemoCustomers { get; } =
+    [
+        new(1001, "Molde speidergruppe", "kasserer@molde.example.no", null, 1, null, true, false, false, 14, null),
+        new(1002, "1. Kristiansund speidergruppe", "kasserer@1ksund.example.no", null, 2, null, true, false, false, 14, null),
+        new(1003, "Aukra", "aukra@example.no", null, 3, null, true, false, false, 14, null)
+    ];
+
+    /// <summary>
+    /// Kundene planen skal bygges med. Demodata bruker de oppdiktede kundene når foretaket ikke har egne
+    /// kunder (opprettelse er uansett sperret for demodata). Ekte data bruker alltid bare kundene fra Fiken.
+    /// </summary>
+    public static IReadOnlyList<FikenContact> CustomersForPlan(IReadOnlyList<FikenContact> fikenCustomers, bool isDemoData) =>
+        isDemoData && fikenCustomers.Count == 0 ? DemoCustomers : fikenCustomers;
+
     public static MinSpeidingEventLoadResult CreateDemoEvent()
     {
         var feeLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

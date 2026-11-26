@@ -48,7 +48,34 @@ public sealed class DraftCreationTests
     {
         var draft = Draft(totalOre, contactId: 1001);
         Assert.Equal(expectedReady, draft.IsReadyToCreate);
-        Assert.Equal(!expectedReady, draft.IsZeroAmount);
+        Assert.Equal(totalOre == 0, draft.IsZeroAmount);
+        Assert.Equal(totalOre < 0, draft.IsNegativeAmount);
+    }
+
+    [Fact]
+    public void NegativeTotal_IsCountedSeparatelyFromZero()
+    {
+        var plan = Plan(
+            Draft(-5000, contactId: 1001, key: "group:neg"),
+            Draft(0, contactId: 1002, key: "group:zero"),
+            Draft(-100, contactId: 1003, key: "group:neg-missing", hasMissingPrice: true));
+
+        Assert.Empty(plan.ReadyDrafts);
+        Assert.Equal(1, plan.ZeroAmountDraftCount);
+        Assert.Equal(1, plan.NegativeAmountDraftCount);
+    }
+
+    [Fact]
+    public void DuplicateDraft_IsNotReady_AndIsCounted()
+    {
+        var duplicate = Draft(45000, contactId: 1001, key: "group:dup", duplicateExists: true);
+        var fresh = Draft(25000, contactId: 1002, key: "group:new");
+        var plan = Plan(duplicate, fresh);
+
+        Assert.False(duplicate.IsReadyToCreate);
+        Assert.Equal(["group:new"], plan.ReadyDrafts.Select(d => d.DraftKey));
+        Assert.Equal(250m, plan.ReadyTotalNok);
+        Assert.Equal(1, plan.DuplicateDraftCount);
     }
 
     [Fact]
@@ -76,7 +103,23 @@ public sealed class DraftCreationTests
         Assert.Equal(1, plan.ZeroAmountDraftCount);
     }
 
-    private static PlannedInvoiceDraft Draft(long totalOre, long? contactId, string key = "group:test", bool hasMissingPrice = false)
+    private static InvoicePlanResult Plan(params PlannedInvoiceDraft[] drafts) => new(
+        Drafts: drafts,
+        IncludedParticipantCount: drafts.Length,
+        ExcludedParticipantCount: 0,
+        TotalOre: drafts.Sum(d => d.TotalOre),
+        UnmatchedDraftCount: drafts.Count(d => !d.SelectedContactId.HasValue),
+        DuplicateWarningCount: drafts.Count(d => d.DuplicateDraftExists),
+        GlobalWarnings: [],
+        DistrictCoveredParticipants: [],
+        DistrictCoveredTotalOre: 0);
+
+    private static PlannedInvoiceDraft Draft(
+        long totalOre,
+        long? contactId,
+        string key = "group:test",
+        bool hasMissingPrice = false,
+        bool duplicateExists = false)
         => new(
             DraftKey: key,
             RecipientKey: key,
@@ -90,7 +133,7 @@ public sealed class DraftCreationTests
             Lines: [new PlannedInvoiceLine("Deltaker 900001", 1, totalOre / 100m, totalOre, totalOre, null)],
             ParticipantKeys: ["900001"],
             TotalOre: totalOre,
-            DuplicateDraftExists: false,
+            DuplicateDraftExists: duplicateExists,
             Warnings: [],
             HasMissingPrice: hasMissingPrice);
 }

@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Config;
 using FikenHjelper.Core.Fiken;
+using FikenHjelper.Core.Invoicing;
 using Microsoft.AspNetCore.Components;
 
 namespace FikenHjelper.Web.Components.Pages;
@@ -37,6 +38,9 @@ public sealed partial class Settings : ComponentBase, IAsyncDisposable
     private bool isSaving;
     private string? statusMessage;
     private bool statusIsError;
+    private string? confirmingRemoveGroup;
+    private string? mappingMessage;
+    private bool isRemovingMapping;
 
     private string CallbackUri => $"{Navigation.BaseUri.TrimEnd('/')}/fiken/oauth/callback";
 
@@ -266,10 +270,39 @@ public sealed partial class Settings : ComponentBase, IAsyncDisposable
         }
     }
 
+    private void RequestRemoveGroupMapping(string groupName)
+    {
+        mappingMessage = null;
+        confirmingRemoveGroup = groupName;
+    }
+
+    private void CancelRemoveGroupMapping() => confirmingRemoveGroup = null;
+
     private async Task RemoveGroupMappingAsync(string groupName)
     {
-        await ConfigStore.RemoveGroupMappingAsync(groupName);
-        mappings = await ConfigStore.LoadMappingsAsync();
+        if (isRemovingMapping)
+        {
+            return;
+        }
+
+        isRemovingMapping = true;
+        mappingMessage = null;
+        try
+        {
+            await ConfigStore.RemoveGroupMappingAsync(groupName);
+            mappings = await ConfigStore.LoadMappingsAsync();
+            confirmingRemoveGroup = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to remove group mapping for {Group}", groupName);
+            confirmingRemoveGroup = null;
+            mappingMessage = $"Kunne ikke fjerne koblingen for «{groupName}». Sjekk at datamappen har skrivetilgang og prøv igjen.";
+        }
+        finally
+        {
+            isRemovingMapping = false;
+        }
     }
 
     private CancellationToken ResetCancellationToken()
@@ -302,7 +335,7 @@ public sealed partial class Settings : ComponentBase, IAsyncDisposable
         [Required(ErrorMessage = "Standard inntektskonto må fylles ut.")]
         public string DefaultIncomeAccount { get; set; } = "3200";
 
-        [Range(0, 365, ErrorMessage = "Forfallsfrist må være mellom 0 og 365 dager.")]
+        [Range(DueDays.Min, DueDays.Max, ErrorMessage = DueDays.RangeMessage)]
         public int DefaultDaysUntilDueDate { get; set; } = 14;
 
         public string DefaultBankAccountNumber { get; set; } = string.Empty;

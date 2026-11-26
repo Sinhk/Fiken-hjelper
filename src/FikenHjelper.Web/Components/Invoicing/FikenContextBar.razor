@@ -104,12 +104,21 @@
 
         <div class="fh-field">
             <label for="ctx-due-days">Dager til forfall</label>
-            <input id="ctx-due-days"
+            @* @key tvinger inputen til å tegnes på nytt når en ugyldig verdi må rulles tilbake til den som gjelder. *@
+            <input @key="dueDaysResetKey"
+                   id="ctx-due-days"
                    type="number"
-                   min="0"
-                   max="365"
+                   min="@DueDays.Min"
+                   max="@DueDays.Max"
+                   step="1"
                    value="@DaysUntilDueDate"
+                   aria-invalid="@(dueDaysError is not null ? "true" : null)"
+                   aria-describedby="@(dueDaysError is not null ? "ctx-due-days-error" : null)"
                    @onchange="HandleDueDaysChanged" />
+            @if (dueDaysError is not null)
+            {
+                <div id="ctx-due-days-error" class="validation-message" role="alert">@dueDaysError</div>
+            }
         </div>
 
         <div class="fh-field">
@@ -202,12 +211,32 @@
         return Task.CompletedTask;
     }
 
+    private string? dueDaysError;
+    private int dueDaysResetKey;
+    private int? lastDaysUntilDueDate;
+
+    protected override void OnParametersSet()
+    {
+        // Feilmeldingen nevner verdien som beholdes. Endres verdien utenfra (f.eks. ved bytte av arrangement),
+        // er meldingen utdatert.
+        if (lastDaysUntilDueDate != DaysUntilDueDate)
+        {
+            dueDaysError = null;
+            lastDaysUntilDueDate = DaysUntilDueDate;
+        }
+    }
+
     private Task HandleDueDaysChanged(ChangeEventArgs e)
     {
-        if (int.TryParse(e.Value?.ToString(), out var days))
+        if (DueDays.TryParse(e.Value?.ToString(), out var days))
         {
-            return OnDaysUntilDueDateChanged.InvokeAsync(Math.Clamp(days, 0, 365));
+            dueDaysError = null;
+            return OnDaysUntilDueDateChanged.InvokeAsync(days);
         }
+
+        // Verdien beholdes som den var, og feltet settes tilbake så det viser det som faktisk gjelder.
+        dueDaysError = $"{DueDays.RangeMessage} Beholder {DaysUntilDueDate} dager.";
+        dueDaysResetKey++;
         return Task.CompletedTask;
     }
 

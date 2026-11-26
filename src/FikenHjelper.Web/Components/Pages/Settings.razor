@@ -200,7 +200,7 @@
 
                     <div class="fh-field">
                         <label for="fiken-due-days">Standard forfallsfrist (dager)</label>
-                        <InputNumber id="fiken-due-days" @bind-Value="formModel.DefaultDaysUntilDueDate" />
+                        <InputNumber id="fiken-due-days" @bind-Value="formModel.DefaultDaysUntilDueDate" ParsingErrorMessage="@DueDays.RangeMessage" />
                     </div>
 
                     <div class="fh-field">
@@ -242,6 +242,13 @@
         }
         else
         {
+            @if (!string.IsNullOrWhiteSpace(mappingMessage))
+            {
+                <div class="fh-alert fh-alert-danger mb-3" role="alert">@mappingMessage</div>
+            }
+            <p class="fh-hint">
+                Koblingen viser Fiken-kundens ID. Navnet på kunden ser du i Fiken, eller i forhåndsvisningen under Arrangementsfakturering.
+            </p>
             <div tabindex="0" role="region" aria-labelledby="mappings-caption" class="table-wrapper">
                 <table class="mappings-table">
                     <caption id="mappings-caption">Lagrede kundekoblinger per speidergruppe</caption>
@@ -259,11 +266,34 @@
                                 <th scope="row">@entry.Key</th>
                                 <td class="fh-num-col">@entry.Value</td>
                                 <td>
-                                    <button type="button"
-                                            class="btn btn-outline-danger btn-sm"
-                                            @onclick="() => RemoveGroupMappingAsync(entry.Key)">
-                                        Fjern
-                                    </button>
+                                    @if (string.Equals(confirmingRemoveGroup, entry.Key, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="fh-actions" role="group" aria-label="Bekreft fjerning av koblingen for @entry.Key">
+                                            <span>Fjerne koblingen?</span>
+                                            <button type="button"
+                                                    class="btn btn-danger btn-sm"
+                                                    disabled="@isRemovingMapping"
+                                                    @onclick="() => RemoveGroupMappingAsync(entry.Key)">
+                                                Ja, fjern
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-outline-secondary btn-sm"
+                                                    disabled="@isRemovingMapping"
+                                                    @onclick="CancelRemoveGroupMapping">
+                                                Avbryt
+                                            </button>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <button type="button"
+                                                class="btn btn-outline-danger btn-sm"
+                                                disabled="@isRemovingMapping"
+                                                aria-label="Fjern koblingen for @entry.Key"
+                                                @onclick="() => RequestRemoveGroupMapping(entry.Key)">
+                                            Fjern
+                                        </button>
+                                    }
                                 </td>
                             </tr>
                         }
