@@ -58,7 +58,7 @@ public static partial class BudgetWorkbookImporter
         ArgumentNullException.ThrowIfNull(fikenProjects);
 
         using var sanitized = RemoveInvalidRelationships(xlsx);
-        using var workbook = new XLWorkbook(sanitized);
+        using var workbook = LoadWorkbook(sanitized);
         var warnings = new List<string>();
 
         var (overview, headerRow, budgetCols, actualCols) = FindOverview(workbook)
@@ -500,6 +500,25 @@ public static partial class BudgetWorkbookImporter
             && parts[0][0] != '0'
             && parts.All(p => p.Length > 0 && p.All(char.IsAsciiDigit))
             && parts.Skip(1).All(p => p.Length == 3);
+    }
+
+    /// <summary>
+    /// Laster arbeidsboken med invariant kultur. ClosedXML gjør om delte formler til R1C1 med
+    /// gjeldende kultur, og på Linux (ICU) er minustegnet i nb-NO U+2212. Da feiler lesingen av
+    /// f.eks. «RC[−1]-RC[−2]». Verdiene leses uansett kulturuavhengig etterpå.
+    /// </summary>
+    private static XLWorkbook LoadWorkbook(Stream xlsx)
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            return new XLWorkbook(xlsx);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 
     /// <summary>
