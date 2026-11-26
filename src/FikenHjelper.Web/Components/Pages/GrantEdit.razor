@@ -9,6 +9,7 @@
 <MudProviders />
 <NavigationLock ConfirmExternalNavigation="isDirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
+<CascadingValue Value="inputErrors" IsFixed>
 <MudStack Spacing="4">
     <MudPaper Class="pa-4" Outlined>
         <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
@@ -34,7 +35,7 @@
             </MudStack>
         </MudStack>
 
-        @if (isLoading)
+        @if (IsLoading)
         {
             <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
         }
@@ -48,7 +49,7 @@
         {
             <MudAlert Severity="Severity.Warning" Class="mb-3">@fikenMessage</MudAlert>
         }
-        else if (RendererInfo.IsInteractive && !fiken.HasCompany && grant is not null)
+        else if (RendererInfo.IsInteractive && fikenLoaded && !IsLoading && !fiken.HasCompany && grant is not null)
         {
             <MudAlert Severity="Severity.Warning" Class="mb-3">
                 Ingen Fiken-foretak er valgt. Du kan fylle ut tilskuddet og registrere manuelle utbetalinger og manuell bruk,
@@ -177,7 +178,7 @@
                 }
                 else
                 {
-                    <MudSimpleTable Dense Style="max-width: 60rem">
+                    <MudSimpleTable Dense Style="max-width: 60rem" Class="fh-table">
                         <thead>
                             <tr>
                                 <th>Prosjekt</th>
@@ -196,7 +197,7 @@
                                     <td>
                                         <DecimalField Value="grant.ShareOf(projectId)" ValueChanged="v => SetShareAsync(projectId, v)"
                                                       Min="0.01m" Max="100m" RangeMessage="Andelen må være mellom 0 og 100 %."
-                                                      Placeholder="100" Margin="Margin.Dense" Style="max-width: 9rem"
+                                                      Placeholder="100" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 9rem"
                                                       Adornment="Adornment.End" AdornmentText="%"
                                                       aria-label="@($"Andel i prosent for {ProjectName(projectId)}")" />
                                         @if (others.Count > 0)
@@ -237,7 +238,7 @@
                 @foreach (var range in grant.AccountRanges)
                 {
                     var r = range;
-                    <MudStack Row AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                    <MudStack Row AlignItems="AlignItems.Center" Spacing="2" Class="mb-1" @key="r">
                         <MudNumericField T="int" Label="Fra konto" Value="r.From" ValueChanged="v => SetAsync(() => r.From = v)" HideSpinButtons
                                          Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 9rem" Min="0" Max="9999" />
                         <MudNumericField T="int" Label="Til konto" Value="r.To" ValueChanged="v => SetAsync(() => r.To = v)" HideSpinButtons
@@ -253,7 +254,7 @@
                 @foreach (var use in grant.ManualUses)
                 {
                     var u = use;
-                    <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                    <MudStack Row Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1" @key="u">
                         <DateOnlyPicker Label="Dato" Value="u.Date" ValueChanged="v => SetAsync(() => u.Date = v)" Style="max-width: 11rem" />
                         <DecimalField Value="u.Amount" ValueChanged="v => SetAsync(() => u.Amount = v ?? 0m)" AllowEmpty="false" Grouped
                                       Label="Beløp (kr)" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 10rem" />
@@ -275,7 +276,7 @@
                     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add"
                                OnClick="() => SetAsync(() => grant.Payments.Add(new GrantPayment()))">Legg til manuell</MudButton>
                     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Search" OnClick="FindPaymentsAsync"
-                               Disabled="@(!fiken.HasCompany || fiken.Entries is null || isLoading)">Finn utbetaling i Fiken</MudButton>
+                               Disabled="@(!fiken.HasCompany || fiken.Entries is null || IsLoading)">Finn utbetaling i Fiken</MudButton>
                 </MudStack>
             </MudStack>
             @if (grant.Payments.Count == 0)
@@ -284,7 +285,7 @@
             }
             else
             {
-                <MudSimpleTable Dense Style="overflow-x: auto">
+                <MudSimpleTable Dense Style="overflow-x: auto" Class="fh-table">
                     <thead>
                         <tr>
                             <th>Kilde</th>
@@ -299,7 +300,7 @@
                         @for (var i = 0; i < grant.Payments.Count; i++)
                         {
                             var payment = grant.Payments[i];
-                            var rep = report is not null && i < report.Payments.Count ? report.Payments[i] : null;
+                            var rep = report?.Payments.FirstOrDefault(r => ReferenceEquals(r.Payment, payment));
                             <tr @key="payment">
                                 @if (payment.IsLinked)
                                 {
@@ -317,7 +318,7 @@
                                             <MudText Typo="Typo.caption" Color="Color.Secondary">Mangler Fiken-data. Beløpet hentes fra Fiken.</MudText>
                                         }
                                     </td>
-                                    <td class="fh-num-col tabular-nums">@Kr(rep?.Amount ?? 0m)</td>
+                                    <td class="fh-num-col tabular-nums">@(rep is null || rep.Missing || fiken.Entries is null ? "–" : Kr(rep.Amount))</td>
                                 }
                                 else
                                 {
@@ -426,12 +427,13 @@
         }
     }
 </MudStack>
+</CascadingValue>
 </PageErrorBoundary>
 
 @code {
     private RenderFragment AccountTable(IReadOnlyList<GrantAccountSum> accounts, string kind, decimal manual) => __builder =>
     {
-        <MudSimpleTable Dense Hover Style="overflow-x: auto">
+        <MudSimpleTable Dense Hover Style="overflow-x: auto" Class="fh-table">
             <thead>
                 <tr>
                     <th>Konto</th>

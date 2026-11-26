@@ -1,3 +1,4 @@
+using System.Net;
 using FikenHjelper.Core.Budgeting;
 using FikenHjelper.Core.Grants;
 
@@ -79,6 +80,150 @@ public sealed class GrantServiceTests : IDisposable
         Assert.Equal(before + 1, _api.Calls.Count(c => c.PathAndQuery.Contains("journalEntries")));
         Assert.Equal([2026, 2027], data.Years.Order());
         Assert.Single(data.Entries!);
+    }
+
+    private void RouteYears(Func<int, HttpResponseMessage> responder) =>
+        _api.Get("companies/test-as/projects", "[]")
+            .Get("companies/test-as/accounts", "[]")
+            .On(HttpMethod.Get, "companies/test-as/journalEntries", (req, _) =>
+            {
+                var query = req.RequestUri!.Query;
+                var start = query.IndexOf("dateGe=", StringComparison.Ordinal) + 7;
+                return responder(int.Parse(query.AsSpan(start, 4)));
+            });
+
+    [Fact]
+    public async Task EnsureYears_PartialFailure_KeepsFinishedYearsAndRetriesTheFailedOne()
+    {
+        var failing = true;
+        RouteYears(year => year == 2026 && failing
+            ? FakeFikenApi.Json("{}", HttpStatusCode.BadRequest)
+            : FakeFikenApi.Json("[" + EntryJson(year, "6800", 100000, GrantTestData.Kurs, $"{year}-03-01") + "]"));
+        var service = CreateService();
+        var data = await service.LoadFikenAsync([], ct: TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.EnsureYearsAsync(data, [2025, 2026], ct: TestContext.Current.CancellationToken));
+
+        Assert.Equal([2025], data.Years.Order());
+        Assert.Equal([2025L], data.Entries!.Select(e => e.JournalEntryId));
+
+        failing = false;
+        await service.EnsureYearsAsync(data, [2025, 2026], ct: TestContext.Current.CancellationToken);
+        Assert.Equal([2025, 2026], data.Years.Order());
+        Assert.Equal([2025L, 2026L], data.Entries!.Select(e => e.JournalEntryId));
+    }
+
+    [Fact]
+    public async Task EnsureYears_Refresh_ReplacesTheYearsEntries()
+    {
+        var version = 1;
+        RouteYears(_ => FakeFikenApi.Json("[" + EntryJson(version, "6800", 100000, GrantTestData.Kurs, "2027-03-01") + "]"));
+        var service = CreateService();
+        var data = await service.LoadFikenAsync([2027], ct: TestContext.Current.CancellationToken);
+        Assert.Equal([1L], data.Entries!.Select(e => e.JournalEntryId));
+
+        version = 2;
+        await service.EnsureYearsAsync(data, [2027], refresh: true, ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal([2L], data.Entries!.Select(e => e.JournalEntryId));
+    }
+
+    [Fact]
+    public async Task EnsureYears_ConcurrentCalls_FetchEachYearOnce()
+    {
+        RouteYears(year => FakeFikenApi.Json("[" + EntryJson(year, "6800", 100000, GrantTestData.Kurs, $"{year}-03-01") + "]"));
+        var service = CreateService();
+        var data = await service.LoadFikenAsync([], ct: TestContext.Current.CancellationToken);
+
+        await Task.WhenAll(
+            service.EnsureYearsAsync(data, [2026, 2027], ct: TestContext.Current.CancellationToken),
+            service.EnsureYearsAsync(data, [2027, 2026], ct: TestContext.Current.CancellationToken),
+            service.EnsureYearsAsync(data, [2027], ct: TestContext.Current.CancellationToken));
+
+        Assert.Equal(2, _api.Calls.Count(c => c.PathAndQuery.Contains("journalEntries")));
+        Assert.Equal([2026L, 2027L], data.Entries!.Select(e => e.JournalEntryId).Order());
+    }
+
+    private static Grant Named(string name) => new() { Name = name, Grantor = "Eksempel kommune", Kind = GrantKind.Operating };
+
+    [Fact]
+    public async Task SaveGrant_NewGrant_IsAddedAndAnExistingIdIsRefused()
+    {
+        var service = CreateService();
+        var grant = Named("Drift");
+
+        Assert.Empty(await service.SaveGrantAsync(grant, null, TestContext.Current.CancellationToken));
+        Assert.Single((await service.LoadAsync(TestContext.Current.CancellationToken)).Grants);
+
+        var again = GrantCloner.Clone(grant);
+        Assert.NotEmpty(await service.SaveGrantAsync(again, null, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task SaveGrant_ChangedInTheMeantime_GivesConflictAndKeepsTheStoredVersion()
+    {
+        var service = CreateService();
+        var grant = Named("Drift");
+        await service.SaveGrantAsync(grant, null, TestContext.Current.CancellationToken);
+        var opened = GrantCloner.Clone((await service.LoadAsync(TestContext.Current.CancellationToken)).Grants[0]);
+
+        // En annen økt endrer det lagrede tilskuddet.
+        var other = GrantCloner.Clone(opened);
+        other.Grantor = "Annen giver";
+        Assert.Empty(await service.SaveGrantAsync(other, opened, TestContext.Current.CancellationToken));
+
+        var mine = GrantCloner.Clone(opened);
+        mine.Name = "Mitt navn";
+        var errors = await service.SaveGrantAsync(mine, opened, TestContext.Current.CancellationToken);
+
+        Assert.Contains(errors, e => e.Contains("endret"));
+        var stored = Assert.Single((await service.LoadAsync(TestContext.Current.CancellationToken)).Grants);
+        Assert.Equal("Drift", stored.Name);
+        Assert.Equal("Annen giver", stored.Grantor);
+    }
+
+    [Fact]
+    public async Task SaveGrant_DeletedInTheMeantime_IsNotResurrected()
+    {
+        var service = CreateService();
+        var grant = Named("Drift");
+        await service.SaveGrantAsync(grant, null, TestContext.Current.CancellationToken);
+        var opened = GrantCloner.Clone((await service.LoadAsync(TestContext.Current.CancellationToken)).Grants[0]);
+        Assert.Empty(await service.DeleteGrantAsync(grant.Id, TestContext.Current.CancellationToken));
+
+        var errors = await service.SaveGrantAsync(GrantCloner.Clone(opened), opened, TestContext.Current.CancellationToken);
+
+        Assert.Contains(errors, e => e.Contains("slettet"));
+        Assert.Empty((await service.LoadAsync(TestContext.Current.CancellationToken)).Grants);
+        Assert.Empty(await service.DeleteGrantAsync(grant.Id, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task SaveGrant_ConcurrentSavesOfDifferentGrants_AreAllKept()
+    {
+        var service = CreateService();
+        var grants = Enumerable.Range(1, 12).Select(i => Named($"Tilskudd {i}")).ToList();
+
+        var results = await Task.WhenAll(grants.Select(g => service.SaveGrantAsync(g, null, TestContext.Current.CancellationToken)));
+
+        Assert.All(results, Assert.Empty);
+        Assert.Equal(12, (await service.LoadAsync(TestContext.Current.CancellationToken)).Grants.Count);
+    }
+
+    [Fact]
+    public async Task SaveGrant_InvalidLink_IsRefusedAndNothingIsWritten()
+    {
+        var service = CreateService();
+        var grant = Named("Drift");
+        grant.Link = "javascript:alert(1)";
+
+        var errors = await service.SaveGrantAsync(grant, null, TestContext.Current.CancellationToken);
+
+        Assert.Contains(errors, e => e.Contains("http"));
+        Assert.Empty((await service.LoadAsync(TestContext.Current.CancellationToken)).Grants);
+
+        grant.Link = "https://example.no/soknad";
+        Assert.Empty(await service.SaveGrantAsync(grant, null, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -200,5 +345,93 @@ public sealed class GrantOverviewLogicTests
         Assert.Equal([1L], grant.ProjectIds);
         Assert.Equal(50m, grant.ProjectShares[1]);
         Assert.Equal(5m, grant.Payments[0].Amount);
+    }
+
+    private static GrantReport Report(Grant grant, bool withFiken = true) =>
+        GrantReportBuilder.Build(grant, [grant], withFiken ? [] : null);
+
+    [Fact]
+    public void Totals_AreDashWhenNoRowHasValue_AndPartialWhenSomeRowsLackIt()
+    {
+        var a = new Grant { Name = "A", Kind = GrantKind.Operating, GrantedAmount = 10000, AppliedAmount = 12000, ManualUses = [new GrantManualUse { Amount = 4000 }] };
+        var b = new Grant { Name = "B", Kind = GrantKind.Operating, GrantedAmount = 5000 };
+        var c = new Grant { Name = "C", Kind = GrantKind.Project, ProjectIds = [GrantTestData.Kurs] };
+        var rows = new[] { Report(a), Report(b), Report(c, withFiken: false) };
+
+        var totals = GrantOverviewLogic.Totals(rows);
+
+        Assert.Equal(new GrantTotal(15000m, 2, 3), totals.Granted);
+        Assert.True(totals.Granted.IsPartial);
+        Assert.Equal(new GrantTotal(12000m, 1, 3), totals.Applied);
+        // Brukt: A har manuell bruk, B er ikke registrert, C mangler Fiken-data.
+        Assert.Equal(new GrantTotal(4000m, 1, 3), totals.Used);
+        Assert.False(GrantOverviewLogic.Totals([Report(b)]).Used.HasValue);
+        Assert.False(GrantOverviewLogic.Totals([]).Granted.HasValue);
+        Assert.False(GrantOverviewLogic.Totals([Report(a)]).Used.IsPartial);
+    }
+
+    [Fact]
+    public void Totals_ReceivedIsUnknownForLinkedPaymentsWithoutFikenData()
+    {
+        var grant = new Grant { Name = "A", Kind = GrantKind.Operating, GrantedAmount = 10000, Payments = [new GrantPayment { JournalEntryId = 5 }, new GrantPayment { Amount = 100m }] };
+        var withoutFiken = Report(grant, withFiken: false);
+        var withFiken = Report(grant);
+
+        Assert.Null(GrantOverviewLogic.ReceivedOrNull(withoutFiken));
+        Assert.Null(GrantOverviewLogic.RemainingOrNull(withoutFiken));
+        // Med Fiken-data men uten posteringen er koblingen ukjent (Missing).
+        Assert.Null(GrantOverviewLogic.ReceivedOrNull(withFiken));
+        Assert.Equal(0, GrantOverviewLogic.Totals([withoutFiken]).Received.Counted);
+    }
+
+    [Fact]
+    public void SelectableYears_IncludesReportDeadlineAndEveryYearInThePeriod_WithACap()
+    {
+        var grant = new Grant
+        {
+            Name = "A",
+            UseFrom = new DateOnly(2024, 6, 1),
+            UseTo = new DateOnly(2027, 5, 31),
+            ReportDeadline = new DateOnly(2028, 3, 1)
+        };
+        var typo = new Grant { Name = "B", UseFrom = new DateOnly(2000, 1, 1), UseTo = new DateOnly(9999, 1, 1) };
+
+        Assert.Equal([2028, 2027, 2026, 2025, 2024], GrantOverviewLogic.SelectableYears([grant], 2026).Where(y => y >= 2024));
+        var years = GrantOverviewLogic.SelectableYears([typo], 2026);
+        Assert.True(years.Count <= GrantOverviewLogic.MaxPeriodYears + 4);
+    }
+
+    [Fact]
+    public void BuildOverview_ReportsEachShareIssueOnlyOnce()
+    {
+        var a = GrantTestData.Project("A", GrantTestData.Kurs);
+        var b = GrantTestData.Project("B", GrantTestData.Kurs);
+
+        var overview = GrantService.BuildOverview([a, b], GrantFikenData.None);
+
+        Assert.Single(overview.Issues, i => i.Kind == GrantIssueKind.ShareMissing);
+        Assert.Equal(2, overview.Reports.Count);
+    }
+
+    [Fact]
+    public void Clone_DeepCopiesAccountRangesAndManualUses()
+    {
+        var grant = new Grant
+        {
+            Name = "A",
+            Kind = GrantKind.Operating,
+            AccountRanges = [new AccountRange { From = 6800, To = 6899 }],
+            ManualUses = [new GrantManualUse { Amount = 10m, Description = "x" }]
+        };
+        var copy = GrantCloner.Clone(grant);
+        copy.AccountRanges[0].To = 6999;
+        copy.ManualUses[0].Amount = 99m;
+        copy.ManualUses[0].Description = "y";
+
+        Assert.Equal(6899, grant.AccountRanges[0].To);
+        Assert.Equal(10m, grant.ManualUses[0].Amount);
+        Assert.Equal("x", grant.ManualUses[0].Description);
+        Assert.False(GrantCloner.AreEquivalent(grant, copy));
+        Assert.True(GrantCloner.AreEquivalent(grant, GrantCloner.Clone(grant)));
     }
 }

@@ -4,11 +4,16 @@ using FikenHjelper.Core.Fiken;
 namespace FikenHjelper.Core.Grants;
 
 /// <summary>
-/// Fiken-data som trengs for å regne på tilskudd: prosjekter, kontoplan og posteringer for de årene som er hentet.
+/// Fiken-data som trengs for å regne på tilskudd: prosjekter, kontoplan og posteringer per år.
 /// <see cref="Entries"/> er null uten Fiken-tilkobling, så rapportene viser «mangler Fiken-data».
+/// Et år regnes som hentet først når alle posteringene for året er lagret.
 /// </summary>
 public sealed class GrantFikenData
 {
+    private readonly Lock _lock = new();
+    private readonly Dictionary<int, IReadOnlyList<FikenJournalEntry>> _byYear = [];
+    private IReadOnlyList<FikenJournalEntry>? _entries;
+
     public static GrantFikenData None { get; } = new();
 
     public bool HasCompany { get; init; }
@@ -19,10 +24,50 @@ public sealed class GrantFikenData
 
     public IReadOnlyList<FikenAccount> Accounts { get; init; } = [];
 
-    public HashSet<int> Years { get; } = [];
+    /// <summary>Årene som er hentet.</summary>
+    public IReadOnlySet<int> Years
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _byYear.Keys.ToHashSet();
+            }
+        }
+    }
 
     /// <summary>Alle hentede posteringer (unike), eller null uten Fiken-tilkobling.</summary>
-    public IReadOnlyList<FikenJournalEntry>? Entries { get; internal set; }
+    public IReadOnlyList<FikenJournalEntry>? Entries
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return HasCompany ? _entries ??= [] : null;
+            }
+        }
+    }
+
+    /// <summary>Serialiserer henting, så samtidige kall ikke går i beina på hverandre.</summary>
+    internal SemaphoreSlim Gate { get; } = new(1, 1);
+
+    internal bool HasYear(int year)
+    {
+        lock (_lock)
+        {
+            return _byYear.ContainsKey(year);
+        }
+    }
+
+    /// <summary>Erstatter årets posteringer og bygger listen på nytt, i samme operasjon.</summary>
+    internal void SetYear(int year, IReadOnlyList<FikenJournalEntry> entries)
+    {
+        lock (_lock)
+        {
+            _byYear[year] = entries;
+            _entries = _byYear.OrderBy(kv => kv.Key).SelectMany(kv => kv.Value).DistinctBy(e => e.JournalEntryId).ToList();
+        }
+    }
 }
 
 /// <summary>Beregnede tall for alle tilskudd, kontrollmeldinger og kontooversikten.</summary>
@@ -92,7 +137,11 @@ public sealed class GrantService(
         return data;
     }
 
-    /// <summary>Henter posteringer for år som ikke er hentet ennå, og legger dem til i <paramref name="data"/>.</summary>
+    /// <summary>
+    /// Henter posteringer for år som ikke er hentet ennå (alle oppgitte år ved <paramref name="refresh"/>, som da erstatter
+    /// årets posteringer) og legger dem til i <paramref name="data"/>. Hvert år lagres for seg når det er fullført, så en feil
+    /// midtveis ikke merker år som hentet uten data. Kall mot samme <paramref name="data"/> går i kø.
+    /// </summary>
     public async Task EnsureYearsAsync(GrantFikenData data, IEnumerable<int> years, bool refresh = false, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -101,15 +150,65 @@ public sealed class GrantService(
             return;
         }
 
-        var all = (data.Entries ?? []).ToList();
-        foreach (var year in years.Distinct().Order().Where(y => refresh || !data.Years.Contains(y)))
+        await data.Gate.WaitAsync(ct);
+        try
         {
-            all.AddRange(await reports.GetJournalEntriesAsync(data.CompanySlug, year, refresh, ct));
-            data.Years.Add(year);
+            foreach (var year in years.Distinct().Order().Where(y => refresh || !data.HasYear(y)))
+            {
+                var entries = await reports.GetJournalEntriesAsync(data.CompanySlug, year, refresh, ct);
+                data.SetYear(year, entries);
+            }
         }
-
-        data.Entries = all.DistinctBy(e => e.JournalEntryId).ToList();
+        finally
+        {
+            data.Gate.Release();
+        }
     }
+
+    /// <summary>
+    /// Lagrer ett tilskudd atomisk mot den lagrede filen. <paramref name="baseline"/> er tilskuddet slik det var da siden ble åpnet
+    /// (null for et nytt tilskudd). Er det lagrede tilskuddet endret eller slettet siden, lagres ikke noe, og en norsk melding returneres.
+    /// Hele settet valideres. Tom liste betyr at det er lagret.
+    /// </summary>
+    public Task<IReadOnlyList<string>> SaveGrantAsync(Grant edited, Grant? baseline, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(edited);
+        return store.UpdateAsync(data =>
+        {
+            var index = data.Grants.FindIndex(g => g.Id == edited.Id);
+            if (baseline is null)
+            {
+                if (index >= 0)
+                {
+                    return ["Tilskuddet finnes allerede i lagringen. Last siden på nytt for å se den lagrede versjonen."];
+                }
+
+                data.Grants.Add(edited);
+                return [];
+            }
+
+            if (index < 0)
+            {
+                return ["Tilskuddet er slettet siden du åpnet siden, og blir ikke lagret på nytt. Gå til oversikten og legg det inn som et nytt tilskudd om du vil beholde det."];
+            }
+
+            if (!GrantCloner.AreEquivalent(data.Grants[index], baseline))
+            {
+                return ["Tilskuddet er endret et annet sted siden du åpnet siden, så det ble ikke lagret. Last siden på nytt for å se endringene, og gjør dine endringer på nytt."];
+            }
+
+            data.Grants[index] = edited;
+            return [];
+        }, ct);
+    }
+
+    /// <summary>Sletter et tilskudd atomisk. Er det allerede slettet, er det i orden.</summary>
+    public Task<IReadOnlyList<string>> DeleteGrantAsync(Guid id, CancellationToken ct = default) =>
+        store.UpdateAsync(data =>
+        {
+            data.Grants.RemoveAll(g => g.Id == id);
+            return [];
+        }, ct);
 
     public static GrantOverview BuildOverview(IReadOnlyList<Grant> grants, GrantFikenData data)
     {

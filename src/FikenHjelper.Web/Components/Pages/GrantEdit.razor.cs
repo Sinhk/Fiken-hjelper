@@ -33,27 +33,33 @@ public partial class GrantEdit
     private bool notFound;
     private bool isDirty;
     private bool isSaving;
-    private bool isLoading;
+    private int loadingCount;
     private bool isConfirming;
     private bool fikenLoaded;
     private string? errorMessage;
     private string? fikenMessage;
-    private Guid? loadedFor;
+    private bool hasLoaded;
+    private Guid? loadedId;
+    private Grant? baseline;
+    private readonly InputErrorTracker inputErrors = new();
+
+    private bool IsLoading => loadingCount > 0;
 
     private string? SafeLink =>
         Uri.TryCreate(grant?.Link?.Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.AbsoluteUri : null;
 
     protected override async Task OnParametersSetAsync()
     {
-        var wanted = Id ?? Guid.Empty;
-        if (loadedFor == wanted && (fikenLoaded || !RendererInfo.IsInteractive))
+        var changed = !hasLoaded || loadedId != Id;
+        if (!changed && (fikenLoaded || !RendererInfo.IsInteractive))
         {
             return;
         }
 
-        if (loadedFor != wanted)
+        if (changed)
         {
-            loadedFor = wanted;
+            hasLoaded = true;
+            loadedId = Id;
             fikenLoaded = false;
             isDirty = false;
             validationErrors = [];
@@ -92,6 +98,7 @@ public partial class GrantEdit
 
         isNew = Id is null;
         notFound = false;
+        baseline = null;
         if (isNew)
         {
             grant = new Grant();
@@ -99,6 +106,7 @@ public partial class GrantEdit
         else if (stored.Find(Id!.Value) is { } existing)
         {
             grant = GrantCloner.Clone(existing);
+            baseline = GrantCloner.Clone(existing);
         }
         else
         {
@@ -118,7 +126,7 @@ public partial class GrantEdit
             return;
         }
 
-        isLoading = true;
+        loadingCount++;
         fikenMessage = null;
         StateHasChanged();
         try
@@ -137,10 +145,12 @@ public partial class GrantEdit
         }
         finally
         {
-            isLoading = false;
+            loadingCount--;
             fikenLoaded = true;
         }
 
+        // Datoer kan ha endret seg mens Fiken lastet, så hent år som mangler.
+        await EnsureYearsAsync();
         Recalculate();
     }
 
@@ -157,11 +167,12 @@ public partial class GrantEdit
             return;
         }
 
-        isLoading = true;
+        loadingCount++;
         StateHasChanged();
         try
         {
             await Service.EnsureYearsAsync(fiken, needed, ct: disposeCts.Token);
+            fikenMessage = null;
         }
         catch (OperationCanceledException) when (disposeCts.IsCancellationRequested)
         {
@@ -173,7 +184,7 @@ public partial class GrantEdit
         }
         finally
         {
-            isLoading = false;
+            loadingCount--;
         }
     }
 
@@ -303,31 +314,28 @@ public partial class GrantEdit
             return;
         }
 
-        isSaving = true;
         validationErrors = [];
+        if (inputErrors.HasErrors)
+        {
+            validationErrors = ["Rett feltene som er markert med feil (ugyldig tall eller dato) før du lagrer."];
+            return;
+        }
+
+        isSaving = true;
         try
         {
-            var data = await Service.LoadAsync(disposeCts.Token);
             var toSave = Normalized(grant);
-            var index = data.Grants.FindIndex(g => g.Id == toSave.Id);
-            if (index >= 0)
-            {
-                data.Grants[index] = toSave;
-            }
-            else
-            {
-                data.Grants.Add(toSave);
-            }
-
-            var errors = await Service.SaveAsync(data, disposeCts.Token);
+            var errors = await Service.SaveGrantAsync(toSave, baseline, disposeCts.Token);
             if (errors.Count > 0)
             {
                 validationErrors = errors;
                 return;
             }
 
-            stored = data;
-            grant = GrantCloner.Clone(toSave);
+            stored = await Service.LoadAsync(disposeCts.Token);
+            var saved = stored.Find(toSave.Id) ?? toSave;
+            grant = GrantCloner.Clone(saved);
+            baseline = GrantCloner.Clone(saved);
             isDirty = false;
             Snackbar.Add("Tilskuddet er lagret.", Severity.Success);
             Recalculate();
@@ -380,7 +388,7 @@ public partial class GrantEdit
 
     private async Task DeleteAsync()
     {
-        if (grant is null || isNew)
+        if (grant is null || isNew || isSaving)
         {
             return;
         }
@@ -390,12 +398,15 @@ public partial class GrantEdit
             return;
         }
 
+        if (isSaving)
+        {
+            return;
+        }
+
         isSaving = true;
         try
         {
-            var data = await Service.LoadAsync(disposeCts.Token);
-            data.Grants.RemoveAll(g => g.Id == grant.Id);
-            var errors = await Service.SaveAsync(data, disposeCts.Token);
+            var errors = await Service.DeleteGrantAsync(grant.Id, disposeCts.Token);
             if (errors.Count > 0)
             {
                 validationErrors = errors;

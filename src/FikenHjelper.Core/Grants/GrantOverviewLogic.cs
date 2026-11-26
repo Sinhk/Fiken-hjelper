@@ -103,22 +103,68 @@ public static class GrantOverviewLogic
         return fallback.Count == 0 || fallback.Any(d => d!.Value.Year == year);
     }
 
-    /// <summary>Årene det finnes tilskudd for, nyeste først (alltid med <paramref name="currentYear"/>).</summary>
+    /// <summary>
+    /// Årene det finnes tilskudd for, nyeste først (alltid med <paramref name="currentYear"/>): årene til alle datoene,
+    /// og alle år mellom bruksperiodens start og slutt (høyst <see cref="MaxPeriodYears"/> år, så en feil årstall ikke gir tusen valg).
+    /// </summary>
     public static IReadOnlyList<int> SelectableYears(IEnumerable<Grant> grants, int currentYear)
     {
         var years = new HashSet<int> { currentYear };
         foreach (var grant in grants)
         {
-            foreach (var date in new[] { grant.UseFrom, grant.UseTo, grant.DecisionDate, grant.AppliedDate, grant.ApplicationDeadline })
+            foreach (var date in new[] { grant.UseFrom, grant.UseTo, grant.DecisionDate, grant.AppliedDate, grant.ApplicationDeadline, grant.ReportDeadline })
             {
                 if (date is { } d)
                 {
                     years.Add(d.Year);
                 }
             }
+
+            if (grant.UseFrom is { } from && grant.UseTo is { } to && to.Year > from.Year)
+            {
+                for (var y = from.Year; y <= Math.Min(to.Year, from.Year + MaxPeriodYears); y++)
+                {
+                    years.Add(y);
+                }
+            }
         }
 
         return years.OrderDescending().ToList();
+    }
+
+    public const int MaxPeriodYears = 30;
+
+    /// <summary>Mottatt, eller null når koblede utbetalinger ikke kan regnes ut (mangler Fiken-data eller posteringen finnes ikke).</summary>
+    public static decimal? ReceivedOrNull(GrantReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        var unknown = report.Payments.Any(p => p.Payment.IsLinked && (p.Missing || !report.HasFikenData));
+        return unknown ? null : report.Received;
+    }
+
+    /// <summary>Gjenstår å motta, eller null når innvilget eller mottatt ikke er kjent.</summary>
+    public static decimal? RemainingOrNull(GrantReport report) =>
+        ReceivedOrNull(report) is { } received && report.Granted is { } granted ? granted - received : null;
+
+    /// <summary>
+    /// Summer for de synlige radene. Hver kolonne teller bare rader som har verdi, og forteller hvor mange det var,
+    /// så en delsum kan merkes.
+    /// </summary>
+    public static GrantTotals Totals(IReadOnlyList<GrantReport> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return new GrantTotals(
+            Sum(rows, r => r.Grant.AppliedAmount),
+            Sum(rows, r => r.Granted),
+            Sum(rows, ReceivedOrNull),
+            Sum(rows, r => r.Used),
+            Sum(rows, RemainingOrNull));
+    }
+
+    private static GrantTotal Sum(IReadOnlyList<GrantReport> rows, Func<GrantReport, decimal?> value)
+    {
+        var values = rows.Select(value).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+        return new GrantTotal(values.Sum(), values.Count, rows.Count);
     }
 
     public static IReadOnlyList<GrantReport> Filter(IEnumerable<GrantReport> reports, int? year, GrantStatus? status) =>
@@ -129,9 +175,33 @@ public static class GrantOverviewLogic
             .ToList();
 }
 
+/// <summary>Sum for én kolonne. <see cref="Counted"/> av <see cref="Total"/> rader hadde verdi.</summary>
+public sealed record GrantTotal(decimal Sum, int Counted, int Total)
+{
+    /// <summary>Minst én rad har verdi, så summen kan vises.</summary>
+    public bool HasValue => Counted > 0;
+
+    /// <summary>Noen rader mangler verdi, så summen er en delsum.</summary>
+    public bool IsPartial => Counted < Total;
+}
+
+public sealed record GrantTotals(GrantTotal Applied, GrantTotal Granted, GrantTotal Received, GrantTotal Used, GrantTotal Remaining);
+
 /// <summary>Kopi av tilskudd, så et skjema kan redigere uten å endre det lagrede før det lagres.</summary>
 public static class GrantCloner
 {
+    private static readonly System.Text.Json.JsonSerializerOptions CompareOptions = new();
+
+    /// <summary>Om to tilskudd har samme innhold (sammenlignet felt for felt via JSON, med andelene i fast rekkefølge).</summary>
+    public static bool AreEquivalent(Grant a, Grant b) => Canonical(a) == Canonical(b);
+
+    private static string Canonical(Grant g)
+    {
+        var copy = Clone(g);
+        copy.ProjectShares = copy.ProjectShares is null ? null : copy.ProjectShares.OrderBy(kv => kv.Key).ToDictionary(kv => kv.Key, kv => kv.Value);
+        return System.Text.Json.JsonSerializer.Serialize(copy, CompareOptions);
+    }
+
     public static Grant Clone(Grant g) => new()
     {
         Id = g.Id,

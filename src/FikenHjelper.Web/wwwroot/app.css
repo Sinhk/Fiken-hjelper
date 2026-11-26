@@ -754,12 +754,15 @@ h1:focus {
     color: var(--fh-muted);
 }
 
-.budget-table .budget-detail {
+.budget-table .budget-detail,
+.fh-table .budget-detail {
     background-color: #f8faf9;
 }
 
 .budget-table .budget-total th,
-.budget-table .budget-total td {
+.budget-table .budget-total td,
+.fh-table .budget-total th,
+.fh-table .budget-total td {
     font-weight: 700;
     border-top: 2px solid var(--fh-border);
 }

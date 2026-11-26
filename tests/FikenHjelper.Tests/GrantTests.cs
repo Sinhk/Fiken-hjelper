@@ -906,6 +906,7 @@ public sealed class JsonGrantStoreTests
         await WithStore(async (store, dir) =>
         {
             await store.SaveAsync(new GrantData { Grants = [GrantTestData.Project("A")] }, TestContext.Current.CancellationToken);
-            Assert.Equal(["grants.json"], Directory.GetFiles(dir).Select(Path.GetFileName));
+            // Låsfila (grants.lock) blir liggende, men ingen midlertidige filer.
+            Assert.Equal(["grants.json", "grants.lock"], Directory.GetFiles(dir).Select(Path.GetFileName).Order());
         });
 }

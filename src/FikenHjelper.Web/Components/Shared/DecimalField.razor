@@ -1,3 +1,4 @@
+@implements IDisposable
 @* MudBlazor-felt for beløp og andre desimaltall. Godtar både «.» og «,» som desimaltegn (se DecimalInput).
    Ugyldig tekst gir en norsk feilmelding mens teksten blir stående og modellens verdi beholdes uendret.
    Erstatter MudNumericField, som tolker etter kultur og dermed avviser eller misforstår det ene skilletegnet.
@@ -57,8 +58,23 @@
     // «decimal» er et C#-nøkkelord, så enum-verdien kan ikke skrives rett inn i markeringen.
     private const InputMode DecimalKeyboard = InputMode.@decimal;
 
+    /// <summary>Hvis siden bruker en <see cref="InputErrorTracker"/>, meldes ugyldig tekst dit.</summary>
+    [CascadingParameter] private InputErrorTracker? Tracker { get; set; }
+
     private string text = string.Empty;
     private string? error;
+
+    private string? Error
+    {
+        get => error;
+        set
+        {
+            error = value;
+            Tracker?.Report(this, value is not null);
+        }
+    }
+
+    public void Dispose() => Tracker?.Report(this, false);
 
     protected override void OnParametersSet()
     {
@@ -89,24 +105,24 @@
 
         if (DecimalInput.IsEmpty(text))
         {
-            error = null;
+            Error = null;
             await ValueChanged.InvokeAsync(AllowEmpty ? null : 0m);
             return;
         }
 
         if (!DecimalInput.TryParse(text, out var parsed))
         {
-            error = DecimalInput.InvalidMessage;
+            Error = DecimalInput.InvalidMessage;
             return;
         }
 
         if ((Min is { } min && parsed < min) || (Max is { } max && parsed > max))
         {
-            error = RangeMessage;
+            Error = RangeMessage;
             return;
         }
 
-        error = null;
+        Error = null;
         await ValueChanged.InvokeAsync(parsed);
     }
 

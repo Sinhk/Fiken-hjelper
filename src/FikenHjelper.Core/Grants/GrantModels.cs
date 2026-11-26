@@ -165,6 +165,12 @@ public sealed class Grant
             Add("Innvilget beløp kan ikke være negativt.");
         }
 
+        if (!string.IsNullOrWhiteSpace(Link)
+            && !(Uri.TryCreate(Link.Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"))
+        {
+            Add("Lenken må starte med http:// eller https://.");
+        }
+
         if (UseFrom is { } from && UseTo is { } to && from > to)
         {
             Add($"Bruksperioden starter ({from:dd.MM.yyyy}) etter at den slutter ({to:dd.MM.yyyy}).");

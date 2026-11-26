@@ -48,12 +48,17 @@
             <MudProgressLinear Color="Color.Primary" Indeterminate Class="mb-3" />
         }
 
-        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        @if (!string.IsNullOrWhiteSpace(loadError))
         {
-            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+            <MudAlert Severity="Severity.Error" Class="mb-3">@loadError</MudAlert>
         }
 
-        @if (!fiken.HasCompany && string.IsNullOrWhiteSpace(errorMessage) && RendererInfo.IsInteractive && !isLoading)
+        @if (!string.IsNullOrWhiteSpace(fikenError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@fikenError</MudAlert>
+        }
+
+        @if (!fiken.HasCompany && string.IsNullOrWhiteSpace(fikenError) && string.IsNullOrWhiteSpace(loadError) && RendererInfo.IsInteractive && !isLoading)
         {
             <MudAlert Severity="Severity.Warning" Class="mb-3">
                 Ingen Fiken-foretak er valgt, så «brukt» kan ikke hentes fra Fiken. Tilskudd med manuell bruk og manuelle utbetalinger vises likevel.
@@ -92,7 +97,7 @@
         }
         else
         {
-            <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto">
+            <MudSimpleTable Dense Hover Bordered Style="overflow-x: auto" Class="fh-table">
                 <thead>
                     <tr>
                         <th>Navn</th>
@@ -117,7 +122,16 @@
                             <td>@Grant.StatusText(r.Grant.Status)</td>
                             <td class="fh-num-col tabular-nums">@Kr(r.Grant.AppliedAmount)</td>
                             <td class="fh-num-col tabular-nums">@Kr(r.Granted)</td>
-                            <td class="fh-num-col tabular-nums">@Kr(r.Received)</td>
+                            <td class="fh-num-col tabular-nums">
+                                @if (GrantOverviewLogic.ReceivedOrNull(r) is { } received)
+                                {
+                                    @Kr(received)
+                                }
+                                else
+                                {
+                                    <span class="mud-text-secondary" title="Koblede utbetalinger kan ikke leses uten Fiken-data">–</span>
+                                }
+                            </td>
                             <td class="fh-num-col tabular-nums">
                                 @if (r.UsedIsUnregistered)
                                 {
@@ -132,7 +146,7 @@
                                     @Kr(r.Used)
                                 }
                             </td>
-                            <td class="fh-num-col tabular-nums">@Kr(r.Remaining)</td>
+                            <td class="fh-num-col tabular-nums">@Kr(GrantOverviewLogic.RemainingOrNull(r))</td>
                             <td>
                                 @foreach (var d in GrantOverviewLogic.Deadlines(r.Grant, Service.Today))
                                 {
@@ -148,15 +162,21 @@
                 <tfoot>
                     <tr class="budget-total">
                         <th scope="row" colspan="4">Sum (@rows.Count tilskudd)</th>
-                        <td class="fh-num-col tabular-nums">@Kr(rows.Sum(r => r.Grant.AppliedAmount ?? 0m))</td>
-                        <td class="fh-num-col tabular-nums">@Kr(rows.Sum(r => r.Granted ?? 0m))</td>
-                        <td class="fh-num-col tabular-nums">@Kr(rows.Sum(r => r.Received))</td>
-                        <td class="fh-num-col tabular-nums">@Kr(rows.Sum(r => r.Used ?? 0m))</td>
-                        <td class="fh-num-col tabular-nums">@Kr(rows.Sum(r => r.Remaining ?? 0m))</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Applied)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Granted)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Received)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Used)</td>
+                        <td class="fh-num-col tabular-nums">@Sum(totals.Remaining)</td>
                         <td></td>
                     </tr>
                 </tfoot>
             </MudSimpleTable>
+            @if (PartialNotes(totals) is { Count: > 0 } notes)
+            {
+                <MudText Typo="Typo.caption" Class="mt-2 d-block">
+                    * Delsum, siden noen tilskudd mangler verdi: @string.Join("; ", notes).
+                </MudText>
+            }
             <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">
                 Brukt er brutto kostnader (konto 4000–7999 og 8100–8799) på de koblede prosjektene i bruksperioden, ganget med tilskuddets andel.
                 Gjenstår å motta = innvilget − mottatt. Filteret på år viser tilskudd der bruksperioden overlapper året eller vedtaket er fattet i året.
@@ -216,7 +236,9 @@
     private int? year;
     private GrantStatus? status;
     private bool isLoading;
-    private string? errorMessage;
+    private string? loadError;
+    private string? fikenError;
+    private GrantTotals totals = GrantOverviewLogic.Totals([]);
 
     protected override async Task OnInitializedAsync()
     {
@@ -231,13 +253,13 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Klarte ikke å lese tilskuddsfilen");
-            errorMessage = UserErrors.Describe(ex, "Klarte ikke å lese tilskuddene", "Tilskuddsfilen (grants.json i datamappen)");
+            loadError = UserErrors.Describe(ex, "Klarte ikke å lese tilskuddene", "Tilskuddsfilen (grants.json i datamappen)");
             return;
         }
 
         selectableYears = GrantOverviewLogic.SelectableYears(grants, Service.CurrentYear);
         Rebuild();
-        if (RendererInfo.IsInteractive)
+        if (RendererInfo.IsInteractive && loadError is null)
         {
             await LoadFikenAsync(refresh: false);
         }
@@ -246,7 +268,7 @@
     private async Task LoadFikenAsync(bool refresh)
     {
         isLoading = true;
-        errorMessage = null;
+        fikenError = null;
         StateHasChanged();
         try
         {
@@ -259,7 +281,7 @@
         {
             Logger.LogWarning(ex, "Klarte ikke å hente Fiken-data for tilskudd");
             fiken = GrantFikenData.None;
-            errorMessage = UserErrors.Describe(ex, "Klarte ikke å hente data fra Fiken")
+            fikenError = UserErrors.Describe(ex, "Klarte ikke å hente data fra Fiken")
                 + " Tilskuddene vises uten tall fra Fiken.";
         }
         finally
@@ -274,6 +296,29 @@
     {
         overview = GrantService.BuildOverview(grants, fiken);
         rows = GrantOverviewLogic.Filter(overview.Reports, year, status);
+        totals = GrantOverviewLogic.Totals(rows);
+    }
+
+    private static string Sum(GrantTotal total) =>
+        !total.HasValue ? "–" : Kr(total.Sum) + (total.IsPartial ? " *" : string.Empty);
+
+    private static List<string> PartialNotes(GrantTotals t)
+    {
+        var notes = new List<string>();
+        void Add(string name, GrantTotal total)
+        {
+            if (total.HasValue && total.IsPartial)
+            {
+                notes.Add($"{name} for {total.Counted} av {total.Total} tilskudd");
+            }
+        }
+
+        Add("søkt", t.Applied);
+        Add("innvilget", t.Granted);
+        Add("mottatt", t.Received);
+        Add("brukt", t.Used);
+        Add("gjenstår", t.Remaining);
+        return notes;
     }
 
     private static string Kr(decimal? value) => value is { } v ? v.ToString("N0", Nb) : "–";

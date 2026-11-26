@@ -1,6 +1,7 @@
+@implements IDisposable
 @* Datofelt for DateOnly? med norsk visning (dd.MM.yyyy). Kan skrives inn for hånd eller velges i kalenderen. *@
 <MudDatePicker Date="DateValue" DateChanged="HandleChanged" Label="@Label" Culture="Nb" DateFormat="dd.MM.yyyy" Editable
-               Clearable Variant="Variant.Outlined" Margin="Margin.Dense" @attributes="Attributes" />
+               Clearable Variant="Variant.Outlined" Margin="Margin.Dense" ErrorChanged="HandleErrorChanged" @attributes="Attributes" />
 
 @code {
     private static readonly System.Globalization.CultureInfo Nb = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
@@ -12,6 +13,12 @@
     [Parameter] public string? Label { get; set; }
 
     [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? Attributes { get; set; }
+
+    [CascadingParameter] private InputErrorTracker? Tracker { get; set; }
+
+    private void HandleErrorChanged(bool error) => Tracker?.Report(this, error);
+
+    public void Dispose() => Tracker?.Report(this, false);
 
     private DateTime? DateValue => Value?.ToDateTime(TimeOnly.MinValue);
 
